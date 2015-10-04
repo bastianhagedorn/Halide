@@ -8,6 +8,7 @@
 #include "IRMutator.h"
 #include "Target.h"
 #include "Inline.h"
+#include "FindCalls.h"
 
 namespace Halide {
 namespace Internal {
@@ -1141,6 +1142,53 @@ Stmt schedule_functions(const vector<Function> &outputs,
 
     return s;
 
+}
+
+void schedule_advisor(const std::vector<Function> &outputs,
+                      const std::vector<std::string> &order,
+                      const std::map<std::string, Function> &env) {
+    // Names of all the functions in the environment and their schedules
+	std::cout << "Current schedule and storage mapings" << std::endl;
+    for (auto& kv : env) {
+        std::cout << kv.first << std::endl;
+        std::cout << "store level:" << kv.second.schedule().store_level().func << ","  <<
+            kv.second.schedule().store_level().var << std::endl;
+        std::cout << "compute level:" << kv.second.schedule().compute_level().func << "," <<
+            kv.second.schedule().compute_level().var << std::endl;
+    }
+    std::cout << std::endl;
+
+    // Find all the functions that are used in defining a function
+    std::cout << "Function dependencies:" << std::endl;
+    for (auto& kv: env) {
+        std::cout << kv.first << " depends on:" << std::endl;
+    	for (const pair<string, Function> &callee : find_direct_calls(kv.second)) {
+            std::cout << callee.first << std::endl;
+    	}
+    }
+    std::cout << std::endl;
+
+    // Realization order
+    std::cout << "Realization order:" << std::endl;
+    for (auto& o : order)
+    	std::cout << o << std::endl;
+
+    // Identify pointwise functions
+    // Determine dimension alignments
+    // Determine affine access patters
+
+    // Should bounds inference be hoisted up for this?
+    // Determine overlaps
+
+    // How to deal with correctness in these scenarios ?
+    // What is guaranteed by the programming abstraction and what can be inferred ?
+    // Detect Parallel loops
+    // Determine Vector loops
+
+    // A 2d/1d overlapped tiling with greedy cutoff strategy
+    // Extracting a polyhedral representation ?
+
+	return;
 }
 
 }

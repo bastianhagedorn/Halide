@@ -65,8 +65,11 @@ int main(int argc, char **argv) {
     // Cast it back to an 8-bit unsigned integer.
     value = Halide::cast<uint8_t>(value);
 
+    Halide::Func flip_color;
+    flip_color(x, y, c) = input(x, y, 2-c);
+
     // Define the function.
-    brighter(x, y, c) = value;
+    brighter(x, y, c) = select(value < 128, value,  flip_color(x, y, c));
 
     // The equivalent one-liner to all of the above is:
     //

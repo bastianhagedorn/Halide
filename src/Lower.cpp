@@ -71,6 +71,8 @@ Stmt lower(const vector<Function> &outputs, const string &pipeline_name, const T
     // Compute a realization order
     vector<string> order = realization_order(outputs, env);
 
+    schedule_advisor(outputs, order, env);
+
     bool any_memoized = false;
 
     debug(1) << "Creating initial loop nests...\n";

@@ -28,6 +28,11 @@ Stmt schedule_functions(const std::vector<Function> &outputs,
                         bool &any_memoized,
                         bool inject_asserts = true);
 
+/** Gives advise on scheduling decisions. */
+void schedule_advisor(const std::vector<Function> &outputs,
+                      const std::vector<std::string> &order,
+                      const std::map<std::string, Function> &env);
+
 }
 }
 
