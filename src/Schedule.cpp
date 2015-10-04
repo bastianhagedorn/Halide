@@ -24,10 +24,12 @@ struct ScheduleContents {
 
     ScheduleContents() : memoized(false), touched(false), allow_race_conditions(false) {
     	// Changing the default to compute root
+    	/*
         store_level.func = "";
         store_level.var = "__root";
         compute_level.func = "";
         compute_level.var = "__root";
+        */
     };
 };
 

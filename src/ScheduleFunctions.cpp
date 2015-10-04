@@ -1144,6 +1144,23 @@ Stmt schedule_functions(const vector<Function> &outputs,
 
 }
 
+
+/* Find all the internal halide calls in an expr */
+class FindCallArgs : public IRVisitor {
+public:
+    map<string, std::vector<const Call*> > calls;
+
+    using IRVisitor::visit;
+
+    void visit(const Call *call) {
+        IRVisitor::visit(call);
+        // See if images need to be included
+        if (call->call_type == Call::Halide) {
+        	calls[call->func.name()].push_back(call);
+        }
+    }
+};
+
 void schedule_advisor(const std::vector<Function> &outputs,
                       const std::vector<std::string> &order,
                       const std::map<std::string, Function> &env) {
@@ -1172,6 +1189,28 @@ void schedule_advisor(const std::vector<Function> &outputs,
     std::cout << "Realization order:" << std::endl;
     for (auto& o : order)
     	std::cout << o << std::endl;
+
+    std::cout << std::endl;
+    std::cout << "Call arguments:" << std::endl;
+    for (auto& kv:env) {
+        // Find point-wise ops and inline them. Have to be careful not to inline
+    	// functions of the form g(x) = ... ; f(x) = g(clamp(h(x), 0 , 10))
+    	FindCallArgs callArgs;
+    	kv.second.accept(&callArgs);
+    	std::cout << kv.second.name() << ":" << std::endl;
+    	for (auto& fcall: callArgs.calls){
+    		std::cout << fcall.first << "(";
+    		for (auto& call: fcall.second){
+    			for(auto& arg: call->args){
+    				std::cout << arg << ", ";
+    			}
+    			std::cout << "),";
+    		}
+    	}
+    	std::cout << std::endl;
+
+        // Find parallel parallel dimensions. Parallelize and vectorize
+    }
 
     // Identify pointwise functions
     // Determine dimension alignments
