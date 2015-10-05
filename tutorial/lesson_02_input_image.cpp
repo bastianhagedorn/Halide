@@ -73,7 +73,7 @@ int main(int argc, char **argv) {
     // Define the function.
     Halide::Expr flipper = flip_yet_again(x, y, c) * 2;
     brighter(x, y, c) = select(value < 128, value,  flipper -
-                                                    flip_color(x, y, c)
+                                                    flip_color(clamp(x-y, 0, 10), y, c)
                               );
 
     //flip_color.compute_at(brighter, y);

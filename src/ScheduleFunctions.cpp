@@ -11,6 +11,9 @@
 #include "FindCalls.h"
 #include "OneToOne.h"
 #include "Simplify.h"
+#include "ParallelRVar.h"
+#include "Derivative.h"
+
 #include <algorithm>
 
 namespace Halide {
@@ -1152,6 +1155,7 @@ Stmt schedule_functions(const vector<Function> &outputs,
 class FindCallArgs : public IRVisitor {
 public:
     map<string, std::vector<const Call*> > calls;
+    vector<vector<Expr>> loads;
 
     using IRVisitor::visit;
 
@@ -1160,6 +1164,7 @@ public:
         // See if images need to be included
         if (call->call_type == Call::Halide) {
         	calls[call->func.name()].push_back(call);
+        	loads.push_back(call->args);
         }
     }
 };
@@ -1276,11 +1281,36 @@ void schedule_advisor(const std::vector<Function> &outputs,
         // If a function is pure all the dimensions are parallel
         if (kv.second.is_pure()) {
             // Parallelize the outer most dimension
+            // Two options when the number of iterations are small
+            // -- Collapse the two outer parallel loops
+            // -- If there is only a single dimension just vectorize
             int outer_dim = kv.second.dimensions() - 1;
             std::cout << "Variable " << kv.second.args()[outer_dim]
                       << " of function " << kv.first
                       << " is a good candidate for parallelism"
                       << std::endl;
+            // Collect all the loads and check strides
+            FindCallArgs find;
+            kv.second.accept(&find);
+            // For all the loads find the stride of the innermost loop
+            if (kv.second.dimensions() > 1) {
+                int inner_dim = 0;
+                bool constant_stride = true;
+                for(auto& load: find.loads)
+                {
+                    Expr diff = simplify(finite_difference(load[inner_dim],
+                                                  kv.second.args()[inner_dim]));
+                    constant_stride = constant_stride &&
+                                      is_simple_const(diff);
+                    //std::cout << diff << ","  << constant_stride << std::endl;
+                }
+                if (constant_stride) {
+                    std::cout << "Variable " << kv.second.args()[inner_dim]
+                              << " of function " << kv.first
+                              << " is a good candidate for vectorization"
+                              << std::endl;
+                }
+            }
         } else {
             // Parallelism in reductions can be tricky
             std::cout << std::endl;
