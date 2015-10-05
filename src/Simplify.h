@@ -91,7 +91,7 @@ template<> inline double div_imp<double>(double a, double b) {
     return a/b;
 }
 
-
+bool is_simple_const(Expr e);
 EXPORT void simplify_test();
 
 }

@@ -9,6 +9,8 @@
 #include "Target.h"
 #include "Inline.h"
 #include "FindCalls.h"
+#include "OneToOne.h"
+#include "Simplify.h"
 
 namespace Halide {
 namespace Internal {
@@ -1192,25 +1194,51 @@ void schedule_advisor(const std::vector<Function> &outputs,
 
     std::cout << std::endl;
     std::cout << "Call arguments:" << std::endl;
+
+    // Collect all the calls to a function
+    map<std::string, std::vector<const Call*> > all_calls;
     for (auto& kv:env) {
-        // Find point-wise ops and inline them. Have to be careful not to inline
-    	// functions of the form g(x) = ... ; f(x) = g(clamp(h(x), 0 , 10))
-    	FindCallArgs callArgs;
-    	kv.second.accept(&callArgs);
+
+    	FindCallArgs call_args;
+    	kv.second.accept(&call_args);
     	std::cout << kv.second.name() << ":" << std::endl;
-    	for (auto& fcall: callArgs.calls){
-    		std::cout << fcall.first << "(";
-    		for (auto& call: fcall.second){
+    	for (auto& fcalls: call_args.calls){
+    		all_calls[fcalls.first].insert(all_calls[fcalls.first].end(),
+    								  	   fcalls.second.begin(), fcalls.second.end());
+    		for (auto& call: fcalls.second){
+    			std::cout << fcalls.first << "(";
     			for(auto& arg: call->args){
-    				std::cout << arg << ", ";
+    				std::cout << arg << ",";
     			}
     			std::cout << "),";
     		}
     	}
     	std::cout << std::endl;
 
-        // Find parallel parallel dimensions. Parallelize and vectorize
     }
+
+    // Find point-wise ops and inline them. As with everything else the criteria
+	// for inlining is to balance between re-compute and locality.
+
+    for (auto& fcalls: all_calls) {
+    	// Check if all arguments to the function call over all the calls are
+    	// one-to-one. If this holds and the number of calls == 1 it is a good
+    	// candidate for inlining.
+    	std::cout << fcalls.first << ":" << std::endl;
+    	bool all_one_to_one = true;
+    	int num_calls = 0;
+    	for (auto& call: fcalls.second){
+    		num_calls++;
+    	    for(auto& arg: call->args){
+    	    	all_one_to_one = all_one_to_one && (is_one_to_one(arg)
+    	    										|| is_simple_const(arg));
+    	    }
+    	}
+    	std::cout << "all_one_to_one:" << all_one_to_one << std::endl;
+    	std::cout << "num_calls:" << num_calls << std::endl;
+    }
+
+    // Find parallel parallel dimensions. Parallelize and vectorize
 
     // Identify pointwise functions
     // Determine dimension alignments
