@@ -11,6 +11,7 @@
 #include "FindCalls.h"
 #include "OneToOne.h"
 #include "Simplify.h"
+#include <algorithm>
 
 namespace Halide {
 namespace Internal {
@@ -1167,35 +1168,47 @@ void schedule_advisor(const std::vector<Function> &outputs,
                       const std::vector<std::string> &order,
                       const std::map<std::string, Function> &env) {
     // Names of all the functions in the environment and their schedules
-	std::cout << "Current schedule and storage mapings" << std::endl;
+	std::cout << "=====================================" << std::endl;
+	std::cout << "Current schedule and storage mapings:" << std::endl;
+	std::cout << "=====================================" << std::endl;
     for (auto& kv : env) {
         std::cout << kv.first << std::endl;
-        std::cout << "store level:" << kv.second.schedule().store_level().func << ","  <<
+        std::cout << "store level:" <<
+            kv.second.schedule().store_level().func << ","  <<
             kv.second.schedule().store_level().var << std::endl;
-        std::cout << "compute level:" << kv.second.schedule().compute_level().func << "," <<
+        std::cout << "compute level:" <<
+            kv.second.schedule().compute_level().func << "," <<
             kv.second.schedule().compute_level().var << std::endl;
+        schedule_to_source(kv.second, kv.second.schedule().compute_level(),
+                                      kv.second.schedule().store_level());
     }
     std::cout << std::endl;
 
     // Find all the functions that are used in defining a function
+    std::cout << "======================" << std::endl;
     std::cout << "Function dependencies:" << std::endl;
+    std::cout << "======================" << std::endl;
     for (auto& kv: env) {
         std::cout << kv.first << " depends on:" << std::endl;
-    	for (const pair<string, Function> &callee : find_direct_calls(kv.second)) {
+    	for (const auto &callee : find_direct_calls(kv.second)) {
             std::cout << callee.first << std::endl;
     	}
     }
     std::cout << std::endl;
 
     // Realization order
+    std::cout << "==================" << std::endl;
     std::cout << "Realization order:" << std::endl;
+    std::cout << "==================" << std::endl;
     for (auto& o : order)
     	std::cout << o << std::endl;
 
-    std::cout << std::endl;
-    std::cout << "Call arguments:" << std::endl;
-
     // Collect all the calls to a function
+    std::cout << std::endl;
+    std::cout << "===============" << std::endl;
+    std::cout << "Call arguments:" << std::endl;
+    std::cout << "===============" << std::endl;
+
     map<std::string, std::vector<const Call*> > all_calls;
     for (auto& kv:env) {
 
@@ -1204,7 +1217,8 @@ void schedule_advisor(const std::vector<Function> &outputs,
     	std::cout << kv.second.name() << ":" << std::endl;
     	for (auto& fcalls: call_args.calls){
     		all_calls[fcalls.first].insert(all_calls[fcalls.first].end(),
-    								  	   fcalls.second.begin(), fcalls.second.end());
+    								  	   fcalls.second.begin(),
+                                           fcalls.second.end());
     		for (auto& call: fcalls.second){
     			std::cout << fcalls.first << "(";
     			for(auto& arg: call->args){
@@ -1217,14 +1231,19 @@ void schedule_advisor(const std::vector<Function> &outputs,
 
     }
 
-    // Find point-wise ops and inline them. As with everything else the criteria
-	// for inlining is to balance between re-compute and locality.
+    // Find point-wise ops and inline them. As with everything else the
+    // criteria for inlining is to balance between re-compute and locality.
+    std::cout << std::endl;
+    std::cout << "=========" << std::endl;
+    std::cout << "Inlining:" << std::endl;
+    std::cout << "=========" << std::endl;
 
+    std::vector<std::string> inlines;
     for (auto& fcalls: all_calls) {
     	// Check if all arguments to the function call over all the calls are
     	// one-to-one. If this holds and the number of calls == 1 it is a good
     	// candidate for inlining.
-    	std::cout << fcalls.first << ":" << std::endl;
+    	//std::cout << fcalls.first << ":" << std::endl;
     	bool all_one_to_one = true;
     	int num_calls = 0;
     	for (auto& call: fcalls.second){
@@ -1234,13 +1253,40 @@ void schedule_advisor(const std::vector<Function> &outputs,
     	    										|| is_simple_const(arg));
     	    }
     	}
-    	std::cout << "all_one_to_one:" << all_one_to_one << std::endl;
-    	std::cout << "num_calls:" << num_calls << std::endl;
+        if (all_one_to_one && num_calls == 1) {
+            std::cout << fcalls.first << " is a good candidate for inlining" <<
+                                      std::endl;
+            inlines.push_back(fcalls.first);
+        }
+    	//std::cout << "all_one_to_one:" << all_one_to_one << std::endl;
+    	//std::cout << "num_calls:" << num_calls << std::endl;
     }
 
-    // Find parallel parallel dimensions. Parallelize and vectorize
+    std::cout << "===========" << std::endl;
+    std::cout << "Parallelism:" << std::endl;
+    std::cout << "===========" << std::endl;
+    // Find parallel parallel dimensions. Parallelize and vectorize.
+    // Vectorization can be quite tricky it is hard to determine when
+    // excatly it will benefit. The simple strategy is to check if the
+    // loads have the proper stride.
+    for (auto& kv:env) {
+        // Skipping all the functions for which the choice is inline
+        if (std::find(inlines.begin(), inlines.end(), kv.first) != inlines.end())
+            continue;
+        // If a function is pure all the dimensions are parallel
+        if (kv.second.is_pure()) {
+            // Parallelize the outer most dimension
+            int outer_dim = kv.second.dimensions() - 1;
+            std::cout << "Variable " << kv.second.args()[outer_dim]
+                      << " of function " << kv.first
+                      << " is a good candidate for parallelism"
+                      << std::endl;
+        } else {
+            // Parallelism in reductions can be tricky
+            std::cout << std::endl;
+        }
+    }
 
-    // Identify pointwise functions
     // Determine dimension alignments
     // Determine affine access patters
 
@@ -1248,9 +1294,10 @@ void schedule_advisor(const std::vector<Function> &outputs,
     // Determine overlaps
 
     // How to deal with correctness in these scenarios ?
-    // What is guaranteed by the programming abstraction and what can be inferred ?
-    // Detect Parallel loops
-    // Determine Vector loops
+    //
+    // What is guaranteed by the programming abstraction
+    // and what can be inferred ?
+
 
     // A 2d/1d overlapped tiling with greedy cutoff strategy
     // Extracting a polyhedral representation ?
