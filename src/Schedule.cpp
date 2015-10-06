@@ -22,15 +22,7 @@ struct ScheduleContents {
     bool touched;
     bool allow_race_conditions;
 
-    ScheduleContents() : memoized(false), touched(false), allow_race_conditions(false) {
-    	// Changing the default to compute root
-
-        store_level.func = "";
-        store_level.var = "__root";
-        compute_level.func = "";
-        compute_level.var = "__root";
-
-    };
+    ScheduleContents() : memoized(false), touched(false), allow_race_conditions(false) {};
 };
 
 

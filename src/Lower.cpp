@@ -47,6 +47,7 @@
 #include "UnrollLoops.h"
 #include "VaryingAttributes.h"
 #include "VectorizeLoops.h"
+#include "PrintLoopNest.h"
 
 namespace Halide {
 namespace Internal {
@@ -71,7 +72,14 @@ Stmt lower(const vector<Function> &outputs, const string &pipeline_name, const T
     // Compute a realization order
     vector<string> order = realization_order(outputs, env);
 
-    schedule_advisor(outputs, order, env);
+    bool root_default = true;
+    bool auto_inline = true;
+    bool auto_par = true;
+    bool auto_vec = true;
+
+    schedule_advisor(outputs, order, env, root_default,
+    				 auto_inline, auto_par, auto_vec);
+    std::cout << print_loop_nest(outputs) << std::endl;
 
     bool any_memoized = false;
 

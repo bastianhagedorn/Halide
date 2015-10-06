@@ -31,7 +31,9 @@ Stmt schedule_functions(const std::vector<Function> &outputs,
 /** Gives advise on scheduling decisions. */
 void schedule_advisor(const std::vector<Function> &outputs,
                       const std::vector<std::string> &order,
-                      const std::map<std::string, Function> &env);
+                      std::map<std::string, Function> &env,
+                      bool root_default, bool auto_inline,
+                      bool auto_par, bool auto_vec);
 
 }
 }

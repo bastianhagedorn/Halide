@@ -1171,26 +1171,33 @@ public:
 
 void schedule_advisor(const std::vector<Function> &outputs,
                       const std::vector<std::string> &order,
-                      const std::map<std::string, Function> &env) {
+                      std::map<std::string, Function> &env,
+                      bool root_default, bool auto_inline,
+                      bool auto_par, bool auto_vec) {
     // Names of all the functions in the environment and their schedules
 	std::cout << "=====================================" << std::endl;
-	std::cout << "Current schedule and storage mapings:" << std::endl;
+	std::cout << "Original schedule and storage mapings:" << std::endl;
 	std::cout << "=====================================" << std::endl;
     for (auto& kv : env) {
-        std::cout << kv.first << std::endl;
-        std::cout << "store level:" <<
-            kv.second.schedule().store_level().func << ","  <<
-            kv.second.schedule().store_level().var << std::endl;
-        std::cout << "compute level:" <<
-            kv.second.schedule().compute_level().func << "," <<
-            kv.second.schedule().compute_level().var << std::endl;
-        schedule_to_source(kv.second, kv.second.schedule().compute_level(),
-                                      kv.second.schedule().store_level());
+        std::cout << schedule_to_source(kv.second,
+                                        kv.second.schedule().compute_level(),
+                                        kv.second.schedule().store_level())
+                  << std::endl;
     }
     std::cout << std::endl;
 
+    if (root_default) {
+    	// Changing the default to compute root
+    	for (auto& kv : env) {
+    		kv.second.schedule().store_level().func = "";
+    		kv.second.schedule().store_level().var = "__root";
+        	kv.second.schedule().compute_level().func = "";
+        	kv.second.schedule().compute_level().var = "__root";
+        	// Have to reset the splits as well
+    	}
+    }
     // Find all the functions that are used in defining a function
-    std::cout << "======================" << std::endl;
+    /*std::cout << "======================" << std::endl;
     std::cout << "Function dependencies:" << std::endl;
     std::cout << "======================" << std::endl;
     for (auto& kv: env) {
@@ -1213,111 +1220,165 @@ void schedule_advisor(const std::vector<Function> &outputs,
     std::cout << "===============" << std::endl;
     std::cout << "Call arguments:" << std::endl;
     std::cout << "===============" << std::endl;
+    */
 
     map<std::string, std::vector<const Call*> > all_calls;
     for (auto& kv:env) {
 
     	FindCallArgs call_args;
     	kv.second.accept(&call_args);
-    	std::cout << kv.second.name() << ":" << std::endl;
+    	//std::cout << kv.second.name() << ":" << std::endl;
     	for (auto& fcalls: call_args.calls){
     		all_calls[fcalls.first].insert(all_calls[fcalls.first].end(),
     								  	   fcalls.second.begin(),
                                            fcalls.second.end());
-    		for (auto& call: fcalls.second){
+    		/*for (auto& call: fcalls.second){
     			std::cout << fcalls.first << "(";
     			for(auto& arg: call->args){
     				std::cout << arg << ",";
     			}
     			std::cout << "),";
-    		}
+    		}*/
     	}
-    	std::cout << std::endl;
+    	//std::cout << std::endl;
 
     }
-
-    // Find point-wise ops and inline them. As with everything else the
-    // criteria for inlining is to balance between re-compute and locality.
-    std::cout << std::endl;
-    std::cout << "=========" << std::endl;
-    std::cout << "Inlining:" << std::endl;
-    std::cout << "=========" << std::endl;
 
     std::vector<std::string> inlines;
-    for (auto& fcalls: all_calls) {
-    	// Check if all arguments to the function call over all the calls are
-    	// one-to-one. If this holds and the number of calls == 1 it is a good
-    	// candidate for inlining.
-    	//std::cout << fcalls.first << ":" << std::endl;
-    	bool all_one_to_one = true;
-    	int num_calls = 0;
-    	for (auto& call: fcalls.second){
-    		num_calls++;
-    	    for(auto& arg: call->args){
-    	    	//std::cout << arg << std::endl;
-    	    	all_one_to_one = all_one_to_one && (is_one_to_one(arg)
-    	    										|| is_simple_const(arg));
-    	    }
-    	}
-        if (all_one_to_one && num_calls == 1) {
-            std::cout << fcalls.first << " is a good candidate for inlining" <<
-                                      std::endl;
-            inlines.push_back(fcalls.first);
-        }
-    	//std::cout << "all_one_to_one:" << all_one_to_one << std::endl;
-    	//std::cout << "num_calls:" << num_calls << std::endl;
-    }
+    if (auto_inline) {
+        // Find point-wise ops and inline them. As with everything else the
+        // criteria for inlining is to balance between re-compute and locality.
+        std::cout << std::endl;
+        std::cout << "=========" << std::endl;
+        std::cout << "Inlining:" << std::endl;
+        std::cout << "=========" << std::endl;
 
-    std::cout << "===========" << std::endl;
-    std::cout << "Parallelism:" << std::endl;
-    std::cout << "===========" << std::endl;
-    // Find parallel parallel dimensions. Parallelize and vectorize.
-    // Vectorization can be quite tricky it is hard to determine when
-    // excatly it will benefit. The simple strategy is to check if the
-    // loads have the proper stride.
-    for (auto& kv:env) {
-        // Skipping all the functions for which the choice is inline
-        if (std::find(inlines.begin(), inlines.end(), kv.first) != inlines.end())
-            continue;
-        // If a function is pure all the dimensions are parallel
-        if (kv.second.is_pure()) {
-            // Parallelize the outer most dimension
-            // Two options when the number of iterations are small
-            // -- Collapse the two outer parallel loops
-            // -- If there is only a single dimension just vectorize
-            int outer_dim = kv.second.dimensions() - 1;
-            std::cout << "Variable " << kv.second.args()[outer_dim]
-                      << " of function " << kv.first
-                      << " is a good candidate for parallelism"
-                      << std::endl;
-            // Collect all the loads and check strides
-            FindCallArgs find;
-            kv.second.accept(&find);
-            // For all the loads find the stride of the innermost loop
-            if (kv.second.dimensions() > 1) {
-                int inner_dim = 0;
-                bool constant_stride = true;
-                for(auto& load: find.loads)
-                {
-                    Expr diff = simplify(finite_difference(load[inner_dim],
-                                                  kv.second.args()[inner_dim]));
-                    constant_stride = constant_stride &&
-                                      is_simple_const(diff);
-                    //std::cout << diff << ","  << constant_stride << std::endl;
-                }
-                if (constant_stride) {
-                    std::cout << "Variable " << kv.second.args()[inner_dim]
-                              << " of function " << kv.first
-                              << " is a good candidate for vectorization"
-                              << std::endl;
+        for (auto& fcalls: all_calls) {
+            // Check if all arguments to the function call over all the calls are
+            // one-to-one. If this holds and the number of calls == 1 it is a good
+            // candidate for inlining.
+            //std::cout << fcalls.first << ":" << std::endl;
+            bool all_one_to_one = true;
+            int num_calls = 0;
+            for (auto& call: fcalls.second){
+                num_calls++;
+                for(auto& arg: call->args){
+                    //std::cout << arg << std::endl;
+                    all_one_to_one = all_one_to_one && (is_one_to_one(arg)
+                            || is_simple_const(arg));
                 }
             }
-        } else {
-            // Parallelism in reductions can be tricky
-            std::cout << std::endl;
+            if (all_one_to_one && num_calls == 1) {
+                //std::cout << fcalls.first << " is a good candidate for inlining" <<
+                //                          std::endl;
+                inlines.push_back(fcalls.first);
+                env[fcalls.first].schedule().store_level().var = "";
+                env[fcalls.first].schedule().compute_level().var = "";
+
+            }
+            //std::cout << "all_one_to_one:" << all_one_to_one << std::endl;
+            //std::cout << "num_calls:" << num_calls << std::endl;
         }
     }
 
+    if (auto_par) {
+        std::cout << "===========" << std::endl;
+        std::cout << "Parallelism:" << std::endl;
+        std::cout << "===========" << std::endl;
+        // Find parallel parallel dimensions. Parallelize and vectorize.
+        // Vectorization can be quite tricky it is hard to determine when
+        // excatly it will benefit. The simple strategy is to check if the
+        // loads have the proper stride.
+        for (auto& kv:env) {
+            // Skipping all the functions for which the choice is inline
+            if (std::find(inlines.begin(), inlines.end(), kv.first) != inlines.end())
+                continue;
+            vector<Dim> &dims = kv.second.schedule().dims();
+            // If a function is pure all the dimensions are parallel
+            if (kv.second.is_pure()) {
+                // Parallelize the outer most dimension
+                // Two options when the number of iterations are small
+                // -- Collapse the two outer parallel loops
+                // -- If there is only a single dimension just vectorize
+                int outer_dim = kv.second.dimensions() - 1;
+                //std::cout << "Variable " << kv.second.args()[outer_dim]
+                //          << " of function " << kv.first
+                //          << " is a good candidate for parallelism"
+                //          << std::endl;
+                dims[outer_dim].for_type = ForType::Parallel;
+
+                // Collect all the loads and check strides
+                FindCallArgs find;
+                kv.second.accept(&find);
+                // For all the loads find the stride of the innermost loop.
+                // The vector width also depends on the type of the operation
+                // and on the machine characteristics. For now just doing a
+                // blind 4 width vectorization.
+                if (kv.second.dimensions() > 1) {
+                    int inner_dim = 0;
+                    bool constant_stride = true;
+                    for(auto& load: find.loads)
+                    {
+                        Expr diff = simplify(finite_difference(load[inner_dim],
+                                    kv.second.args()[inner_dim]));
+                        constant_stride = constant_stride &&
+                            is_simple_const(diff);
+                        //std::cout << diff << ","  << constant_stride << std::endl;
+                    }
+                    if (constant_stride && auto_vec) {
+                        //std::cout << "Variable " << kv.second.args()[inner_dim]
+                        //          << " of function " << kv.first
+                        //          << " is a good candidate for vectorization"
+                        //          << std::endl;
+                        // Vectorization is not easy to insert in a Function object
+                        // have to revisit if this is the cleanest way to do it
+
+                        bool found = false;
+                        string old = dims[inner_dim].var;
+                        string inner_name, outer_name, old_name;
+
+                        for (size_t i = 0; (!found) && i < dims.size(); i++) {
+                            if (dims[i].var == old) {
+                                found = true;
+                                old_name = dims[i].var;
+                                inner_name = old_name + "." + "in";
+                                outer_name = old_name + "." + "out";
+                                dims.insert(dims.begin() + i, dims[i]);
+                                dims[i].var = inner_name;
+                                dims[i+1].var = outer_name;
+                                dims[i+1].pure = dims[i].pure;
+
+                                dims[i].for_type = ForType::Vectorized;
+                                std::cout << "Variable " << dims[i].var
+                                    << " of function " << kv.first
+                                    << " vectorized"
+                                    << std::endl;
+                            }
+                        }
+
+                        // Add the split to the splits list
+                        Split split = {old_name, outer_name, inner_name, 4, false, Split::SplitVar};
+                        kv.second.schedule().splits().push_back(split);
+                    }
+                }
+            } else {
+                // Parallelism in reductions can be tricky
+                std::cout << std::endl;
+            }
+        }
+    }
+    if (root_default || auto_vec || auto_par || auto_inline) {
+        std::cout << "=====================================" << std::endl;
+        std::cout << "Modified schedule and storage mapings:" << std::endl;
+        std::cout << "=====================================" << std::endl;
+
+        for (auto& kv : env) {
+            std::cout << schedule_to_source(kv.second,
+                    kv.second.schedule().compute_level(),
+                    kv.second.schedule().store_level())
+                << std::endl;
+        }
+    }
     // Determine dimension alignments
     // Determine affine access patters
 
