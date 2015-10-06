@@ -105,6 +105,7 @@ int main(int argc, char **argv) {
     }
     case 2:
     {
+        /*
         Var xi, yi;
         std::cout << "Flat schedule with parallelization + vectorization." << std::endl;
         for (int l = 1; l < levels-1; ++l) {
@@ -116,6 +117,7 @@ int main(int argc, char **argv) {
         final.tile(x, y, xi, yi, 2, 2).unroll(xi).unroll(yi);
         final.bound(x, 0, input.width());
         final.bound(y, 0, input.height());
+        */
         break;
     }
     case 3:
