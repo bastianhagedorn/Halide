@@ -4,7 +4,7 @@ all: process
 
 local_laplacian_gen: local_laplacian_gen.cpp
 	$(CXX) $(CXXFLAGS) local_laplacian_gen.cpp -g $(LIB_HALIDE) -o local_laplacian_gen -lpthread -ldl -lz \
-	$(LDFLAGS) $(LLVM_SHARED_LIBS)
+	$(LDFLAGS) $(LLVM_SHARED_LIBS) -ltinfo
 
 local_laplacian.o: local_laplacian_gen
 	./local_laplacian_gen

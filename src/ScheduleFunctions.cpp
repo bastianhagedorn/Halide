@@ -1254,6 +1254,7 @@ void schedule_advisor(const std::vector<Function> &outputs,
     	for (auto& call: fcalls.second){
     		num_calls++;
     	    for(auto& arg: call->args){
+    	    	//std::cout << arg << std::endl;
     	    	all_one_to_one = all_one_to_one && (is_one_to_one(arg)
     	    										|| is_simple_const(arg));
     	    }

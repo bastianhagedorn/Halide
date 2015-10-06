@@ -4,7 +4,7 @@ all: filter
 
 bilateral_grid: bilateral_grid.cpp
 	$(CXX) $(CXXFLAGS) bilateral_grid.cpp -g $(LIB_HALIDE) -o bilateral_grid -lpthread -ldl -lz $(LDFLAGS) \
-	$(LLVM_SHARED_LIBS)
+	$(LLVM_SHARED_LIBS) -ltinfo
 
 bilateral_grid.o: bilateral_grid
 	./bilateral_grid 8
