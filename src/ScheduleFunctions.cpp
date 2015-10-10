@@ -1169,6 +1169,16 @@ public:
     }
 };
 
+bool is_simple_const(Expr e) {
+    if (e.as<IntImm>()) return true;
+    if (e.as<UIntImm>()) return true;
+    if (e.as<FloatImm>()) return true;
+    if (const Broadcast *b = e.as<Broadcast>()) {
+        return is_simple_const(b->value);
+    }
+    return false;
+}
+
 void schedule_advisor(const std::vector<Function> &outputs,
                       const std::vector<std::string> &order,
                       std::map<std::string, Function> &env,
@@ -1187,13 +1197,18 @@ void schedule_advisor(const std::vector<Function> &outputs,
     std::cout << std::endl;
 
     if (root_default) {
-    	// Changing the default to compute root
+    	// Changing the default to compute root. This does not completely
+    	// clear the user schedules since the splits are already part of
+    	// the domain. I do not know if there is a clean way to remove them.
+    	// For now have an additional option in the benchmarks which turns
+    	// on auto-scheduling and ensures that none of the functions have
+    	// user specified schedules.
     	for (auto& kv : env) {
+    		// Have to reset the splits as well
     		kv.second.schedule().store_level().func = "";
     		kv.second.schedule().store_level().var = "__root";
         	kv.second.schedule().compute_level().func = "";
         	kv.second.schedule().compute_level().var = "__root";
-        	// Have to reset the splits as well
     	}
     }
     // Find all the functions that are used in defining a function
