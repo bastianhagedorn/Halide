@@ -167,7 +167,6 @@ Func demosaic(Func deinterleaved) {
     } else if (schedule == 1) {
         // optimized for X86
         // Don't vectorize, because sse is bad at 16-bit interleaving
-        /*
         g_r.compute_at(processed, tx);
         g_b.compute_at(processed, tx);
         r_gr.compute_at(processed, tx);
@@ -179,7 +178,6 @@ Func demosaic(Func deinterleaved) {
         // These interleave in x and y, so unrolling them helps
         output.compute_at(processed, tx).unroll(x, 2).unroll(y, 2)
             .reorder(c, x, y).bound(c, 0, 3).unroll(c);
-        */
 
     } else {
         // Basic naive schedule
@@ -273,13 +271,11 @@ Func process(Func raw, Type result_type,
         processed.parallel(ty);
     } else if (schedule == 1) {
         // Same as above, but don't vectorize (sse is bad at interleaved 16-bit ops)
-        /*
         denoised.compute_at(processed, tx);
         deinterleaved.compute_at(processed, tx);
         corrected.compute_at(processed, tx);
         processed.tile(tx, ty, xi, yi, 128, 128).reorder(xi, yi, c, tx, ty);
         processed.parallel(ty);
-        */
     } else {
         denoised.compute_root();
         deinterleaved.compute_root();

@@ -72,10 +72,10 @@ Stmt lower(const vector<Function> &outputs, const string &pipeline_name, const T
     // Compute a realization order
     vector<string> order = realization_order(outputs, env);
 
-    bool root_default = true;
-    bool auto_inline = true;
-    bool auto_par = true;
-    bool auto_vec = true;
+    bool root_default = false;
+    bool auto_inline = false;
+    bool auto_par = false;
+    bool auto_vec = false;
 
     schedule_advisor(outputs, order, env, root_default,
     				 auto_inline, auto_par, auto_vec);

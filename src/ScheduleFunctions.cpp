@@ -1278,8 +1278,9 @@ void schedule_advisor(const std::vector<Function> &outputs,
             for (auto& call: fcalls.second){
                 num_calls++;
                 for(auto& arg: call->args){
-                    //std::cout << arg << std::endl;
-                    all_one_to_one = all_one_to_one && (is_one_to_one(arg)
+                    // Skip casts to an integer
+                    bool one_to_one = (!arg.as<Cast>()) && is_one_to_one(arg);
+                    all_one_to_one = all_one_to_one && (one_to_one
                             || is_simple_const(arg));
                 }
             }
@@ -1296,7 +1297,7 @@ void schedule_advisor(const std::vector<Function> &outputs,
         }
     }
 
-    if (auto_par) {
+    if (auto_par || auto_vec) {
         std::cout << "===========" << std::endl;
         std::cout << "Parallelism:" << std::endl;
         std::cout << "===========" << std::endl;
@@ -1320,7 +1321,8 @@ void schedule_advisor(const std::vector<Function> &outputs,
                 //          << " of function " << kv.first
                 //          << " is a good candidate for parallelism"
                 //          << std::endl;
-                dims[outer_dim].for_type = ForType::Parallel;
+                if (auto_par)
+                    dims[outer_dim].for_type = ForType::Parallel;
 
                 // Collect all the loads and check strides
                 FindCallArgs find;
@@ -1372,7 +1374,7 @@ void schedule_advisor(const std::vector<Function> &outputs,
                         }
 
                         // Add the split to the splits list
-                        Split split = {old_name, outer_name, inner_name, 4, false, Split::SplitVar};
+                        Split split = {old_name, outer_name, inner_name, 8, false, Split::SplitVar};
                         kv.second.schedule().splits().push_back(split);
                     }
                 }

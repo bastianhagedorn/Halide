@@ -105,7 +105,6 @@ int main(int argc, char **argv) {
     }
     case 2:
     {
-        /*
         Var xi, yi;
         std::cout << "Flat schedule with parallelization + vectorization." << std::endl;
         for (int l = 1; l < levels-1; ++l) {
@@ -117,7 +116,6 @@ int main(int argc, char **argv) {
         final.tile(x, y, xi, yi, 2, 2).unroll(xi).unroll(yi);
         final.bound(x, 0, input.width());
         final.bound(y, 0, input.height());
-        */
         break;
     }
     case 3:
@@ -163,7 +161,7 @@ int main(int argc, char **argv) {
         break;
     }
     default:
-        assert(0 && "No schedule with this number.");
+        std::cout << "Auto-Schedule" << std::endl;
     }
 
     // JIT compile the pipeline eagerly, so we don't interfere with timing
@@ -178,9 +176,9 @@ int main(int argc, char **argv) {
     double best = benchmark(20, 1, [&]() { final.realize(out); });
     std::cout << " took " << best * 1e3 << " msec." << std::endl;
 
-    vector<Argument> args;
-    args.push_back(input);
-    final.compile_to_assembly("test.s", args, target);
+    //vector<Argument> args;
+    //args.push_back(input);
+    //final.compile_to_assembly("test.s", args, target);
 
     save_image(out, argv[2]);
 
