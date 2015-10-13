@@ -79,7 +79,7 @@ int main(int argc, char **argv) {
     if (target.has_gpu_feature()) {
         sched = 4;
     } else {
-        sched = 2;
+        sched = 5;
     }
 
     switch (sched) {

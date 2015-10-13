@@ -18,5 +18,13 @@ bilateral_grid.mp4: bilateral_grid.cpp viz.sh
 out.png: filter
 	./filter ../images/gray.png out.png 0.1 10
 
+bench: filter
+	HL_NUM_THREADS=1 numactl --physcpubind=0 ./filter ../images/gray.png out.png 0.1 10
+	HL_NUM_THREADS=4 numactl --physcpubind=0-3 ./filter ../images/gray.png out.png 0.1 10
+	HL_NUM_THREADS=8 numactl --physcpubind=0-7 ./filter ../images/gray.png out.png 0.1 10
+	HL_NUM_THREADS=16 numactl --physcpubind=0-15 ./filter ../images/gray.png out.png 0.1 10
+	HL_NUM_THREADS=32 numactl --physcpubind=0-31 ./filter ../images/gray.png out.png 0.1 10
+	HL_NUM_THREADS=64 numactl --physcpubind=0-63 ./filter ../images/gray.png out.png 0.1 10
+
 clean:
 	rm -f bilateral_grid bilateral_grid.mp4 bilateral_grid.o bilateral_grid.h bilateral filter

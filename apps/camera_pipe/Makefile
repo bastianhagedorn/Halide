@@ -33,5 +33,13 @@ out.png: process
 camera_pipe.avi: camera_pipe.cpp viz.sh $(HALIDE_TRACE_VIZ) ../../bin/HalideTraceViz
 	bash viz.sh
 
+bench: process
+	HL_NUM_THREADS=1 numactl --physcpubind=0 ./process ../images/bayer_raw.png 3700 2.0 50 5 out.png
+	HL_NUM_THREADS=4 numactl --physcpubind=0-3 ./process ../images/bayer_raw.png 3700 2.0 50 5 out.png
+	HL_NUM_THREADS=8 numactl --physcpubind=0-7 ./process ../images/bayer_raw.png 3700 2.0 50 5 out.png
+	HL_NUM_THREADS=16 numactl --physcpubind=0-15 ./process ../images/bayer_raw.png 3700 2.0 50 5 out.png
+	HL_NUM_THREADS=32 numactl --physcpubind=0-31 ./process ../images/bayer_raw.png 3700 2.0 50 5 out.png
+	HL_NUM_THREADS=64 numactl --physcpubind=0-63 ./process ../images/bayer_raw.png 3700 2.0 50 5 out.png
+
 clean:
 	rm -f out.png process curved.o camera_pipe fcam/*.o

@@ -11,11 +11,11 @@
 
 SHELL = bash
 CXX ?= g++
-LLVM_CONFIG ?= llvm-config-3.6
+LLVM_CONFIG ?= llvm-config
 LLVM_COMPONENTS= $(shell $(LLVM_CONFIG) --components)
 LLVM_VERSION = $(shell $(LLVM_CONFIG) --version | cut -b 1-3)
 LLVM_FULL_VERSION = $(shell $(LLVM_CONFIG) --version)
-CLANG ?= clang-3.6
+CLANG ?= clang
 CLANG_VERSION = $(shell $(CLANG) --version)
 LLVM_BINDIR = $(shell $(LLVM_CONFIG) --bindir)
 LLVM_LIBDIR = $(shell $(LLVM_CONFIG) --libdir)

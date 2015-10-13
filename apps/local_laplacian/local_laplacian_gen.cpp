@@ -134,6 +134,7 @@ int main(int argc, char **argv) {
         }
     } else {
         // cpu schedule
+        /*
         Var yi;
         output.parallel(y, 32).vectorize(x, 8);
         gray.compute_root().parallel(y, 32).vectorize(x, 8);
@@ -152,6 +153,7 @@ int main(int argc, char **argv) {
             gPyramid[j].compute_root().parallel(k);
             outGPyramid[j].compute_root();
         }
+        */
     }
 
     output.compile_to_file("local_laplacian", {levels, alpha, beta, input}, target);

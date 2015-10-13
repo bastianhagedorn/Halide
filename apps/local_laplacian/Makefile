@@ -15,6 +15,14 @@ process: process.cpp local_laplacian.o
 out.png: process
 	./process ../images/rgb.png 8 1 1 10 out.png
 
+bench: process
+	HL_NUM_THREADS=1 numactl --physcpubind=0 ./process ../images/rgb.png 8 1 1 10 out.png
+	HL_NUM_THREADS=4 numactl --physcpubind=0-3 ./process ../images/rgb.png 8 1 1 10 out.png
+	HL_NUM_THREADS=8 numactl --physcpubind=0-7 ./process ../images/rgb.png 8 1 1 10 out.png
+	HL_NUM_THREADS=16 numactl --physcpubind=0-15 ./process ../images/rgb.png 8 1 1 10 out.png
+	HL_NUM_THREADS=32 numactl --physcpubind=0-31 ./process ../images/rgb.png 8 1 1 10 out.png
+	HL_NUM_THREADS=64 numactl --physcpubind=0-63 ./process ../images/rgb.png 8 1 1 10 out.png
+
 # Build rules for generating a visualization of the pipeline using HalideTraceViz
 process_viz: local_laplacian_viz.o
 	$(CXX) $(CXXFLAGS) -Wall -O3 process.cpp local_laplacian_viz.o -o process_viz -lpthread -ldl $(PNGFLAGS) $(CUDA_LDFLAGS) $(OPENCL_LDFLAGS) $(OPENGL_LDFLAGS)
