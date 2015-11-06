@@ -10,6 +10,7 @@
 #include <map>
 
 #include "IR.h"
+#include "Bounds.h"
 
 namespace Halide {
 
@@ -32,6 +33,7 @@ Stmt schedule_functions(const std::vector<Function> &outputs,
 void schedule_advisor(const std::vector<Function> &outputs,
                       const std::vector<std::string> &order,
                       std::map<std::string, Function> &env,
+                      const FuncValueBounds &func_val_bounds,
                       bool root_default, bool auto_inline,
                       bool auto_par, bool auto_vec);
 
