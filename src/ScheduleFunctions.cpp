@@ -1182,12 +1182,13 @@ bool is_simple_const(Expr e) {
 void schedule_advisor(const std::vector<Function> &outputs,
                       const std::vector<std::string> &order,
                       std::map<std::string, Function> &env,
+                      const FuncValueBounds &func_val_bounds,
                       bool root_default, bool auto_inline,
                       bool auto_par, bool auto_vec) {
     // Names of all the functions in the environment and their schedules
-	std::cout << "=====================================" << std::endl;
-	std::cout << "Original schedule and storage mapings:" << std::endl;
-	std::cout << "=====================================" << std::endl;
+	std::cout << "=======================================" << std::endl;
+	std::cout << "Original schedule and storage mappings:" << std::endl;
+	std::cout << "=======================================" << std::endl;
     for (auto& kv : env) {
         std::cout << schedule_to_source(kv.second,
                                         kv.second.schedule().compute_level(),
@@ -1195,6 +1196,74 @@ void schedule_advisor(const std::vector<Function> &outputs,
                   << std::endl;
     }
     std::cout << std::endl;
+
+	std::cout << "======================================" << std::endl;
+	std::cout << "Bounds of each of the function values:" << std::endl;
+    std::cout << "======================================" << std::endl;
+    for (auto& kv: func_val_bounds) {
+        std::cout << kv.first.first << "," << kv.first.second << ":"
+                  << "(" << kv.second.min  << ","  << kv.second.max << ")"
+                  << std::endl;
+    }
+
+    // For each function compute all the regions of upstream functions required
+    // to compute a region of the function
+    for (auto& kv : env) {
+        // Define a scope and push values for each of the variables in each
+        // function
+        std::vector<Interval> bounds;
+        // Have to decide which dimensions are being tiled and restrict it to
+        // only pure functions
+        // For now assuming all dimensions are going to be tiled by size 32
+        int num_args = kv.second.args().size();
+        for (int arg = 0; arg < num_args; arg++)
+            bounds.push_back(Interval(Expr(0), Expr(31)));
+        // Compute the required regions for a tile of  output values of the
+        // function
+        std::map<string, Box> regions;
+        std::deque< pair<Function, std::vector<Interval> > > f_queue;
+        f_queue.push_back(make_pair(kv.second, bounds));
+        while(!f_queue.empty()) {
+            Function curr_f = f_queue.front().first;
+            std::vector<Interval> curr_bounds = f_queue.front().second;
+            f_queue.pop_front();
+            for (auto& val: curr_f.values()) {
+                std::map<string, Box> curr_regions;
+                Scope<Interval> curr_scope;
+                int interval_index = 0;
+                for (auto& arg: curr_f.args()) {
+                    curr_scope.push(arg, curr_bounds[interval_index]);
+                    interval_index++;
+                }
+                curr_regions = boxes_required(val, curr_scope, func_val_bounds);
+                // Each function will only appear once in curr_regions
+                for (auto& reg: curr_regions) {
+                    // Merge region with an existing region for the function in
+                    // the global map
+                    if (regions.find(reg.first) == regions.end())
+                        regions[reg.first] = reg.second;
+                    else {
+                        merge_boxes(regions[reg.first], reg.second);
+                    }
+                    f_queue.push_back(make_pair(env[reg.first], reg.second.bounds));
+                }
+            }
+        }
+        std::cout << "Function regions required for " << kv.first << ":" << std::endl;
+        for (auto& reg: regions) {
+            std::cout << reg.first;
+            for (unsigned int b = 0; b < reg.second.size(); b++)
+                std::cout << "(" << reg.second[b].min << ","
+                << reg.second[b].max << ")";
+            /*
+            for (unsigned int b = 0; b < reg.second.size(); b++)
+                std::cout << "(" << simplify(reg.second[b].min) << ","
+                << simplify(reg.second[b].max) << ")";
+            */
+            std::cout << std::endl;
+        }
+        std::cout << std::endl;
+    }
 
     if (root_default) {
     	// Changing the default to compute root. This does not completely

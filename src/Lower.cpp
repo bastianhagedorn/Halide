@@ -72,12 +72,17 @@ Stmt lower(const vector<Function> &outputs, const string &pipeline_name, const T
     // Compute a realization order
     vector<string> order = realization_order(outputs, env);
 
+    // Compute the maximum and minimum possible value of each
+    // function. Used in later bounds inference passes.
+    debug(1) << "Computing bounds of each function's value\n";
+    FuncValueBounds func_bounds = compute_function_value_bounds(order, env);
+
     bool root_default = true;
     bool auto_inline = true;
     bool auto_par = true;
     bool auto_vec = true;
 
-    schedule_advisor(outputs, order, env, root_default,
+    schedule_advisor(outputs, order, env, func_bounds, root_default,
     				 auto_inline, auto_par, auto_vec);
     std::cout << print_loop_nest(outputs) << std::endl;
 
@@ -109,10 +114,7 @@ Stmt lower(const vector<Function> &outputs, const string &pipeline_name, const T
     s = add_parameter_checks(s, t);
     debug(2) << "Lowering after injecting parameter checks:\n" << s << '\n';
 
-    // Compute the maximum and minimum possible value of each
-    // function. Used in later bounds inference passes.
-    debug(1) << "Computing bounds of each function's value\n";
-    FuncValueBounds func_bounds = compute_function_value_bounds(order, env);
+
 
     // The checks will be in terms of the symbols defined by bounds
     // inference.
