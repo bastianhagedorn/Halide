@@ -1179,6 +1179,67 @@ bool is_simple_const(Expr e) {
     return false;
 }
 
+/* Compute the regions of functions required to compute a tile of the function
+   'f' given sizes of the tile in each dimension. */
+std::map<string, Box> regions_required(Function f,
+                                       const std::vector<int> &tile_sizes,
+                                       std::map<std::string, Function> &env,
+                                       const FuncValueBounds &func_val_bounds){
+    // Define the bounds for each variable of the function
+    std::vector<Interval> bounds;
+    int num_args = f.args().size();
+
+    // The region of function 'f' for which the analysis is done ranges from
+    // zero to tile_size in each dimension. The underlying assumption is that
+    // the dependence patterns are more or less uniform over the range of the
+    // function. This assumption may not hold for more sophisticated functions.
+    // However, note that this assumption will not affect the program
+    // correctness but might result in poor performance decisions. Polyhedral
+    // analysis should be able to capture the exact dependence regions
+    // compactly. Capturing the exact dependences may lead to large
+    // approximations which are not desirable. Going forward as we encounter
+    // more exotic patterns we will need to revisit this simple analysis.
+    for (int arg = 0; arg < num_args; arg++)
+        bounds.push_back(Interval(0, tile_sizes[arg] - 1));
+
+    std::map<string, Box> regions;
+    // Add the function and its region to the queue
+    std::deque< pair<Function, std::vector<Interval> > > f_queue;
+    f_queue.push_back(make_pair(f, bounds));
+    // Recursively compute the regions required
+    while(!f_queue.empty()) {
+        Function curr_f = f_queue.front().first;
+        std::vector<Interval> curr_bounds = f_queue.front().second;
+        f_queue.pop_front();
+        for (auto& val: curr_f.values()) {
+            std::map<string, Box> curr_regions;
+            Scope<Interval> curr_scope;
+            int interval_index = 0;
+            for (auto& arg: curr_f.args()) {
+                curr_scope.push(arg, curr_bounds[interval_index]);
+                interval_index++;
+            }
+            curr_regions = boxes_required(val, curr_scope, func_val_bounds);
+            // Each function will only appear once in curr_regions
+            for (auto& reg: curr_regions) {
+                // Merge region with an existing region for the function in
+                // the global map
+                if (regions.find(reg.first) == regions.end())
+                    regions[reg.first] = reg.second;
+                else
+                    merge_boxes(regions[reg.first], reg.second);
+                f_queue.push_back(make_pair(env[reg.first], reg.second.bounds));
+            }
+        }
+    }
+    return regions;
+}
+
+/* Compute the redundant regions computed while computing a tile of the function
+   'f' given sizes of the tile in each dimension. */
+
+
+
 void schedule_advisor(const std::vector<Function> &outputs,
                       const std::vector<std::string> &order,
                       std::map<std::string, Function> &env,
@@ -1209,57 +1270,26 @@ void schedule_advisor(const std::vector<Function> &outputs,
     // For each function compute all the regions of upstream functions required
     // to compute a region of the function
     for (auto& kv : env) {
-        // Define a scope and push values for each of the variables in each
-        // function
-        std::vector<Interval> bounds;
         // Have to decide which dimensions are being tiled and restrict it to
-        // only pure functions
-        // For now assuming all dimensions are going to be tiled by size 32
+        // only pure functions or formulate a plan for reductions
         int num_args = kv.second.args().size();
+        vector<int> tile_sizes;
+        // For now assuming all dimensions are going to be tiled by size 32
         for (int arg = 0; arg < num_args; arg++)
-            bounds.push_back(Interval(Expr(0), Expr(31)));
-        // Compute the required regions for a tile of  output values of the
-        // function
-        std::map<string, Box> regions;
-        std::deque< pair<Function, std::vector<Interval> > > f_queue;
-        f_queue.push_back(make_pair(kv.second, bounds));
-        while(!f_queue.empty()) {
-            Function curr_f = f_queue.front().first;
-            std::vector<Interval> curr_bounds = f_queue.front().second;
-            f_queue.pop_front();
-            for (auto& val: curr_f.values()) {
-                std::map<string, Box> curr_regions;
-                Scope<Interval> curr_scope;
-                int interval_index = 0;
-                for (auto& arg: curr_f.args()) {
-                    curr_scope.push(arg, curr_bounds[interval_index]);
-                    interval_index++;
-                }
-                curr_regions = boxes_required(val, curr_scope, func_val_bounds);
-                // Each function will only appear once in curr_regions
-                for (auto& reg: curr_regions) {
-                    // Merge region with an existing region for the function in
-                    // the global map
-                    if (regions.find(reg.first) == regions.end())
-                        regions[reg.first] = reg.second;
-                    else {
-                        merge_boxes(regions[reg.first], reg.second);
-                    }
-                    f_queue.push_back(make_pair(env[reg.first], reg.second.bounds));
-                }
-            }
-        }
+            tile_sizes.push_back(32);
+
+        std::map<string, Box> regions = regions_required(kv.second, tile_sizes,
+                                                         env, func_val_bounds);
+
         std::cout << "Function regions required for " << kv.first << ":" << std::endl;
         for (auto& reg: regions) {
             std::cout << reg.first;
-            for (unsigned int b = 0; b < reg.second.size(); b++)
-                std::cout << "(" << reg.second[b].min << ","
-                << reg.second[b].max << ")";
-            /*
+            // Be wary of the cost of simplification and verify if this can be
+            // done better
+
             for (unsigned int b = 0; b < reg.second.size(); b++)
                 std::cout << "(" << simplify(reg.second[b].min) << ","
                 << simplify(reg.second[b].max) << ")";
-            */
             std::cout << std::endl;
         }
         std::cout << std::endl;
@@ -1271,7 +1301,9 @@ void schedule_advisor(const std::vector<Function> &outputs,
     	// the domain. I do not know if there is a clean way to remove them.
     	// For now have an additional option in the benchmarks which turns
     	// on auto-scheduling and ensures that none of the functions have
-    	// user specified schedules.
+    	// user specified schedules. This also touches on the topic of
+        // completing partial schedules specified by the user as opposed
+        // to completely erasing them.
     	for (auto& kv : env) {
     		// Have to reset the splits as well
     		kv.second.schedule().store_level().func = "";
