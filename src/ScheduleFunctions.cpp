@@ -1180,9 +1180,10 @@ bool is_simple_const(Expr e) {
 }
 
 /* Compute the regions of functions required to compute a tile of the function
-   'f' given sizes of the tile in each dimension. */
+   'f' given sizes of the tile and offset in each dimension. */
 std::map<string, Box> regions_required(Function f,
                                        const std::vector<int> &tile_sizes,
+                                       const std::vector<int> &offsets,
                                        std::map<std::string, Function> &env,
                                        const FuncValueBounds &func_val_bounds){
     // Define the bounds for each variable of the function
@@ -1200,7 +1201,7 @@ std::map<string, Box> regions_required(Function f,
     // approximations which are not desirable. Going forward as we encounter
     // more exotic patterns we will need to revisit this simple analysis.
     for (int arg = 0; arg < num_args; arg++)
-        bounds.push_back(Interval(0, tile_sizes[arg] - 1));
+        bounds.push_back(Interval(offsets[arg], tile_sizes[arg] - 1));
 
     std::map<string, Box> regions;
     // Add the function and its region to the queue
@@ -1216,7 +1217,10 @@ std::map<string, Box> regions_required(Function f,
             Scope<Interval> curr_scope;
             int interval_index = 0;
             for (auto& arg: curr_f.args()) {
-                curr_scope.push(arg, curr_bounds[interval_index]);
+                // Check simplification cost
+                Interval simple_bounds = Interval(simplify(curr_bounds[interval_index].min),
+                                                  simplify(curr_bounds[interval_index].max));
+                curr_scope.push(arg, simple_bounds);
                 interval_index++;
             }
             curr_regions = boxes_required(val, curr_scope, func_val_bounds);
@@ -1237,8 +1241,45 @@ std::map<string, Box> regions_required(Function f,
 
 /* Compute the redundant regions computed while computing a tile of the function
    'f' given sizes of the tile in each dimension. */
+std::map<string, Box> redundant_regions(Function f,
+                                        const std::vector<int> &tile_sizes,
+                                        const std::vector<int> &offsets,
+                                        std::map<std::string, Function> &env,
+                                        const FuncValueBounds &func_val_bounds){
+    std::map<string, Box> regions = regions_required(f, tile_sizes,
+                                                     offsets, env,
+                                                     func_val_bounds);
+    vector<int> shifted_offsets;
+    int num_args = f.args().size();
+    for (int arg = 0; arg < num_args; arg++)
+        shifted_offsets.push_back(offsets[arg] + tile_sizes[arg]);
 
+    std::map<string, Box> regions_shifted = regions_required(f, tile_sizes,
+                                                             shifted_offsets, env,
+                                                             func_val_bounds);
 
+    std::map<string, Box> overalps;
+    for (auto& reg: regions) {
+        if (regions_shifted.find(reg.first) == regions.end()) {
+            // Interesting case to be dealt with
+            assert(0);
+        } else {
+            Box b = reg.second;
+            Box b_shifted = regions_shifted[reg.first];
+            // The boxes should be of the same size
+            assert(b.size() == b_shifted.size());
+            // The box used makes things complicated but ignoring it for now
+            Box b_intersect;
+            for (unsigned int i = 0 ; i < b.size(); i++)
+                b_intersect.push_back(interval_intersect(b[i], b_shifted[i]));
+            // A function should appear once in the regions and therefore cannot
+            // already be present in the overlaps map
+            assert(overalps.find(reg.first) == overalps.end());
+            overalps[reg.first] = b_intersect;
+        }
+    }
+    return overalps;
+}
 
 void schedule_advisor(const std::vector<Function> &outputs,
                       const std::vector<std::string> &order,
@@ -1274,22 +1315,47 @@ void schedule_advisor(const std::vector<Function> &outputs,
         // only pure functions or formulate a plan for reductions
         int num_args = kv.second.args().size();
         vector<int> tile_sizes;
+        vector<int> offsets;
         // For now assuming all dimensions are going to be tiled by size 32
-        for (int arg = 0; arg < num_args; arg++)
+        // and they start at origin
+        for (int arg = 0; arg < num_args; arg++) {
             tile_sizes.push_back(32);
+            offsets.push_back(0);
+        }
 
         std::map<string, Box> regions = regions_required(kv.second, tile_sizes,
-                                                         env, func_val_bounds);
+                                                         offsets, env,
+                                                         func_val_bounds);
 
         std::cout << "Function regions required for " << kv.first << ":" << std::endl;
         for (auto& reg: regions) {
             std::cout << reg.first;
             // Be wary of the cost of simplification and verify if this can be
             // done better
-
+            // The simplifies do take for ever :( try local laplacian. Early
+            // simplification helps but needs further investigation.
             for (unsigned int b = 0; b < reg.second.size(); b++)
                 std::cout << "(" << simplify(reg.second[b].min) << ","
                 << simplify(reg.second[b].max) << ")";
+
+            std::cout << std::endl;
+        }
+        std::cout << std::endl;
+
+        std::map<string, Box> overlaps = redundant_regions(kv.second, tile_sizes,
+                                                           offsets, env,
+                                                           func_val_bounds);
+        std::cout << "Function region overlaps for " << kv.first << ":" << std::endl;
+        for (auto& reg: overlaps) {
+            std::cout << reg.first;
+            // Be wary of the cost of simplification and verify if this can be
+            // done better
+            // The simplifies do cost a bit :( try local laplacian. Early
+            // simplification helps but needs further investigation.
+            for (unsigned int b = 0; b < reg.second.size(); b++)
+                std::cout << "(" << simplify(reg.second[b].min) << ","
+                << simplify(reg.second[b].max) << ")";
+
             std::cout << std::endl;
         }
         std::cout << std::endl;
