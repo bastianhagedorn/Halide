@@ -1150,23 +1150,107 @@ Stmt schedule_functions(const vector<Function> &outputs,
 
 }
 
-
 /* Find all the internal halide calls in an expr */
 class FindCallArgs : public IRVisitor {
-public:
-    map<string, std::vector<const Call*> > calls;
-    vector<vector<Expr>> loads;
+    public:
+        map<string, std::vector<const Call*> > calls;
+        vector<vector<Expr>> loads;
 
-    using IRVisitor::visit;
+        using IRVisitor::visit;
 
-    void visit(const Call *call) {
-        IRVisitor::visit(call);
-        // See if images need to be included
-        if (call->call_type == Call::Halide) {
-        	calls[call->func.name()].push_back(call);
-        	loads.push_back(call->args);
+        void visit(const Call *call) {
+            // See if images need to be included
+            if (call->call_type == Call::Halide) {
+                calls[call->func.name()].push_back(call);
+                loads.push_back(call->args);
+            }
+            for (size_t i = 0; (i < call->args.size()); i++)
+                call->args[i].accept(this);
         }
-    }
+};
+
+/* Visitor for computing the cost of a single value of a function*/
+class ExprCostEarly : public IRVisitor {
+    public:
+        int ops;
+        int loads;
+
+        ExprCostEarly() {
+            ops = 0; loads = 0;
+        }
+
+        using IRVisitor::visit;
+
+        void visit(const IntImm *) {}
+        void visit(const UIntImm *) {}
+        void visit(const FloatImm *) {}
+        void visit(const StringImm *) {}
+        void visit(const Cast *) { ops+=1; }
+        void visit(const Variable *) {}
+
+        template<typename T>
+            void visit_binary_operator(const T *op) {
+                op->a.accept(this);
+                op->b.accept(this);
+                ops += 1;
+            }
+
+        void visit(const Add *op) {visit_binary_operator(op);}
+        void visit(const Sub *op) {visit_binary_operator(op);}
+        void visit(const Mul *op) {visit_binary_operator(op);}
+        void visit(const Div *op) {visit_binary_operator(op);}
+        void visit(const Mod *op) {visit_binary_operator(op);}
+        void visit(const Min *op) {visit_binary_operator(op);}
+        void visit(const Max *op) {visit_binary_operator(op);}
+        void visit(const EQ *op) {visit_binary_operator(op);}
+        void visit(const NE *op) {visit_binary_operator(op);}
+        void visit(const LT *op) {visit_binary_operator(op);}
+        void visit(const LE *op) {visit_binary_operator(op);}
+        void visit(const GT *op) {visit_binary_operator(op);}
+        void visit(const GE *op) {visit_binary_operator(op);}
+        void visit(const And *op) {visit_binary_operator(op);}
+        void visit(const Or *op) {visit_binary_operator(op);}
+
+        void visit(const Not *op) {
+            op->a.accept(this);
+            ops+=1;
+        }
+
+        void visit(const Select *op) {
+            op->condition.accept(this);
+            op->true_value.accept(this);
+            op->false_value.accept(this);
+            ops+=1;
+        }
+
+        void visit(const Call * call) {
+            if (call->call_type == Call::Halide) {
+                loads+=1;
+            } else if (call->call_type == Call::Intrinsic) {
+                ops+=1;
+            } else if (call->call_type == Call::Image) {
+                loads+=1;
+            }
+            for (size_t i = 0; (i < call->args.size()); i++)
+                call->args[i].accept(this);
+        }
+
+        void visit(const Load *) { assert(0); }
+        void visit(const Ramp *) { assert(0); }
+        void visit(const Broadcast *) { assert(0); }
+        void visit(const Let *) { assert(0); }
+        void visit(const LetStmt *) { assert(0); }
+        void visit(const AssertStmt *) {}
+        void visit(const ProducerConsumer *) { assert(0); }
+        void visit(const For *) { assert(0); }
+        void visit(const Store *) { assert(0); }
+        void visit(const Provide *) { assert(0); }
+        void visit(const Allocate *) { assert(0); }
+        void visit(const Free *) { assert(0); }
+        void visit(const Realize *) { assert(0); }
+        void visit(const Block *) { assert(0); }
+        void visit(const IfThenElse *) { assert(0); }
+        void visit(const Evaluate *) { assert(0); }
 };
 
 bool is_simple_const(Expr e) {
@@ -1306,6 +1390,20 @@ void schedule_advisor(const std::vector<Function> &outputs,
         std::cout << kv.first.first << "," << kv.first.second << ":"
                   << "(" << kv.second.min  << ","  << kv.second.max << ")"
                   << std::endl;
+
+    }
+
+	std::cout << "=================" << std::endl;
+	std::cout << "Expression costs:" << std::endl;
+    std::cout << "=================" << std::endl;
+    for (auto& kv : env) {
+        std::cout << kv.first << ":" << std::endl;
+        for (auto& e: kv.second.values()) {
+            ExprCostEarly cost_visitor;
+            e.accept(&cost_visitor);
+            std::cout << e << " loads:" << cost_visitor.loads << " ops:"
+                      << cost_visitor.ops << std::endl;
+        }
     }
 
     // For each function compute all the regions of upstream functions required
