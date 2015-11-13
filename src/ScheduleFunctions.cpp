@@ -1416,6 +1416,7 @@ void schedule_advisor(const std::vector<Function> &outputs,
 
     // For each function compute all the regions of upstream functions required
     // to compute a region of the function
+    std::map<string, std::map<string, Box> > func_dep_regions;
     for (auto& kv : env) {
         // Have to decide which dimensions are being tiled and restrict it to
         // only pure functions or formulate a plan for reductions
@@ -1432,6 +1433,7 @@ void schedule_advisor(const std::vector<Function> &outputs,
         std::map<string, Box> regions = regions_required(kv.second, tile_sizes,
                                                          offsets, env,
                                                          func_val_bounds);
+        func_dep_regions[kv.first] = regions;
 
         std::cout << "Function regions required for " << kv.first << ":" << std::endl;
         for (auto& reg: regions) {
@@ -1448,13 +1450,13 @@ void schedule_advisor(const std::vector<Function> &outputs,
         }
         std::cout << std::endl;
 
+        std::map<string, std::vector<std::map<string, Box> > > func_overlaps;
         for (int arg = 0; arg < num_args; arg++) {
             std::map<string, Box> overlaps = redundant_regions(kv.second, arg,
                                                             tile_sizes, offsets,
                                                             env, func_val_bounds);
             std::cout << "Function region overlaps for var " <<
                          kv.second.args()[arg]  << " " << kv.first << ":" << std::endl;
-
             for (auto& reg: overlaps) {
                 std::cout << reg.first;
                 // Be wary of the cost of simplification and verify if this can be
