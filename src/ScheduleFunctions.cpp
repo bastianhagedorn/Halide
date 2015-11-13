@@ -1154,7 +1154,7 @@ Stmt schedule_functions(const vector<Function> &outputs,
 class FindCallArgs : public IRVisitor {
     public:
         map<string, std::vector<const Call*> > calls;
-        vector<vector<Expr>> loads;
+        vector<vector<Expr>> load_args;
 
         using IRVisitor::visit;
 
@@ -1162,7 +1162,7 @@ class FindCallArgs : public IRVisitor {
             // See if images need to be included
             if (call->call_type == Call::Halide) {
                 calls[call->func.name()].push_back(call);
-                loads.push_back(call->args);
+                load_args.push_back(call->args);
             }
             for (size_t i = 0; (i < call->args.size()); i++)
                 call->args[i].accept(this);
@@ -1373,6 +1373,119 @@ std::map<string, Box> redundant_regions(Function f, int dir,
     return overalps;
 }
 
+int box_area(Box &b) {
+    int box_area = 1;
+    for(unsigned int i = 0; i < b.size(); i++) {
+        // Maybe should check for unsigned integers too
+        if ((b[i].min.as<IntImm>()) && (b[i].max.as<IntImm>())) {
+            const IntImm * bmin = b[i].min.as<IntImm>();
+            const IntImm * bmax = b[i].max.as<IntImm>();
+            if (bmin->value < bmax->value)
+                box_area = box_area * (bmax->value - bmin->value);
+            else {
+                box_area = 0;
+                break;
+            }
+        } else {
+            box_area = -1;
+            break;
+        }
+    }
+    return box_area;
+}
+
+int overlap_cost(string cons, Function prod,
+                 map<string, vector<map<string, Box> > > &func_overlaps) {
+    int overlap_cost = 0;
+    auto &overlaps = func_overlaps[cons];
+    int total_area = 0;
+    for (unsigned int dim = 0; dim < overlaps.size(); dim++) {
+        if (overlaps[dim].find(prod.name()) != overlaps[dim].end()) {
+            // Overlap area
+            // Count only if the overlap makes sense
+            total_area += box_area(overlaps[dim][prod.name()]);
+        }
+    }
+    overlap_cost = total_area;
+    return overlap_cost;
+}
+
+map<string, vector<Function> >
+    grouping_overlap_tile(map<string, Function> &env,
+                          map<string, map<string, Box> > &func_dep_regions,
+                          map<string, vector<map<string, Box> > > &func_overlaps,
+                          map<string, vector<pair<int, int> > > &func_cost,
+                          const FuncValueBounds &func_val_bounds) {
+
+    map<string, vector<Function> > groups;
+
+    // Determine the functions and the dimensions that can be tiled with
+    // a given set of sizes
+
+    // Place each function in its own group
+    for (auto &kv: env)
+        groups[kv.first].push_back(kv.second);
+
+    // Find consumers of each function relate groups with their children
+    map<string, vector<string> > children;
+    for (auto &kv: env) {
+        map<string, Function> calls;
+        calls = find_direct_calls(kv.second);
+        for (auto &c: calls)
+            children[c.first].push_back(kv.first);
+    }
+
+    /*
+	std::cout << "==========" << std::endl;
+	std::cout << "Consumers:" << std::endl;
+	std::cout << "==========" << std::endl;
+    for (auto& f : consumers) {
+        std::cout << f.first <<  " consumed by:" << std::endl;
+        for (auto& c: f.second)
+            std::cout << c.name() << std::endl;
+    }
+    */
+
+    // Partition the pipeline
+
+    // Iteratively merge groups until a fixpoint
+    bool fixpoint = false;
+    while(!fixpoint) {
+        // Find a group which has a single child
+        string cand_group;
+        for (auto &g: groups) {
+            if (children.find(g.first) != children.end()) {
+                int num_children = children[g.first].size();
+                if (num_children == 1) {
+                    cand_group = g.first;
+                    // Should only have a single child
+                    string child_group = children[g.first][0];
+                    // Check if the merge is profitable
+
+                    // Estimate the amount of redundant compute introduced by
+                    // overlap tiling the merged group
+                    if (true) {
+                        // Set flag for further iteration
+                        fixpoint = false;
+                        break;
+                    }
+                }
+            }
+        }
+        // Do the necessary actions required to perform the merge
+        // if there is a merge candidate
+        std::cout << "Megre candidate" << std::endl;
+        std::cout << cand_group << std::endl;
+        break;
+
+    }
+
+    // Pick a function for doing the grouping. This is a tricky chocie for now
+    // just picking one function arbitrarily
+
+    return groups;
+}
+
 void schedule_advisor(const std::vector<Function> &outputs,
                       const std::vector<std::string> &order,
                       std::map<std::string, Function> &env,
@@ -1401,22 +1514,61 @@ void schedule_advisor(const std::vector<Function> &outputs,
 
     }
 
+    // TODO infer the bounds of each function in the pipeline based on the
+    // estimates of output sizes and the parameters
+
+    /*
 	std::cout << "=================" << std::endl;
 	std::cout << "Expression costs:" << std::endl;
     std::cout << "=================" << std::endl;
+    */
+    // TODO Method for estimating cost when reductions are involved
+    // TODO explain structure
+    std::map<string, std::vector<pair<int, int> > > func_cost;
     for (auto& kv : env) {
-        std::cout << kv.first << ":" << std::endl;
+        // std::cout << kv.first << ":" << std::endl;
+        assert(func_cost.find(kv.first) == func_cost.end());
         for (auto& e: kv.second.values()) {
             ExprCostEarly cost_visitor;
             e.accept(&cost_visitor);
+            auto p = make_pair(cost_visitor.ops, cost_visitor.loads);
+            func_cost[kv.first].push_back(p);
+            /*
             std::cout << e << " loads:" << cost_visitor.loads << " ops:"
                       << cost_visitor.ops << std::endl;
+            */
         }
+    }
+
+    // TODO explain structure
+    map<std::string, std::vector<const Call*> > all_calls;
+    for (auto& kv:env) {
+
+    	FindCallArgs call_args;
+    	kv.second.accept(&call_args);
+    	//std::cout << kv.second.name() << ":" << std::endl;
+    	for (auto& fcalls: call_args.calls){
+    		all_calls[fcalls.first].insert(all_calls[fcalls.first].end(),
+    								  	   fcalls.second.begin(),
+                                           fcalls.second.end());
+    		/*for (auto& call: fcalls.second){
+    			std::cout << fcalls.first << "(";
+    			for(auto& arg: call->args){
+    				std::cout << arg << ",";
+    			}
+    			std::cout << "),";
+    		}*/
+    	}
+    	//std::cout << std::endl;
     }
 
     // For each function compute all the regions of upstream functions required
     // to compute a region of the function
+
+    // TODO explain structures
     std::map<string, std::map<string, Box> > func_dep_regions;
+    std::map<string, std::vector<std::map<string, Box> > > func_overlaps;
+
     for (auto& kv : env) {
         // Have to decide which dimensions are being tiled and restrict it to
         // only pure functions or formulate a plan for reductions
@@ -1433,8 +1585,9 @@ void schedule_advisor(const std::vector<Function> &outputs,
         std::map<string, Box> regions = regions_required(kv.second, tile_sizes,
                                                          offsets, env,
                                                          func_val_bounds);
+        assert(func_dep_regions.find(kv.first) == func_dep_regions.end());
         func_dep_regions[kv.first] = regions;
-
+        /*
         std::cout << "Function regions required for " << kv.first << ":" << std::endl;
         for (auto& reg: regions) {
             std::cout << reg.first;
@@ -1449,12 +1602,17 @@ void schedule_advisor(const std::vector<Function> &outputs,
             std::cout << std::endl;
         }
         std::cout << std::endl;
+        */
 
-        std::map<string, std::vector<std::map<string, Box> > > func_overlaps;
+        assert(func_overlaps.find(kv.first) == func_overlaps.end());
         for (int arg = 0; arg < num_args; arg++) {
             std::map<string, Box> overlaps = redundant_regions(kv.second, arg,
                                                             tile_sizes, offsets,
                                                             env, func_val_bounds);
+
+            func_overlaps[kv.first].push_back(overlaps);
+
+            /*
             std::cout << "Function region overlaps for var " <<
                          kv.second.args()[arg]  << " " << kv.first << ":" << std::endl;
             for (auto& reg: overlaps) {
@@ -1470,9 +1628,18 @@ void schedule_advisor(const std::vector<Function> &outputs,
                 std::cout << std::endl;
             }
             std::cout << std::endl;
+            */
         }
     }
 
+    std::map<std::string, std::vector<Function> > groups;
+    groups = grouping_overlap_tile(env, func_dep_regions, func_overlaps,
+                                   func_cost, func_val_bounds);
+
+    // TODO Integrating prior analysis and code generation with the grouping
+    // algorithm to do inling, vectorization and parallelism
+
+    // TODO Method for reordering and unrolling based on reuse across iterations
     if (root_default) {
     	// Changing the default to compute root. This does not completely
     	// clear the user schedules since the splits are already part of
@@ -1516,27 +1683,7 @@ void schedule_advisor(const std::vector<Function> &outputs,
     std::cout << "===============" << std::endl;
     */
 
-    map<std::string, std::vector<const Call*> > all_calls;
-    for (auto& kv:env) {
 
-    	FindCallArgs call_args;
-    	kv.second.accept(&call_args);
-    	//std::cout << kv.second.name() << ":" << std::endl;
-    	for (auto& fcalls: call_args.calls){
-    		all_calls[fcalls.first].insert(all_calls[fcalls.first].end(),
-    								  	   fcalls.second.begin(),
-                                           fcalls.second.end());
-    		/*for (auto& call: fcalls.second){
-    			std::cout << fcalls.first << "(";
-    			for(auto& arg: call->args){
-    				std::cout << arg << ",";
-    			}
-    			std::cout << "),";
-    		}*/
-    	}
-    	//std::cout << std::endl;
-
-    }
 
     std::vector<std::string> inlines;
     if (auto_inline) {
@@ -1583,7 +1730,7 @@ void schedule_advisor(const std::vector<Function> &outputs,
         // Find parallel parallel dimensions. Parallelize and vectorize.
         // Vectorization can be quite tricky it is hard to determine when
         // excatly it will benefit. The simple strategy is to check if the
-        // loads have the proper stride.
+        // arguments to the loads have the proper stride.
         for (auto& kv:env) {
             // Skipping all the functions for which the choice is inline
             if (std::find(inlines.begin(), inlines.end(), kv.first) != inlines.end())
@@ -1603,7 +1750,7 @@ void schedule_advisor(const std::vector<Function> &outputs,
                 if (auto_par)
                     dims[outer_dim].for_type = ForType::Parallel;
 
-                // Collect all the loads and check strides
+                // Collect all the load args and check strides
                 FindCallArgs find;
                 kv.second.accept(&find);
                 // For all the loads find the stride of the innermost loop.
@@ -1613,12 +1760,10 @@ void schedule_advisor(const std::vector<Function> &outputs,
                 if (kv.second.dimensions() > 1) {
                     int inner_dim = 0;
                     bool constant_stride = true;
-                    for(auto& load: find.loads)
-                    {
-                        Expr diff = simplify(finite_difference(load[inner_dim],
-                                    kv.second.args()[inner_dim]));
-                        constant_stride = constant_stride &&
-                            is_simple_const(diff);
+                    for(auto& larg: find.load_args) {
+                        Expr diff = simplify(finite_difference(larg[inner_dim],
+                                                               kv.second.args()[inner_dim]));
+                        constant_stride = constant_stride && is_simple_const(diff);
                         //std::cout << diff << ","  << constant_stride << std::endl;
                     }
                     if (constant_stride && auto_vec) {
