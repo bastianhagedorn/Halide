@@ -1376,10 +1376,11 @@ std::map<string, Box> redundant_regions(Function f, int dir,
 int box_area(Box &b) {
     int box_area = 1;
     for(unsigned int i = 0; i < b.size(); i++) {
-        // Maybe should check for unsigned integers too
+        // Maybe should check for unsigned integers and floats too
         if ((b[i].min.as<IntImm>()) && (b[i].max.as<IntImm>())) {
             const IntImm * bmin = b[i].min.as<IntImm>();
             const IntImm * bmax = b[i].max.as<IntImm>();
+            // Count only if the overlap makes sense
             if (bmin->value < bmax->value)
                 box_area = box_area * (bmax->value - bmin->value);
             else {
@@ -1387,6 +1388,8 @@ int box_area(Box &b) {
                 break;
             }
         } else {
+            std::cout << "Box area computation failed" << std::endl;
+            std::cout << "min:" << b[i].min << " max:" << b[i].max << std::endl;
             box_area = -1;
             break;
         }
@@ -1395,18 +1398,22 @@ int box_area(Box &b) {
 }
 
 int overlap_cost(string cons, Function prod,
-                 map<string, vector<map<string, Box> > > &func_overlaps) {
+                 map<string, vector<map<string, Box> > > &func_overlaps,
+                 map<string, vector<pair<int, int> > > &func_cost) {
     int overlap_cost = 0;
     auto &overlaps = func_overlaps[cons];
     int total_area = 0;
     for (unsigned int dim = 0; dim < overlaps.size(); dim++) {
-        if (overlaps[dim].find(prod.name()) != overlaps[dim].end()) {
-            // Overlap area
-            // Count only if the overlap makes sense
+        // Overlap area
+        if (overlaps[dim].find(prod.name()) != overlaps[dim].end())
             total_area += box_area(overlaps[dim][prod.name()]);
-        }
     }
-    overlap_cost = total_area;
+    auto &costs = func_cost[prod.name()];
+    // Going over each of the outputs of the function
+    int op_cost = 0;
+    for (unsigned int t = 0; t < costs.size(); t++)
+        op_cost += costs[t].first;
+    overlap_cost = total_area * (op_cost + 1);
     return overlap_cost;
 }
 
