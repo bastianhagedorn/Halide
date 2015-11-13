@@ -304,7 +304,6 @@ Expr Broadcast::make(Expr value, int width) {
 Expr Let::make(std::string name, Expr value, Expr body) {
     internal_assert(value.defined()) << "Let of undefined\n";
     internal_assert(body.defined()) << "Let of undefined\n";
-
     Let *node = new Let;
     node->type = body.type();
     node->name = name;

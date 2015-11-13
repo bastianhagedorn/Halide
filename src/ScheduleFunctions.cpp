@@ -1235,10 +1235,14 @@ class ExprCostEarly : public IRVisitor {
                 call->args[i].accept(this);
         }
 
+        void visit(const Let * let) {
+            let->value.accept(this);
+            let->body.accept(this);
+        }
+
         void visit(const Load *) { assert(0); }
         void visit(const Ramp *) { assert(0); }
         void visit(const Broadcast *) { assert(0); }
-        void visit(const Let *) { assert(0); }
         void visit(const LetStmt *) { assert(0); }
         void visit(const AssertStmt *) {}
         void visit(const ProducerConsumer *) { assert(0); }
@@ -1325,7 +1329,7 @@ std::map<string, Box> regions_required(Function f,
 
 /* Compute the redundant regions computed while computing a tile of the function
    'f' given sizes of the tile in each dimension. */
-std::map<string, Box> redundant_regions(Function f,
+std::map<string, Box> redundant_regions(Function f, int dir,
                                         const std::vector<int> &tile_sizes,
                                         const std::vector<int> &offsets,
                                         std::map<std::string, Function> &env,
@@ -1335,8 +1339,12 @@ std::map<string, Box> redundant_regions(Function f,
                                                      func_val_bounds);
     vector<int> shifted_offsets;
     int num_args = f.args().size();
-    for (int arg = 0; arg < num_args; arg++)
-        shifted_offsets.push_back(offsets[arg] + tile_sizes[arg]);
+    for (int arg = 0; arg < num_args; arg++) {
+        if (dir == arg)
+            shifted_offsets.push_back(offsets[arg] + tile_sizes[arg]);
+        else
+            shifted_offsets.push_back(offsets[arg]);
+    }
 
     std::map<string, Box> regions_shifted = regions_required(f, tile_sizes,
                                                              shifted_offsets, env,
@@ -1440,23 +1448,27 @@ void schedule_advisor(const std::vector<Function> &outputs,
         }
         std::cout << std::endl;
 
-        std::map<string, Box> overlaps = redundant_regions(kv.second, tile_sizes,
-                                                           offsets, env,
-                                                           func_val_bounds);
-        std::cout << "Function region overlaps for " << kv.first << ":" << std::endl;
-        for (auto& reg: overlaps) {
-            std::cout << reg.first;
-            // Be wary of the cost of simplification and verify if this can be
-            // done better
-            // The simplifies do cost a bit :( try local laplacian. Early
-            // simplification helps but needs further investigation.
-            for (unsigned int b = 0; b < reg.second.size(); b++)
-                std::cout << "(" << simplify(reg.second[b].min) << ","
-                << simplify(reg.second[b].max) << ")";
+        for (int arg = 0; arg < num_args; arg++) {
+            std::map<string, Box> overlaps = redundant_regions(kv.second, arg,
+                                                            tile_sizes, offsets,
+                                                            env, func_val_bounds);
+            std::cout << "Function region overlaps for var " <<
+                         kv.second.args()[arg]  << " " << kv.first << ":" << std::endl;
 
+            for (auto& reg: overlaps) {
+                std::cout << reg.first;
+                // Be wary of the cost of simplification and verify if this can be
+                // done better
+                // The simplifies do cost a bit :( try local laplacian. Early
+                // simplification helps but needs further investigation.
+                for (unsigned int b = 0; b < reg.second.size(); b++)
+                    std::cout << "(" << simplify(reg.second[b].min) << ","
+                        << simplify(reg.second[b].max) << ")";
+
+                std::cout << std::endl;
+            }
             std::cout << std::endl;
         }
-        std::cout << std::endl;
     }
 
     if (root_default) {
