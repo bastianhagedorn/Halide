@@ -1267,6 +1267,13 @@ bool is_simple_const(Expr e) {
     return false;
 }
 
+void simplify_box(Box& b) {
+    for (unsigned int i = 0; i < b.size(); i++) {
+        b[i].min = simplify(b[i].min);
+        b[i].max = simplify(b[i].max);
+    }
+}
+
 /* Compute the regions of functions required to compute a tile of the function
    'f' given sizes of the tile and offset in each dimension. */
 std::map<string, Box> regions_required(Function f,
@@ -1324,6 +1331,10 @@ std::map<string, Box> regions_required(Function f,
             }
         }
     }
+    // Simplify
+    for (auto &f : regions) {
+        simplify_box(f.second);
+    }
     return regions;
 }
 
@@ -1370,6 +1381,10 @@ std::map<string, Box> redundant_regions(Function f, int dir,
             overalps[reg.first] = b_intersect;
         }
     }
+    // Simplify
+    for (auto &f : overalps) {
+        simplify_box(f.second);
+    }
     return overalps;
 }
 
@@ -1381,8 +1396,8 @@ int box_area(Box &b) {
             const IntImm * bmin = b[i].min.as<IntImm>();
             const IntImm * bmax = b[i].max.as<IntImm>();
             // Count only if the overlap makes sense
-            if (bmin->value < bmax->value)
-                box_area = box_area * (bmax->value - bmin->value);
+            if (bmin->value <= bmax->value)
+                box_area = box_area * (bmax->value - bmin->value + 1);
             else {
                 box_area = 0;
                 break;
@@ -1397,6 +1412,34 @@ int box_area(Box &b) {
     return box_area;
 }
 
+int region_cost(string func, Box &region,
+                map<string, vector<pair<int, int> > > &func_cost) {
+    int area = box_area(region);
+    if (area < 0)
+        // Area could not be determined
+        return -1;
+    auto &costs = func_cost[func];
+    // Going over each of the outputs of the function
+    int op_cost = 0;
+    for (unsigned int t = 0; t < costs.size(); t++)
+        op_cost += costs[t].first;
+    int cost = area * (op_cost + 1);
+    return cost;
+}
+
+int region_cost(map<string, Box> &regions,
+                map<string, vector<pair<int, int> > > &func_cost) {
+    int total_cost = 0;
+    for(auto &f: regions) {
+        int cost = region_cost(f.first, f.second, func_cost);
+        if (cost < 0)
+            return -1;
+        else
+            total_cost += cost;
+    }
+    return total_cost;
+}
+
 int overlap_cost(string cons, Function prod,
                  map<string, vector<map<string, Box> > > &func_overlaps,
                  map<string, vector<pair<int, int> > > &func_cost) {
@@ -1405,8 +1448,14 @@ int overlap_cost(string cons, Function prod,
     int total_area = 0;
     for (unsigned int dim = 0; dim < overlaps.size(); dim++) {
         // Overlap area
-        if (overlaps[dim].find(prod.name()) != overlaps[dim].end())
-            total_area += box_area(overlaps[dim][prod.name()]);
+        if (overlaps[dim].find(prod.name()) != overlaps[dim].end()) {
+            int area = box_area(overlaps[dim][prod.name()]);
+            if (area >= 0)
+                total_area += area;
+            else
+                // Area could not be determined
+                return -1;
+        }
     }
     auto &costs = func_cost[prod.name()];
     // Going over each of the outputs of the function
@@ -1415,6 +1464,24 @@ int overlap_cost(string cons, Function prod,
         op_cost += costs[t].first;
     overlap_cost = total_area * (op_cost + 1);
     return overlap_cost;
+}
+
+int overlap_cost(string cons, vector<Function> &prods,
+                 map<string, vector<map<string, Box> > > &func_overlaps,
+                 map<string, vector<pair<int, int> > > &func_cost) {
+
+    int total_cost = 0;
+    for(auto& p: prods) {
+        if (p.name()!=cons) {
+            int cost = overlap_cost(cons, p, func_overlaps, func_cost);
+            if (cost < 0)
+                // Cost could not be estimated
+                return -1;
+            else
+                total_cost+=cost;
+        }
+    }
+    return total_cost;
 }
 
 map<string, vector<Function> >
@@ -1468,10 +1535,30 @@ map<string, vector<Function> >
                     // Should only have a single child
                     string child_group = children[g.first][0];
                     // Check if the merge is profitable
+                    int total_cost = 0;
+                    bool merge = true;
 
                     // Estimate the amount of redundant compute introduced by
                     // overlap tiling the merged group
-                    if (true) {
+
+                    int cost = overlap_cost(child_group, groups[child_group],
+                                            func_overlaps, func_cost);
+
+                    // This should never happen since we would not have merged
+                    // without knowing the costs
+                    if (cost < 0)
+                        assert(0);
+                    total_cost += cost;
+
+                    cost = overlap_cost(child_group, groups[cand_group],
+                                        func_overlaps, func_cost);
+                    if (cost < 0)
+                        merge = false;
+                    else
+                        total_cost += cost;
+
+                    if (merge) {
+                        std::cout << total_cost << std::endl;
                         // Set flag for further iteration
                         fixpoint = false;
                         break;
@@ -1619,7 +1706,6 @@ void schedule_advisor(const std::vector<Function> &outputs,
 
             func_overlaps[kv.first].push_back(overlaps);
 
-            /*
             std::cout << "Function region overlaps for var " <<
                          kv.second.args()[arg]  << " " << kv.first << ":" << std::endl;
             for (auto& reg: overlaps) {
@@ -1635,7 +1721,6 @@ void schedule_advisor(const std::vector<Function> &outputs,
                 std::cout << std::endl;
             }
             std::cout << std::endl;
-            */
         }
     }
 
