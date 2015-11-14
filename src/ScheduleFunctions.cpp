@@ -1547,9 +1547,8 @@ map<string, vector<Function> >
     }
     */
 
-    // Partition the pipeline
+    // Partition the pipeline by iteratively merging groups until a fixpoint
 
-    // Iteratively merge groups until a fixpoint
     bool fixpoint = false;
     while(!fixpoint) {
         string cand_group, child_group;
@@ -1557,6 +1556,8 @@ map<string, vector<Function> >
         // Find a group which has a single child
         for (auto &g: groups) {
             if (children.find(g.first) != children.end()) {
+                // Pick a function for doing the grouping. This is a tricky
+                // chocie for now picking one function arbitrarily
                 int num_children = children[g.first].size();
                 if (num_children == 1) {
                     cand_group = g.first;
@@ -1603,7 +1604,7 @@ map<string, vector<Function> >
 
                     float overlap_ratio = ((float)redun_cost)/tile_cost;
 
-                    if (overlap_ratio > 0.1)
+                    if (overlap_ratio > 0.5)
                         merge = false;
 
                     if (merge) {
@@ -1632,15 +1633,56 @@ map<string, vector<Function> >
                     if (children[i] == cand_group)
                         children[i] = child_group;
             }
-            std::cout << "Megre candidate" << std::endl;
-            std::cout << cand_group << std::endl;
+            //std::cout << "Megre candidate" << std::endl;
+            //std::cout << cand_group << std::endl;
         }
     }
 
-    // Pick a function for doing the grouping. This is a tricky chocie for now
-    // just picking one function arbitrarily
-
     return groups;
+}
+
+void disp_function_value_bounds(const FuncValueBounds &func_val_bounds) {
+
+	for (auto& kv: func_val_bounds) {
+        std::cout << kv.first.first << "," << kv.first.second << ":"
+                  << "(" << kv.second.min  << ","  << kv.second.max << ")"
+                  << std::endl;
+    }
+}
+
+void disp_schedule_and_storage_mapping(map<string, Function> &env) {
+    // Names of all the functions in the environment and their schedules
+    for (auto& kv : env) {
+        std::cout << schedule_to_source(kv.second,
+                                        kv.second.schedule().compute_level(),
+                                        kv.second.schedule().store_level())
+                  << std::endl;
+    }
+    std::cout << std::endl;
+}
+
+void disp_regions(map<string, Box> &regions) {
+    for (auto& reg: regions) {
+        std::cout << reg.first;
+        // Be wary of the cost of simplification and verify if this can be
+        // done better
+        // The simplifies do take for ever :( try local laplacian. Early
+        // simplification helps but needs further investigation.
+        for (unsigned int b = 0; b < reg.second.size(); b++)
+            std::cout << "(" << simplify(reg.second[b].min) << ","
+                << simplify(reg.second[b].max) << ")";
+
+        std::cout << std::endl;
+    }
+}
+
+void disp_grouping(map<string, vector<Function> > &groups) {
+
+    for (auto& g: groups) {
+        std::cout << "Group " <<  g.first  << " :"<< std::endl;
+        for (auto& m: g.second)
+            std::cout << m.name() << std::endl;
+    }
 }
 
 void schedule_advisor(const std::vector<Function> &outputs,
@@ -1649,36 +1691,28 @@ void schedule_advisor(const std::vector<Function> &outputs,
                       const FuncValueBounds &func_val_bounds,
                       bool root_default, bool auto_inline,
                       bool auto_par, bool auto_vec) {
-    // Names of all the functions in the environment and their schedules
-	std::cout << "=======================================" << std::endl;
-	std::cout << "Original schedule and storage mappings:" << std::endl;
-	std::cout << "=======================================" << std::endl;
-    for (auto& kv : env) {
-        std::cout << schedule_to_source(kv.second,
-                                        kv.second.schedule().compute_level(),
-                                        kv.second.schedule().store_level())
-                  << std::endl;
-    }
-    std::cout << std::endl;
 
-	std::cout << "======================================" << std::endl;
-	std::cout << "Bounds of each of the function values:" << std::endl;
-    std::cout << "======================================" << std::endl;
-    for (auto& kv: func_val_bounds) {
-        std::cout << kv.first.first << "," << kv.first.second << ":"
-                  << "(" << kv.second.min  << ","  << kv.second.max << ")"
-                  << std::endl;
-
+    if (root_default) {
+    	// Changing the default to compute root. This does not completely
+    	// clear the user schedules since the splits are already part of
+    	// the domain. I do not know if there is a clean way to remove them.
+    	// For now have an additional option in the benchmarks which turns
+    	// on auto-scheduling and ensures that none of the functions have
+    	// user specified schedules. This also touches on the topic of
+        // completing partial schedules specified by the user as opposed
+        // to completely erasing them.
+    	for (auto& kv : env) {
+    		// Have to reset the splits as well
+    		kv.second.schedule().store_level().func = "";
+    		kv.second.schedule().store_level().var = "__root";
+        	kv.second.schedule().compute_level().func = "";
+        	kv.second.schedule().compute_level().var = "__root";
+    	}
     }
 
     // TODO infer the bounds of each function in the pipeline based on the
     // estimates of output sizes and the parameters
 
-    /*
-	std::cout << "=================" << std::endl;
-	std::cout << "Expression costs:" << std::endl;
-    std::cout << "=================" << std::endl;
-    */
     // TODO Method for estimating cost when reductions are involved
     // TODO explain structure
     std::map<string, std::vector<pair<int, int> > > func_cost;
@@ -1723,8 +1757,8 @@ void schedule_advisor(const std::vector<Function> &outputs,
     // to compute a region of the function
 
     // TODO explain structures
-    std::map<string, std::map<string, Box> > func_dep_regions;
-    std::map<string, std::vector<std::map<string, Box> > > func_overlaps;
+    map<string, map<string, Box> > func_dep_regions;
+    map<string, vector<std::map<string, Box> > > func_overlaps;
 
     for (auto& kv : env) {
         // Have to decide which dimensions are being tiled and restrict it to
@@ -1739,115 +1773,43 @@ void schedule_advisor(const std::vector<Function> &outputs,
             offsets.push_back(0);
         }
 
-        std::map<string, Box> regions = regions_required(kv.second, tile_sizes,
-                                                         offsets, env,
-                                                         func_val_bounds);
+        map<string, Box> regions = regions_required(kv.second, tile_sizes,
+                                                    offsets, env, func_val_bounds);
+
         assert(func_dep_regions.find(kv.first) == func_dep_regions.end());
         func_dep_regions[kv.first] = regions;
         /*
         std::cout << "Function regions required for " << kv.first << ":" << std::endl;
-        for (auto& reg: regions) {
-            std::cout << reg.first;
-            // Be wary of the cost of simplification and verify if this can be
-            // done better
-            // The simplifies do take for ever :( try local laplacian. Early
-            // simplification helps but needs further investigation.
-            for (unsigned int b = 0; b < reg.second.size(); b++)
-                std::cout << "(" << simplify(reg.second[b].min) << ","
-                << simplify(reg.second[b].max) << ")";
-
-            std::cout << std::endl;
-        }
+        disp_regions(regions);
         std::cout << std::endl;
         */
 
         assert(func_overlaps.find(kv.first) == func_overlaps.end());
         for (int arg = 0; arg < num_args; arg++) {
-            std::map<string, Box> overlaps = redundant_regions(kv.second, arg,
-                                                            tile_sizes, offsets,
-                                                            env, func_val_bounds);
+            map<string, Box> overlaps = redundant_regions(kv.second, arg,
+                                                          tile_sizes, offsets,
+                                                          env, func_val_bounds);
 
             func_overlaps[kv.first].push_back(overlaps);
 
             std::cout << "Function region overlaps for var " <<
                          kv.second.args()[arg]  << " " << kv.first << ":" << std::endl;
-            for (auto& reg: overlaps) {
-                std::cout << reg.first;
-                // Be wary of the cost of simplification and verify if this can be
-                // done better
-                // The simplifies do cost a bit :( try local laplacian. Early
-                // simplification helps but needs further investigation.
-                for (unsigned int b = 0; b < reg.second.size(); b++)
-                    std::cout << "(" << simplify(reg.second[b].min) << ","
-                        << simplify(reg.second[b].max) << ")";
-
-                std::cout << std::endl;
-            }
+            disp_regions(overlaps);
             std::cout << std::endl;
         }
     }
 
-    std::map<std::string, std::vector<Function> > groups;
+    map<string, vector<Function> > groups;
     groups = grouping_overlap_tile(env, func_dep_regions, func_overlaps,
                                    func_cost, func_val_bounds);
 
     // TODO Integrating prior analysis and code generation with the grouping
-    // algorithm to do inling, vectorization and parallelism
+    // algorithm to do inlining, vectorization and parallelism
 
     // TODO Method for reordering and unrolling based on reuse across iterations
-    if (root_default) {
-    	// Changing the default to compute root. This does not completely
-    	// clear the user schedules since the splits are already part of
-    	// the domain. I do not know if there is a clean way to remove them.
-    	// For now have an additional option in the benchmarks which turns
-    	// on auto-scheduling and ensures that none of the functions have
-    	// user specified schedules. This also touches on the topic of
-        // completing partial schedules specified by the user as opposed
-        // to completely erasing them.
-    	for (auto& kv : env) {
-    		// Have to reset the splits as well
-    		kv.second.schedule().store_level().func = "";
-    		kv.second.schedule().store_level().var = "__root";
-        	kv.second.schedule().compute_level().func = "";
-        	kv.second.schedule().compute_level().var = "__root";
-    	}
-    }
-    // Find all the functions that are used in defining a function
-    /*std::cout << "======================" << std::endl;
-    std::cout << "Function dependencies:" << std::endl;
-    std::cout << "======================" << std::endl;
-    for (auto& kv: env) {
-        std::cout << kv.first << " depends on:" << std::endl;
-    	for (const auto &callee : find_direct_calls(kv.second)) {
-            std::cout << callee.first << std::endl;
-    	}
-    }
-    std::cout << std::endl;
-
-    // Realization order
-    std::cout << "==================" << std::endl;
-    std::cout << "Realization order:" << std::endl;
-    std::cout << "==================" << std::endl;
-    for (auto& o : order)
-    	std::cout << o << std::endl;
-
-    // Collect all the calls to a function
-    std::cout << std::endl;
-    std::cout << "===============" << std::endl;
-    std::cout << "Call arguments:" << std::endl;
-    std::cout << "===============" << std::endl;
-    */
-
-
 
     std::vector<std::string> inlines;
     if (auto_inline) {
-        // Find point-wise ops and inline them. As with everything else the
-        // criteria for inlining is to balance between re-compute and locality.
-        std::cout << std::endl;
-        std::cout << "=========" << std::endl;
-        std::cout << "Inlining:" << std::endl;
-        std::cout << "=========" << std::endl;
 
         for (auto& fcalls: all_calls) {
             // Check if all arguments to the function call over all the calls are
@@ -1859,19 +1821,19 @@ void schedule_advisor(const std::vector<Function> &outputs,
             for (auto& call: fcalls.second){
                 num_calls++;
                 for(auto& arg: call->args){
-                    // Skip casts to an integer
+                    // Skip casts to an integer there seems to be a bug lurking
+                    // in is_one_to_one
                     bool one_to_one = (!arg.as<Cast>()) && is_one_to_one(arg);
                     all_one_to_one = all_one_to_one && (one_to_one
                             || is_simple_const(arg));
                 }
             }
             if (all_one_to_one && num_calls == 1) {
-                //std::cout << fcalls.first << " is a good candidate for inlining" <<
-                //                          std::endl;
+                //std::cout << fcalls.first << " is a good candidate for inlining"
+                // << std::endl;
                 inlines.push_back(fcalls.first);
                 env[fcalls.first].schedule().store_level().var = "";
                 env[fcalls.first].schedule().compute_level().var = "";
-
             }
             //std::cout << "all_one_to_one:" << all_one_to_one << std::endl;
             //std::cout << "num_calls:" << num_calls << std::endl;
@@ -1879,9 +1841,6 @@ void schedule_advisor(const std::vector<Function> &outputs,
     }
 
     if (auto_par || auto_vec) {
-        std::cout << "===========" << std::endl;
-        std::cout << "Parallelism:" << std::endl;
-        std::cout << "===========" << std::endl;
         // Find parallel parallel dimensions. Parallelize and vectorize.
         // Vectorization can be quite tricky it is hard to determine when
         // excatly it will benefit. The simple strategy is to check if the
@@ -1963,32 +1922,9 @@ void schedule_advisor(const std::vector<Function> &outputs,
             }
         }
     }
-    if (root_default || auto_vec || auto_par || auto_inline) {
-        std::cout << "=====================================" << std::endl;
-        std::cout << "Modified schedule and storage mapings:" << std::endl;
-        std::cout << "=====================================" << std::endl;
 
-        for (auto& kv : env) {
-            std::cout << schedule_to_source(kv.second,
-                    kv.second.schedule().compute_level(),
-                    kv.second.schedule().store_level())
-                << std::endl;
-        }
-    }
-    // Determine dimension alignments
-    // Determine affine access patters
-
-    // Should bounds inference be hoisted up for this?
-    // Determine overlaps
-
-    // How to deal with correctness in these scenarios ?
-    //
-    // What is guaranteed by the programming abstraction
-    // and what can be inferred ?
-
-
-    // A 2d/1d overlapped tiling with greedy cutoff strategy
-    // Extracting a polyhedral representation ?
+    if (root_default || auto_vec || auto_par || auto_inline)
+        disp_schedule_and_storage_mapping(env);
 
 	return;
 }
