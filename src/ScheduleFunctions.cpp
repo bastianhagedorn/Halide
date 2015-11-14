@@ -1412,6 +1412,33 @@ int box_area(Box &b) {
     return box_area;
 }
 
+int region_size(string func, Box &region, map<string, Function> &env) {
+
+    Function &f = env[func];
+    int area = box_area(region);
+    if (area < 0)
+        // Area could not be determined
+        return -1;
+    int size = 0;
+    const vector<Type> &types = f.output_types();
+    for(unsigned int i = 0; i < types.size(); i++)
+        size += types[i].bytes();
+    return area * size;
+}
+
+int region_size(map<string, Box> &funcs, map<string, Function> &env) {
+
+    int total_size = 0;
+    for(auto &f: funcs) {
+        int size = region_size(f.first, f.second, env);
+        if (size < 0)
+            return -1;
+        else
+            total_size += size;
+    }
+    return total_size;
+}
+
 int region_cost(string func, Box &region,
                 map<string, vector<pair<int, int> > > &func_cost) {
     int area = box_area(region);
@@ -1525,17 +1552,18 @@ map<string, vector<Function> >
     // Iteratively merge groups until a fixpoint
     bool fixpoint = false;
     while(!fixpoint) {
+        string cand_group, child_group;
+        fixpoint = true;
         // Find a group which has a single child
-        string cand_group;
         for (auto &g: groups) {
             if (children.find(g.first) != children.end()) {
                 int num_children = children[g.first].size();
                 if (num_children == 1) {
                     cand_group = g.first;
                     // Should only have a single child
-                    string child_group = children[g.first][0];
+                    child_group = children[g.first][0];
                     // Check if the merge is profitable
-                    int total_cost = 0;
+                    int redun_cost = 0;
                     bool merge = true;
 
                     // Estimate the amount of redundant compute introduced by
@@ -1548,17 +1576,40 @@ map<string, vector<Function> >
                     // without knowing the costs
                     if (cost < 0)
                         assert(0);
-                    total_cost += cost;
+                    redun_cost += cost;
 
                     cost = overlap_cost(child_group, groups[cand_group],
                                         func_overlaps, func_cost);
                     if (cost < 0)
                         merge = false;
                     else
-                        total_cost += cost;
+                        redun_cost += cost;
+
+                    map<string, Box> all_reg = func_dep_regions[child_group];
+                    map<string, Box> group_reg;
+
+                    for (auto &f: groups[child_group])
+                        if (f.name() != child_group)
+                            group_reg[f.name()] = all_reg[f.name()];
+
+                    for (auto &f: groups[cand_group])
+                        group_reg[f.name()] = all_reg[f.name()];
+
+                    int tile_cost = region_cost(group_reg, func_cost);
+                    if (tile_cost < 0)
+                        merge = false;
+
+                    int tile_size = region_size(group_reg, env);
+
+                    float overlap_ratio = ((float)redun_cost)/tile_cost;
+
+                    if (overlap_ratio > 0.1)
+                        merge = false;
 
                     if (merge) {
-                        std::cout << total_cost << std::endl;
+                        std::cout << redun_cost << std::endl;
+                        std::cout << tile_cost << std::endl;
+                        std::cout << tile_size << std::endl;
                         // Set flag for further iteration
                         fixpoint = false;
                         break;
@@ -1568,10 +1619,22 @@ map<string, vector<Function> >
         }
         // Do the necessary actions required to perform the merge
         // if there is a merge candidate
-        std::cout << "Megre candidate" << std::endl;
-        std::cout << cand_group << std::endl;
-        break;
-
+        if (!fixpoint) {
+            vector<Function> cand_funcs = groups[cand_group];
+            groups.erase(cand_group);
+            groups[child_group].insert(groups[child_group].end(),
+                    cand_funcs.begin(), cand_funcs.end());
+            // Fix the children mapping
+            children.erase(cand_group);
+            for (auto &f: children) {
+                vector<string> &children = f.second;
+                for (unsigned int i = 0; i < children.size(); i++)
+                    if (children[i] == cand_group)
+                        children[i] = child_group;
+            }
+            std::cout << "Megre candidate" << std::endl;
+            std::cout << cand_group << std::endl;
+        }
     }
 
     // Pick a function for doing the grouping. This is a tricky chocie for now
