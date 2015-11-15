@@ -259,6 +259,7 @@ Stmt build_provide_loop_nest(Function f,
         Expr old_var_max = Variable::make(Int(32), prefix + split.old_var + ".loop_max");
         Expr old_var_min = Variable::make(Int(32), prefix + split.old_var + ".loop_min");
         if (split.is_split()) {
+            //Expr inner_extent = Min::make(likely(split.factor), old_var_max);
             Expr inner_extent = split.factor;
             Expr outer_extent = (old_var_max - old_var_min + split.factor)/split.factor;
             stmt = LetStmt::make(prefix + split.inner + ".loop_min", 0, stmt);
@@ -1403,8 +1404,8 @@ int box_area(Box &b) {
                 break;
             }
         } else {
-            std::cout << "Box area computation failed" << std::endl;
-            std::cout << "min:" << b[i].min << " max:" << b[i].max << std::endl;
+            //std::cout << "Box area computation failed" << std::endl;
+            //std::cout << "min:" << b[i].min << " max:" << b[i].max << std::endl;
             box_area = -1;
             break;
         }
@@ -1602,7 +1603,7 @@ map<string, vector<Function> >
                     if (tile_cost < 0)
                         merge = false;
 
-                    int tile_size = region_size(group_reg, env);
+                    //int tile_size = region_size(group_reg, env);
 
                     float overlap_ratio = ((float)redun_cost)/tile_cost;
 
@@ -1610,9 +1611,9 @@ map<string, vector<Function> >
                         merge = false;
 
                     if (merge) {
-                        std::cout << redun_cost << std::endl;
-                        std::cout << tile_cost << std::endl;
-                        std::cout << tile_size << std::endl;
+                        //std::cout << redun_cost << std::endl;
+                        //std::cout << tile_cost << std::endl;
+                        //std::cout << tile_size << std::endl;
                         // Set flag for further iteration
                         fixpoint = false;
                         break;
@@ -1731,28 +1732,39 @@ void parallelize_dim(Function &func, vector<int> &levels) {
     }
 }
 
+void swap_dim(Function &func, int dim1, int dim2) {
+
+    vector<Dim> &dims = func.schedule().dims();
+
+    string name1 = dims[dim1].var;
+    ForType type1 = dims[dim1].for_type;
+    bool pure1 = dims[dim1].pure;
+
+    dims[dim1].var = dims[dim2].var;
+    dims[dim1].for_type = dims[dim2].for_type;
+    dims[dim1].pure = dims[dim2].pure;
+
+    dims[dim2].var = name1;
+    dims[dim2].for_type = type1;
+    dims[dim2].pure = pure1;
+}
+
 // Splitting
 void split_dim(Function &func, int dim, int split_size) {
 
     vector<Dim> &dims = func.schedule().dims();
     // Vectorization is not easy to insert in a Function object
     // have to revisit if this is the cleanest way to do it
-    bool found = false;
     string old = dims[dim].var;
     string inner_name, outer_name, old_name;
 
-    for (size_t i = 0; (!found) && i < dims.size(); i++) {
-        if (dims[i].var == old) {
-            found = true;
-            old_name = dims[i].var;
-            inner_name = old_name + "." + "in";
-            outer_name = old_name + "." + "out";
-            dims.insert(dims.begin() + i, dims[i]);
-            dims[i].var = inner_name;
-            dims[i+1].var = outer_name;
-            dims[i+1].pure = dims[i].pure;
-        }
-    }
+    old_name = dims[dim].var;
+    inner_name = old_name + "." + "in";
+    outer_name = old_name + "." + "out";
+    dims.insert(dims.begin() + dim, dims[dim]);
+    dims[dim].var = inner_name;
+    dims[dim+1].var = outer_name;
+    dims[dim+1].pure = dims[dim].pure;
 
     // Add the split to the splits list
     Split split = {old_name, outer_name, inner_name, split_size,
@@ -1886,7 +1898,8 @@ void schedule_advisor(const vector<Function> &outputs,
             }
 
             map<string, Box> regions = regions_required(kv.second, tile_sizes,
-                    offsets, env, func_val_bounds);
+                                                        offsets, env,
+                                                        func_val_bounds);
             assert(func_dep_regions.find(kv.first) == func_dep_regions.end());
             func_dep_regions[kv.first] = regions;
             /*
@@ -1902,11 +1915,13 @@ void schedule_advisor(const vector<Function> &outputs,
                         env, func_val_bounds);
                 func_overlaps[kv.first].push_back(overlaps);
 
+                /*
                 std::cout << "Function region overlaps for var " <<
                     kv.second.args()[arg]  << " " << kv.first
                     << ":" << std::endl;
                 disp_regions(overlaps);
                 std::cout << std::endl;
+                */
             }
         }
 
@@ -1914,17 +1929,54 @@ void schedule_advisor(const vector<Function> &outputs,
 
         map<string, vector<Function> > groups;
         groups = grouping_overlap_tile(env, func_dep_regions, func_overlaps,
-                func_cost, func_val_bounds);
+                                       func_cost, func_val_bounds);
 
         // Code generation
-        /*
         for (auto& g: groups) {
             // Create a tiled traversal for the output of the group
-            // Choose which dimensions should be tiled for now tile all
+            Function &g_out = env[g.first];
+            // Choose which dimensions should be tiled. For now tile all
             // dimensions
-
+            assert(inlines.find(g_out.name()) == inlines.end());
+            vector<string> vars;
+            vector<Dim> &dims = g_out.schedule().dims();
+            vector<Bound> &bounds = g_out.schedule().bounds();
+            for(int i = 0; i < (int)dims.size() - 1; i++)
+                vars.push_back(dims[i].var);
+            for(unsigned int i = 0; i < bounds.size(); i++) {
+                std::cout << g_out.name() << " " << bounds[i].var << "("
+                          << bounds[i].min  << "," << bounds[i].extent << ")"
+                          << std::endl;
+            }
+            int inner_tile_dim = 0;
+            for(auto &v: vars) {
+                int index = -1;
+                for (int i = 0; i < (int)dims.size() - 1; i++)
+                    if (dims[i].var == v) {
+                        index = i;
+                        break;
+                    }
+                assert(index!=-1);
+                split_dim(g_out, index, 32);
+                if (inner_tile_dim < (int)dims.size() - 1) {
+                    swap_dim(g_out, index, inner_tile_dim);
+                    inner_tile_dim++;
+                }
+            }
+            if (dims.size() > 0) {
+                for (auto &m: g.second) {
+                    if (m.name() != g_out.name() ||
+                        inlines.find(m.name()) != inlines.end()) {
+                        m.schedule().store_level().func = g_out.name();
+                        m.schedule().store_level().var =
+                                                dims[inner_tile_dim].var;
+                        m.schedule().compute_level().func = g_out.name();
+                        m.schedule().compute_level().var =
+                                                dims[inner_tile_dim].var;
+                    }
+                }
+            }
         }
-        */
 
     } else {
 
