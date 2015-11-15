@@ -1731,14 +1731,14 @@ void parallelize_dim(Function &func, vector<int> &levels) {
     }
 }
 
-// Vectorization
-void vectorize_dim(Function &func, int inner_dim, int vec_width) {
+// Splitting
+void split_dim(Function &func, int dim, int split_size) {
 
     vector<Dim> &dims = func.schedule().dims();
     // Vectorization is not easy to insert in a Function object
     // have to revisit if this is the cleanest way to do it
     bool found = false;
-    string old = dims[inner_dim].var;
+    string old = dims[dim].var;
     string inner_name, outer_name, old_name;
 
     for (size_t i = 0; (!found) && i < dims.size(); i++) {
@@ -1751,18 +1751,23 @@ void vectorize_dim(Function &func, int inner_dim, int vec_width) {
             dims[i].var = inner_name;
             dims[i+1].var = outer_name;
             dims[i+1].pure = dims[i].pure;
-
-            dims[i].for_type = ForType::Vectorized;
-
-            std::cout << "Variable " << dims[i].var << " of function "
-                      << func.name() << " vectorized" << std::endl;
         }
     }
 
     // Add the split to the splits list
-    Split split = {old_name, outer_name, inner_name, vec_width,
+    Split split = {old_name, outer_name, inner_name, split_size,
                    false, Split::SplitVar};
     func.schedule().splits().push_back(split);
+}
+
+// Vectorization
+void vectorize_dim(Function &func, int dim, int vec_width) {
+
+    vector<Dim> &dims = func.schedule().dims();
+    split_dim(func, dim, vec_width);
+    dims[dim].for_type = ForType::Vectorized;
+    std::cout << "Variable " << dims[dim].var << " of function "
+              << func.name() << " vectorized" << std::endl;
 }
 
 void simple_vectorize(Function &func, int inner_dim, int vec_width) {
@@ -1779,9 +1784,6 @@ void simple_vectorize(Function &func, int inner_dim, int vec_width) {
     if (constant_stride)
         vectorize_dim(func, inner_dim, vec_width);
 }
-
-// Tiling
-
 
 void schedule_advisor(const vector<Function> &outputs,
                       const vector<string> &order,
@@ -1858,7 +1860,7 @@ void schedule_advisor(const vector<Function> &outputs,
     if (auto_inline)
         inlines = simple_inline(all_calls, env);
 
-    bool overlap_tile = true;
+    bool overlap_tile = false;
 
     if (overlap_tile) {
         // For each function compute all the regions of upstream functions required
@@ -1915,41 +1917,51 @@ void schedule_advisor(const vector<Function> &outputs,
                 func_cost, func_val_bounds);
 
         // Code generation
-    }
+        /*
+        for (auto& g: groups) {
+            // Create a tiled traversal for the output of the group
+            // Choose which dimensions should be tiled for now tile all
+            // dimensions
+
+        }
+        */
+
+    } else {
 
     // TODO Integrating prior analysis and code generation with the grouping
     // algorithm to do inlining, vectorization and parallelism
 
     // TODO Method for reordering and unrolling based on reuse across iterations
 
-    if (auto_par || auto_vec) {
-        // Parallelize and vectorize
-        // Vectorization can be quite tricky it is hard to determine when
-        // exactly it will benefit. The simple strategy is to check if the
-        // arguments to the loads have the proper stride.
-        for (auto& kv:env) {
-            // Skipping all the functions for which the choice is inline
-            if (inlines.find(kv.first) != inlines.end())
-                continue;
-            // If a function is pure all the dimensions are parallel
-            if (kv.second.is_pure()) {
-                // Parallelize the outer most dimension
-                // Two options when the number of iterations are small
-                // -- Collapse the two outer parallel loops
-                // -- If there is only a single dimension just vectorize
-                int outer_dim = kv.second.dimensions() - 1;
-                vector<int> levels;
-                levels.push_back(outer_dim);
-                if (auto_par)
-                    parallelize_dim(kv.second, levels);
-                // The vector width also depends on the type of the operation
-                // and on the machine characteristics. For now just doing a
-                // blind 8 width vectorization.
-                if (kv.second.dimensions() > 1 && auto_vec)
-                    simple_vectorize(kv.second, 0, 8);
-            } else {
-                // Parallelism in reductions can be tricky
-                std::cout << std::endl;
+        if (auto_par || auto_vec) {
+            // Parallelize and vectorize
+            // Vectorization can be quite tricky it is hard to determine when
+            // exactly it will benefit. The simple strategy is to check if the
+            // arguments to the loads have the proper stride.
+            for (auto& kv:env) {
+                // Skipping all the functions for which the choice is inline
+                if (inlines.find(kv.first) != inlines.end())
+                    continue;
+                // If a function is pure all the dimensions are parallel
+                if (kv.second.is_pure()) {
+                    // Parallelize the outer most dimension
+                    // Two options when the number of iterations are small
+                    // -- Collapse the two outer parallel loops
+                    // -- If there is only a single dimension just vectorize
+                    int outer_dim = kv.second.dimensions() - 1;
+                    vector<int> levels;
+                    levels.push_back(outer_dim);
+                    if (auto_par)
+                        parallelize_dim(kv.second, levels);
+                    // The vector width also depends on the type of the operation
+                    // and on the machine characteristics. For now just doing a
+                    // blind 8 width vectorization.
+                    if (kv.second.dimensions() > 1 && auto_vec)
+                        simple_vectorize(kv.second, 0, 8);
+                } else {
+                    // Parallelism in reductions can be tricky
+                    std::cout << std::endl;
+                }
             }
         }
     }
