@@ -1558,6 +1558,8 @@ map<string, vector<Function> >
             if (children.find(g.first) != children.end()) {
                 // Pick a function for doing the grouping. This is a tricky
                 // chocie for now picking one function arbitrarily
+
+                // TODO be careful about inputs and outputs to the pipeline
                 int num_children = children[g.first].size();
                 if (num_children == 1) {
                     cand_group = g.first;
@@ -1676,6 +1678,34 @@ void disp_regions(map<string, Box> &regions) {
     }
 }
 
+map<string, string> simple_inline(map<string, vector<const Call*>> &all_calls,
+                                  map<string, Function> &env) {
+    map<string, string> inlines;
+    for (auto& fcalls: all_calls) {
+        // Check if all arguments to the function call over all the calls are
+        // one-to-one. If this holds and the number of calls == 1 it is a good
+        // candidate for inlining.
+        bool all_one_to_one = true;
+        int num_calls = 0;
+        for (auto& call: fcalls.second){
+            num_calls++;
+            for(auto& arg: call->args){
+                // Skip casts to an integer there seems to be a bug lurking
+                // in is_one_to_one
+                bool one_to_one = (!arg.as<Cast>()) && is_one_to_one(arg);
+                all_one_to_one = all_one_to_one && (one_to_one
+                        || is_simple_const(arg));
+            }
+        }
+        if (all_one_to_one && num_calls == 1) {
+            inlines[fcalls.first] = fcalls.second[0]->func.name();
+            env[fcalls.first].schedule().store_level().var = "";
+            env[fcalls.first].schedule().compute_level().var = "";
+        }
+    }
+    return inlines;
+}
+
 void disp_grouping(map<string, vector<Function> > &groups) {
 
     for (auto& g: groups) {
@@ -1685,9 +1715,49 @@ void disp_grouping(map<string, vector<Function> > &groups) {
     }
 }
 
-void schedule_advisor(const std::vector<Function> &outputs,
-                      const std::vector<std::string> &order,
-                      std::map<std::string, Function> &env,
+// Helpers for schedule transformation
+
+// Vectorization
+void vectorize_dim(Function &func, int inner_dim, int vec_width) {
+
+    vector<Dim> &dims = func.schedule().dims();
+    // Vectorization is not easy to insert in a Function object
+    // have to revisit if this is the cleanest way to do it
+    bool found = false;
+    string old = dims[inner_dim].var;
+    string inner_name, outer_name, old_name;
+
+    for (size_t i = 0; (!found) && i < dims.size(); i++) {
+        if (dims[i].var == old) {
+            found = true;
+            old_name = dims[i].var;
+            inner_name = old_name + "." + "in";
+            outer_name = old_name + "." + "out";
+            dims.insert(dims.begin() + i, dims[i]);
+            dims[i].var = inner_name;
+            dims[i+1].var = outer_name;
+            dims[i+1].pure = dims[i].pure;
+
+            dims[i].for_type = ForType::Vectorized;
+
+            std::cout << "Variable " << dims[i].var << " of function "
+                      << func.name() << " vectorized" << std::endl;
+        }
+    }
+
+    // Add the split to the splits list
+    Split split = {old_name, outer_name, inner_name, vec_width,
+                   false, Split::SplitVar};
+    func.schedule().splits().push_back(split);
+}
+
+// Tiling
+
+// Parallel
+
+void schedule_advisor(const vector<Function> &outputs,
+                      const vector<string> &order,
+                      map<string, Function> &env,
                       const FuncValueBounds &func_val_bounds,
                       bool root_default, bool auto_inline,
                       bool auto_par, bool auto_vec) {
@@ -1732,7 +1802,7 @@ void schedule_advisor(const std::vector<Function> &outputs,
     }
 
     // TODO explain structure
-    map<std::string, std::vector<const Call*> > all_calls;
+    map<string, vector<const Call*> > all_calls;
     for (auto& kv:env) {
 
     	FindCallArgs call_args;
@@ -1753,101 +1823,79 @@ void schedule_advisor(const std::vector<Function> &outputs,
     	//std::cout << std::endl;
     }
 
-    // For each function compute all the regions of upstream functions required
-    // to compute a region of the function
+    // Make obvious inline decisions early. Grouping downstream may end up with
+    // a function that is inlined as the representative of the group. This will
+    // result in a conflicting schedule. TODO Handle this case properly.
+    map<string, string> inlines;
+    if (auto_inline)
+        inlines = simple_inline(all_calls, env);
 
-    // TODO explain structures
-    map<string, map<string, Box> > func_dep_regions;
-    map<string, vector<std::map<string, Box> > > func_overlaps;
+    bool overlap_tile = true;
 
-    for (auto& kv : env) {
-        // Have to decide which dimensions are being tiled and restrict it to
-        // only pure functions or formulate a plan for reductions
-        int num_args = kv.second.args().size();
-        vector<int> tile_sizes;
-        vector<int> offsets;
-        // For now assuming all dimensions are going to be tiled by size 32
-        // and they start at origin
-        for (int arg = 0; arg < num_args; arg++) {
-            tile_sizes.push_back(32);
-            offsets.push_back(0);
+    if (overlap_tile) {
+        // For each function compute all the regions of upstream functions required
+        // to compute a region of the function
+
+        // TODO explain structures
+        map<string, map<string, Box> > func_dep_regions;
+        map<string, vector<std::map<string, Box> > > func_overlaps;
+
+        for (auto& kv : env) {
+            // Have to decide which dimensions are being tiled and restrict it to
+            // only pure functions or formulate a plan for reductions
+            int num_args = kv.second.args().size();
+            vector<int> tile_sizes;
+            vector<int> offsets;
+            // For now assuming all dimensions are going to be tiled by size 32
+            // and they start at origin
+            for (int arg = 0; arg < num_args; arg++) {
+                tile_sizes.push_back(32);
+                offsets.push_back(0);
+            }
+
+            map<string, Box> regions = regions_required(kv.second, tile_sizes,
+                    offsets, env, func_val_bounds);
+            assert(func_dep_regions.find(kv.first) == func_dep_regions.end());
+            func_dep_regions[kv.first] = regions;
+            /*
+               std::cout << "Function regions required for " << kv.first << ":" << std::endl;
+               disp_regions(regions);
+               std::cout << std::endl;
+             */
+
+            assert(func_overlaps.find(kv.first) == func_overlaps.end());
+            for (int arg = 0; arg < num_args; arg++) {
+                map<string, Box> overlaps = redundant_regions(kv.second, arg,
+                        tile_sizes, offsets,
+                        env, func_val_bounds);
+                func_overlaps[kv.first].push_back(overlaps);
+
+                std::cout << "Function region overlaps for var " <<
+                    kv.second.args()[arg]  << " " << kv.first
+                    << ":" << std::endl;
+                disp_regions(overlaps);
+                std::cout << std::endl;
+            }
         }
 
-        map<string, Box> regions = regions_required(kv.second, tile_sizes,
-                                                    offsets, env, func_val_bounds);
-
-        assert(func_dep_regions.find(kv.first) == func_dep_regions.end());
-        func_dep_regions[kv.first] = regions;
-        /*
-        std::cout << "Function regions required for " << kv.first << ":" << std::endl;
-        disp_regions(regions);
-        std::cout << std::endl;
-        */
-
-        assert(func_overlaps.find(kv.first) == func_overlaps.end());
-        for (int arg = 0; arg < num_args; arg++) {
-            map<string, Box> overlaps = redundant_regions(kv.second, arg,
-                                                          tile_sizes, offsets,
-                                                          env, func_val_bounds);
-
-            func_overlaps[kv.first].push_back(overlaps);
-
-            std::cout << "Function region overlaps for var " <<
-                         kv.second.args()[arg]  << " " << kv.first << ":" << std::endl;
-            disp_regions(overlaps);
-            std::cout << std::endl;
-        }
+        map<string, vector<Function> > groups;
+        groups = grouping_overlap_tile(env, func_dep_regions, func_overlaps,
+                func_cost, func_val_bounds);
     }
-
-    map<string, vector<Function> > groups;
-    groups = grouping_overlap_tile(env, func_dep_regions, func_overlaps,
-                                   func_cost, func_val_bounds);
 
     // TODO Integrating prior analysis and code generation with the grouping
     // algorithm to do inlining, vectorization and parallelism
 
     // TODO Method for reordering and unrolling based on reuse across iterations
 
-    std::vector<std::string> inlines;
-    if (auto_inline) {
-
-        for (auto& fcalls: all_calls) {
-            // Check if all arguments to the function call over all the calls are
-            // one-to-one. If this holds and the number of calls == 1 it is a good
-            // candidate for inlining.
-            //std::cout << fcalls.first << ":" << std::endl;
-            bool all_one_to_one = true;
-            int num_calls = 0;
-            for (auto& call: fcalls.second){
-                num_calls++;
-                for(auto& arg: call->args){
-                    // Skip casts to an integer there seems to be a bug lurking
-                    // in is_one_to_one
-                    bool one_to_one = (!arg.as<Cast>()) && is_one_to_one(arg);
-                    all_one_to_one = all_one_to_one && (one_to_one
-                            || is_simple_const(arg));
-                }
-            }
-            if (all_one_to_one && num_calls == 1) {
-                //std::cout << fcalls.first << " is a good candidate for inlining"
-                // << std::endl;
-                inlines.push_back(fcalls.first);
-                env[fcalls.first].schedule().store_level().var = "";
-                env[fcalls.first].schedule().compute_level().var = "";
-            }
-            //std::cout << "all_one_to_one:" << all_one_to_one << std::endl;
-            //std::cout << "num_calls:" << num_calls << std::endl;
-        }
-    }
-
     if (auto_par || auto_vec) {
-        // Find parallel parallel dimensions. Parallelize and vectorize.
+        // Parallelize and vectorize.
         // Vectorization can be quite tricky it is hard to determine when
-        // excatly it will benefit. The simple strategy is to check if the
+        // exactly it will benefit. The simple strategy is to check if the
         // arguments to the loads have the proper stride.
         for (auto& kv:env) {
             // Skipping all the functions for which the choice is inline
-            if (std::find(inlines.begin(), inlines.end(), kv.first) != inlines.end())
+            if (inlines.find(kv.first) != inlines.end())
                 continue;
             vector<Dim> &dims = kv.second.schedule().dims();
             // If a function is pure all the dimensions are parallel
@@ -1859,7 +1907,7 @@ void schedule_advisor(const std::vector<Function> &outputs,
                 int outer_dim = kv.second.dimensions() - 1;
                 //std::cout << "Variable " << kv.second.args()[outer_dim]
                 //          << " of function " << kv.first
-                //          << " is a good candidate for parallelism"
+                //          << " parallelized"
                 //          << std::endl;
                 if (auto_par)
                     dims[outer_dim].for_type = ForType::Parallel;
@@ -1880,41 +1928,9 @@ void schedule_advisor(const std::vector<Function> &outputs,
                         constant_stride = constant_stride && is_simple_const(diff);
                         //std::cout << diff << ","  << constant_stride << std::endl;
                     }
-                    if (constant_stride && auto_vec) {
-                        //std::cout << "Variable " << kv.second.args()[inner_dim]
-                        //          << " of function " << kv.first
-                        //          << " is a good candidate for vectorization"
-                        //          << std::endl;
-                        // Vectorization is not easy to insert in a Function object
-                        // have to revisit if this is the cleanest way to do it
+                    if (constant_stride && auto_vec)
+                       vectorize_dim(kv.second, inner_dim, 8);
 
-                        bool found = false;
-                        string old = dims[inner_dim].var;
-                        string inner_name, outer_name, old_name;
-
-                        for (size_t i = 0; (!found) && i < dims.size(); i++) {
-                            if (dims[i].var == old) {
-                                found = true;
-                                old_name = dims[i].var;
-                                inner_name = old_name + "." + "in";
-                                outer_name = old_name + "." + "out";
-                                dims.insert(dims.begin() + i, dims[i]);
-                                dims[i].var = inner_name;
-                                dims[i+1].var = outer_name;
-                                dims[i+1].pure = dims[i].pure;
-
-                                dims[i].for_type = ForType::Vectorized;
-                                std::cout << "Variable " << dims[i].var
-                                    << " of function " << kv.first
-                                    << " vectorized"
-                                    << std::endl;
-                            }
-                        }
-
-                        // Add the split to the splits list
-                        Split split = {old_name, outer_name, inner_name, 8, false, Split::SplitVar};
-                        kv.second.schedule().splits().push_back(split);
-                    }
                 }
             } else {
                 // Parallelism in reductions can be tricky
