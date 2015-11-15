@@ -1715,7 +1715,21 @@ void disp_grouping(map<string, vector<Function> > &groups) {
     }
 }
 
-// Helpers for schedule transformation
+// Helpers for schedule surgery
+
+// Parallel
+void parallelize_dim(Function &func, vector<int> &levels) {
+
+    vector<Dim> &dims = func.schedule().dims();
+    // TODO Provide an option for collapsing all the parallel
+    // loops
+    for (auto dim: levels) {
+        dims[dim].for_type = ForType::Parallel;
+        std::cout << "Variable " << func.args()[dim]
+                  << " of function " << func.name() << " parallelized"
+                  << std::endl;
+    }
+}
 
 // Vectorization
 void vectorize_dim(Function &func, int inner_dim, int vec_width) {
@@ -1751,9 +1765,23 @@ void vectorize_dim(Function &func, int inner_dim, int vec_width) {
     func.schedule().splits().push_back(split);
 }
 
+void simple_vectorize(Function &func, int inner_dim, int vec_width) {
+    // Collect all the load args
+    FindCallArgs find;
+    func.accept(&find);
+    // For all the loads find the stride of the innermost loop
+    bool constant_stride = true;
+    for(auto& larg: find.load_args) {
+        Expr diff = simplify(finite_difference(larg[inner_dim],
+                             func.args()[inner_dim]));
+        constant_stride = constant_stride && is_simple_const(diff);
+    }
+    if (constant_stride)
+        vectorize_dim(func, inner_dim, vec_width);
+}
+
 // Tiling
 
-// Parallel
 
 void schedule_advisor(const vector<Function> &outputs,
                       const vector<string> &order,
@@ -1836,6 +1864,8 @@ void schedule_advisor(const vector<Function> &outputs,
         // For each function compute all the regions of upstream functions required
         // to compute a region of the function
 
+        // Dependence analysis
+
         // TODO explain structures
         map<string, map<string, Box> > func_dep_regions;
         map<string, vector<std::map<string, Box> > > func_overlaps;
@@ -1878,9 +1908,13 @@ void schedule_advisor(const vector<Function> &outputs,
             }
         }
 
+        // Grouping
+
         map<string, vector<Function> > groups;
         groups = grouping_overlap_tile(env, func_dep_regions, func_overlaps,
                 func_cost, func_val_bounds);
+
+        // Code generation
     }
 
     // TODO Integrating prior analysis and code generation with the grouping
@@ -1889,7 +1923,7 @@ void schedule_advisor(const vector<Function> &outputs,
     // TODO Method for reordering and unrolling based on reuse across iterations
 
     if (auto_par || auto_vec) {
-        // Parallelize and vectorize.
+        // Parallelize and vectorize
         // Vectorization can be quite tricky it is hard to determine when
         // exactly it will benefit. The simple strategy is to check if the
         // arguments to the loads have the proper stride.
@@ -1897,7 +1931,6 @@ void schedule_advisor(const vector<Function> &outputs,
             // Skipping all the functions for which the choice is inline
             if (inlines.find(kv.first) != inlines.end())
                 continue;
-            vector<Dim> &dims = kv.second.schedule().dims();
             // If a function is pure all the dimensions are parallel
             if (kv.second.is_pure()) {
                 // Parallelize the outer most dimension
@@ -1905,33 +1938,15 @@ void schedule_advisor(const vector<Function> &outputs,
                 // -- Collapse the two outer parallel loops
                 // -- If there is only a single dimension just vectorize
                 int outer_dim = kv.second.dimensions() - 1;
-                //std::cout << "Variable " << kv.second.args()[outer_dim]
-                //          << " of function " << kv.first
-                //          << " parallelized"
-                //          << std::endl;
+                vector<int> levels;
+                levels.push_back(outer_dim);
                 if (auto_par)
-                    dims[outer_dim].for_type = ForType::Parallel;
-
-                // Collect all the load args and check strides
-                FindCallArgs find;
-                kv.second.accept(&find);
-                // For all the loads find the stride of the innermost loop.
+                    parallelize_dim(kv.second, levels);
                 // The vector width also depends on the type of the operation
                 // and on the machine characteristics. For now just doing a
-                // blind 4 width vectorization.
-                if (kv.second.dimensions() > 1) {
-                    int inner_dim = 0;
-                    bool constant_stride = true;
-                    for(auto& larg: find.load_args) {
-                        Expr diff = simplify(finite_difference(larg[inner_dim],
-                                                               kv.second.args()[inner_dim]));
-                        constant_stride = constant_stride && is_simple_const(diff);
-                        //std::cout << diff << ","  << constant_stride << std::endl;
-                    }
-                    if (constant_stride && auto_vec)
-                       vectorize_dim(kv.second, inner_dim, 8);
-
-                }
+                // blind 8 width vectorization.
+                if (kv.second.dimensions() > 1 && auto_vec)
+                    simple_vectorize(kv.second, 0, 8);
             } else {
                 // Parallelism in reductions can be tricky
                 std::cout << std::endl;
