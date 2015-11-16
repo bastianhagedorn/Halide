@@ -153,7 +153,7 @@ Stmt build_provide_loop_nest(Function f,
                            << "divides the extent of " << split.old_var
                            << " (" << iter->second << "). This is required when "
                            << "the split originates from an RVar.\n";
-            } else if (!is_update) {
+            } else if (!is_update  && !split.partial) {
                 // Adjust the base downwards to not compute off the
                 // end of the realization.
 
@@ -259,8 +259,11 @@ Stmt build_provide_loop_nest(Function f,
         Expr old_var_max = Variable::make(Int(32), prefix + split.old_var + ".loop_max");
         Expr old_var_min = Variable::make(Int(32), prefix + split.old_var + ".loop_min");
         if (split.is_split()) {
-            //Expr inner_extent = Min::make(likely(split.factor), old_var_max);
-            Expr inner_extent = split.factor;
+            Expr inner_extent;
+            if (split.partial)
+                inner_extent = Min::make(likely(split.factor), old_var_max);
+            else
+                inner_extent = split.factor;
             Expr outer_extent = (old_var_max - old_var_min + split.factor)/split.factor;
             stmt = LetStmt::make(prefix + split.inner + ".loop_min", 0, stmt);
             stmt = LetStmt::make(prefix + split.inner + ".loop_max", inner_extent-1, stmt);
@@ -1719,14 +1722,14 @@ void disp_grouping(map<string, vector<Function> > &groups) {
 // Helpers for schedule surgery
 
 // Parallel
-void parallelize_dim(Function &func, vector<int> &levels) {
+void parallelize_dim(Function &func, vector<int> levels) {
 
     vector<Dim> &dims = func.schedule().dims();
     // TODO Provide an option for collapsing all the parallel
     // loops
     for (auto dim: levels) {
         dims[dim].for_type = ForType::Parallel;
-        std::cout << "Variable " << func.args()[dim]
+        std::cout << "Variable " << dims[dim].var
                   << " of function " << func.name() << " parallelized"
                   << std::endl;
     }
@@ -1750,7 +1753,7 @@ void swap_dim(Function &func, int dim1, int dim2) {
 }
 
 // Splitting
-void split_dim(Function &func, int dim, int split_size) {
+void split_dim(Function &func, int dim, int split_size, bool partial) {
 
     vector<Dim> &dims = func.schedule().dims();
     // Vectorization is not easy to insert in a Function object
@@ -1768,7 +1771,26 @@ void split_dim(Function &func, int dim, int split_size) {
 
     // Add the split to the splits list
     Split split = {old_name, outer_name, inner_name, split_size,
-                   false, Split::SplitVar};
+                   false, partial, Split::SplitVar};
+    func.schedule().splits().push_back(split);
+}
+
+void fuse_dim(Function &func, int dim1, int dim2) {
+    // Add the fuse to the splits list
+    string inner_name, outer_name, fused_name;
+    vector<Dim> &dims = func.schedule().dims();
+
+    outer_name = dims[dim1].var;
+    bool outer_pure = dims[dim1].pure;
+    dims.erase(dims.begin() + dim1);
+
+    inner_name = dims[dim2].var;
+    fused_name = inner_name + "." + outer_name;
+    dims[dim2].var = fused_name;
+    dims[dim2].pure &= outer_pure;
+
+    Split split = {fused_name, outer_name, inner_name, Expr(),
+                   true, false, Split::FuseVars};
     func.schedule().splits().push_back(split);
 }
 
@@ -1776,7 +1798,7 @@ void split_dim(Function &func, int dim, int split_size) {
 void vectorize_dim(Function &func, int dim, int vec_width) {
 
     vector<Dim> &dims = func.schedule().dims();
-    split_dim(func, dim, vec_width);
+    split_dim(func, dim, vec_width, false);
     dims[dim].for_type = ForType::Vectorized;
     std::cout << "Variable " << dims[dim].var << " of function "
               << func.name() << " vectorized" << std::endl;
@@ -1872,14 +1894,14 @@ void schedule_advisor(const vector<Function> &outputs,
     if (auto_inline)
         inlines = simple_inline(all_calls, env);
 
-    bool overlap_tile = false;
-
+    bool overlap_tile = true;
+    auto_vec = false;
     if (overlap_tile) {
         // For each function compute all the regions of upstream functions required
         // to compute a region of the function
 
         // Dependence analysis
-
+        int tile_size = 32;
         // TODO explain structures
         map<string, map<string, Box> > func_dep_regions;
         map<string, vector<std::map<string, Box> > > func_overlaps;
@@ -1893,7 +1915,7 @@ void schedule_advisor(const vector<Function> &outputs,
             // For now assuming all dimensions are going to be tiled by size 32
             // and they start at origin
             for (int arg = 0; arg < num_args; arg++) {
-                tile_sizes.push_back(32);
+                tile_sizes.push_back(tile_size);
                 offsets.push_back(0);
             }
 
@@ -1940,6 +1962,8 @@ void schedule_advisor(const vector<Function> &outputs,
             assert(inlines.find(g_out.name()) == inlines.end());
             vector<string> vars;
             vector<Dim> &dims = g_out.schedule().dims();
+            if (dims.size() <= 0)
+                continue;
             vector<Bound> &bounds = g_out.schedule().bounds();
             for(int i = 0; i < (int)dims.size() - 1; i++)
                 vars.push_back(dims[i].var);
@@ -1949,6 +1973,7 @@ void schedule_advisor(const vector<Function> &outputs,
                           << std::endl;
             }
             int inner_tile_dim = 0;
+            int num_tile_dims = 0;
             for(auto &v: vars) {
                 int index = -1;
                 for (int i = 0; i < (int)dims.size() - 1; i++)
@@ -1957,23 +1982,43 @@ void schedule_advisor(const vector<Function> &outputs,
                         break;
                     }
                 assert(index!=-1);
-                split_dim(g_out, index, 32);
+                if (inner_tile_dim != 0) {
+                    split_dim(g_out, index, tile_size, true);
+                    num_tile_dims++;
+                }
+                else
+                    split_dim(g_out, index, tile_size, false);
                 if (inner_tile_dim < (int)dims.size() - 1) {
                     swap_dim(g_out, index, inner_tile_dim);
                     inner_tile_dim++;
                 }
             }
-            if (dims.size() > 0) {
-                for (auto &m: g.second) {
-                    if (m.name() != g_out.name() ||
-                        inlines.find(m.name()) != inlines.end()) {
-                        m.schedule().store_level().func = g_out.name();
-                        m.schedule().store_level().var =
-                                                dims[inner_tile_dim].var;
-                        m.schedule().compute_level().func = g_out.name();
-                        m.schedule().compute_level().var =
-                                                dims[inner_tile_dim].var;
+
+            if (g_out.is_pure()) {
+                // Fuse all the tile dims?
+                int outer_dim = dims.size() - 2;
+                /*for (int i = 0; i < num_tile_dims; i++) {
+                    if (outer_dim > 0) {
+                        fuse_dim(g_out, outer_dim, outer_dim - 1);
+                        outer_dim = dims.size() - 2;
                     }
+                }*/
+                vector<int> levels;
+                levels.push_back(outer_dim);
+                if (auto_par)
+                    parallelize_dim(g_out, levels);
+                if (auto_vec)
+                    simple_vectorize(g_out, 0, 8);
+            }
+            for (auto &m: g.second) {
+                if (m.name() != g_out.name() &&
+                        inlines.find(m.name()) == inlines.end()) {
+                    m.schedule().store_level().func = g_out.name();
+                    m.schedule().store_level().var = dims[inner_tile_dim].var;
+                    m.schedule().compute_level().func = g_out.name();
+                    m.schedule().compute_level().var = dims[inner_tile_dim].var;
+                    if (m.is_pure() && auto_vec)
+                        simple_vectorize(m, 0, 8);
                 }
             }
         }

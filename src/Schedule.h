@@ -64,6 +64,7 @@ struct Split {
     std::string old_var, outer, inner;
     Expr factor;
     bool exact; // Is it required that the factor divides the extent of the old var. True for splits of RVars.
+    bool partial;
 
     enum SplitType {SplitVar = 0, RenameVar, FuseVars};
 

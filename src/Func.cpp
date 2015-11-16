@@ -364,7 +364,7 @@ void Stage::split(const string &old, const string &outer, const string &inner, E
     }
 
     // Add the split to the splits list
-    Split split = {old_name, outer_name, inner_name, factor, exact, Split::SplitVar};
+    Split split = {old_name, outer_name, inner_name, factor, exact, false, Split::SplitVar};
     schedule.splits().push_back(split);
 }
 
@@ -434,7 +434,7 @@ Stage &Stage::fuse(VarOrRVar inner, VarOrRVar outer, VarOrRVar fused) {
     }
 
     // Add the fuse to the splits list
-    Split split = {fused_name, outer_name, inner_name, Expr(), true, Split::FuseVars};
+    Split split = {fused_name, outer_name, inner_name, Expr(), true, false, Split::FuseVars};
     schedule.splits().push_back(split);
     return *this;
 }
@@ -533,7 +533,7 @@ Stage &Stage::rename(VarOrRVar old_var, VarOrRVar new_var) {
     }
 
     if (!found) {
-        Split split = {old_name, new_name, "", 1, old_var.is_rvar, Split::RenameVar};
+        Split split = {old_name, new_name, "", 1, old_var.is_rvar, false, Split::RenameVar};
         schedule.splits().push_back(split);
     }
 
