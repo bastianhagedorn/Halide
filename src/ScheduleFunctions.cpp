@@ -261,7 +261,7 @@ Stmt build_provide_loop_nest(Function f,
         if (split.is_split()) {
             Expr inner_extent;
             if (split.partial)
-                inner_extent = Min::make(likely(split.factor), old_var_max);
+                inner_extent = Min::make(likely(split.factor), old_var_max + 1);
             else
                 inner_extent = split.factor;
             Expr outer_extent = (old_var_max - old_var_min + split.factor)/split.factor;
@@ -1610,7 +1610,7 @@ map<string, vector<Function> >
 
                     float overlap_ratio = ((float)redun_cost)/tile_cost;
 
-                    if (overlap_ratio > 0.5)
+                    if (overlap_ratio > 0.2)
                         merge = false;
 
                     if (merge) {
@@ -1895,13 +1895,14 @@ void schedule_advisor(const vector<Function> &outputs,
         inlines = simple_inline(all_calls, env);
 
     bool overlap_tile = true;
-    auto_vec = false;
+    auto_vec = true;
+    auto_par = true;
     if (overlap_tile) {
         // For each function compute all the regions of upstream functions required
         // to compute a region of the function
 
         // Dependence analysis
-        int tile_size = 32;
+        int tile_size = 64;
         // TODO explain structures
         map<string, map<string, Box> > func_dep_regions;
         map<string, vector<std::map<string, Box> > > func_overlaps;
@@ -1982,12 +1983,8 @@ void schedule_advisor(const vector<Function> &outputs,
                         break;
                     }
                 assert(index!=-1);
-                if (inner_tile_dim != 0) {
-                    split_dim(g_out, index, tile_size, true);
-                    num_tile_dims++;
-                }
-                else
-                    split_dim(g_out, index, tile_size, false);
+                num_tile_dims++;
+                split_dim(g_out, index, tile_size, true);
                 if (inner_tile_dim < (int)dims.size() - 1) {
                     swap_dim(g_out, index, inner_tile_dim);
                     inner_tile_dim++;
@@ -1997,26 +1994,29 @@ void schedule_advisor(const vector<Function> &outputs,
             if (g_out.is_pure()) {
                 // Fuse all the tile dims?
                 int outer_dim = dims.size() - 2;
-                /*for (int i = 0; i < num_tile_dims; i++) {
+                std::cout << num_tile_dims << std::endl;
+                for (int i = 0; i < num_tile_dims - 1; i++) {
                     if (outer_dim > 0) {
                         fuse_dim(g_out, outer_dim, outer_dim - 1);
                         outer_dim = dims.size() - 2;
                     }
-                }*/
+                }
                 vector<int> levels;
                 levels.push_back(outer_dim);
                 if (auto_par)
                     parallelize_dim(g_out, levels);
-                if (auto_vec)
+                if (auto_vec) {
                     simple_vectorize(g_out, 0, 8);
+                }
             }
             for (auto &m: g.second) {
                 if (m.name() != g_out.name() &&
                         inlines.find(m.name()) == inlines.end()) {
+                    int outer_dim = dims.size() - 2;
                     m.schedule().store_level().func = g_out.name();
-                    m.schedule().store_level().var = dims[inner_tile_dim].var;
+                    m.schedule().store_level().var = dims[outer_dim].var;
                     m.schedule().compute_level().func = g_out.name();
-                    m.schedule().compute_level().var = dims[inner_tile_dim].var;
+                    m.schedule().compute_level().var = dims[outer_dim].var;
                     if (m.is_pure() && auto_vec)
                         simple_vectorize(m, 0, 8);
                 }
