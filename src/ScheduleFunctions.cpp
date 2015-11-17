@@ -1455,8 +1455,9 @@ int region_cost(string func, Box &region,
     int op_cost = 0;
     for (unsigned int t = 0; t < costs.size(); t++)
         op_cost += costs[t].first;
-    int cost = area * (op_cost + 1);
-    return cost;
+    //int cost = area * (op_cost + 1);
+    //return cost;
+    return area;
 }
 
 int region_cost(map<string, Box> &regions,
@@ -1475,7 +1476,6 @@ int region_cost(map<string, Box> &regions,
 int overlap_cost(string cons, Function prod,
                  map<string, vector<map<string, Box> > > &func_overlaps,
                  map<string, vector<pair<int, int> > > &func_cost) {
-    int overlap_cost = 0;
     auto &overlaps = func_overlaps[cons];
     int total_area = 0;
     for (unsigned int dim = 0; dim < overlaps.size(); dim++) {
@@ -1494,8 +1494,9 @@ int overlap_cost(string cons, Function prod,
     int op_cost = 0;
     for (unsigned int t = 0; t < costs.size(); t++)
         op_cost += costs[t].first;
-    overlap_cost = total_area * (op_cost + 1);
-    return overlap_cost;
+    //int overlap_cost = total_area * (op_cost + 1);
+    //return overlap_cost;
+    return total_area;
 }
 
 int overlap_cost(string cons, vector<Function> &prods,
@@ -1645,8 +1646,12 @@ map<string, vector<Function> >
 
                     float overlap_ratio = ((float)redun_cost)/tile_cost;
 
-                    if (overlap_ratio > 0.5)
+                    if (overlap_ratio > 0.5) {
+                        std::cout << redun_cost << "," << tile_cost << std::endl;
+                        std::cout << cand_group << "," << child_group << std::endl;
+
                         merge = false;
+                    }
 
                     if (merge) {
                         //std::cout << redun_cost << std::endl;
@@ -1968,11 +1973,10 @@ void schedule_advisor(const vector<Function> &outputs,
                                                         func_val_bounds);
             assert(func_dep_regions.find(kv.first) == func_dep_regions.end());
             func_dep_regions[kv.first] = regions;
-            /*
-               std::cout << "Function regions required for " << kv.first << ":" << std::endl;
-               disp_regions(regions);
-               std::cout << std::endl;
-             */
+
+            std::cout << "Function regions required for " << kv.first << ":" << std::endl;
+            disp_regions(regions);
+            std::cout << std::endl;
 
             assert(func_overlaps.find(kv.first) == func_overlaps.end());
             for (int arg = 0; arg < num_args; arg++) {
@@ -1981,13 +1985,11 @@ void schedule_advisor(const vector<Function> &outputs,
                                                               env, func_val_bounds);
                 func_overlaps[kv.first].push_back(overlaps);
 
-                /*
                 std::cout << "Function region overlaps for var " <<
                     kv.second.args()[arg]  << " " << kv.first
                     << ":" << std::endl;
                 disp_regions(overlaps);
                 std::cout << std::endl;
-                */
             }
         }
 
