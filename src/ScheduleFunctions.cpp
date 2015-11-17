@@ -265,6 +265,7 @@ Stmt build_provide_loop_nest(Function f,
             else
                 inner_extent = split.factor;
             Expr outer_extent = (old_var_max - old_var_min + split.factor)/split.factor;
+
             stmt = LetStmt::make(prefix + split.inner + ".loop_min", 0, stmt);
             stmt = LetStmt::make(prefix + split.inner + ".loop_max", inner_extent-1, stmt);
             stmt = LetStmt::make(prefix + split.inner + ".loop_extent", inner_extent, stmt);
@@ -1407,8 +1408,8 @@ int box_area(Box &b) {
                 break;
             }
         } else {
-            //std::cout << "Box area computation failed" << std::endl;
-            //std::cout << "min:" << b[i].min << " max:" << b[i].max << std::endl;
+            std::cout << "Box area computation failed" << std::endl;
+            std::cout << "min:" << b[i].min << " max:" << b[i].max << std::endl;
             box_area = -1;
             break;
         }
@@ -1515,11 +1516,43 @@ int overlap_cost(string cons, vector<Function> &prods,
     return total_cost;
 }
 
+void add_children(map<string, vector<string> > &children,
+                  map<string, Function> &calls,
+                  map<string, string> &inlines, string func) {
+    for (auto &c: calls) {
+        if (inlines.find(c.first) == inlines.end())
+            children[c.first].push_back(func);
+        else {
+            map<string, Function> recur_calls = find_direct_calls(c.second);
+            add_children(children, recur_calls, inlines, func);
+        }
+    }
+}
+
+void merge_groups(map<string, vector<Function> > &groups,
+                  map<string, vector<string> > &children,
+                  string cand_group, string child_group) {
+
+    vector<Function> cand_funcs = groups[cand_group];
+    groups.erase(cand_group);
+    groups[child_group].insert(groups[child_group].end(),
+            cand_funcs.begin(), cand_funcs.end());
+    // Fix the children mapping
+    children.erase(cand_group);
+    for (auto &f: children) {
+        vector<string> &children = f.second;
+        for (unsigned int i = 0; i < children.size(); i++)
+            if (children[i] == cand_group)
+                children[i] = child_group;
+    }
+}
+
 map<string, vector<Function> >
     grouping_overlap_tile(map<string, Function> &env,
                           map<string, map<string, Box> > &func_dep_regions,
                           map<string, vector<map<string, Box> > > &func_overlaps,
                           map<string, vector<pair<int, int> > > &func_cost,
+                          map<string, string> &inlines,
                           const FuncValueBounds &func_val_bounds) {
 
     map<string, vector<Function> > groups;
@@ -1534,12 +1567,14 @@ map<string, vector<Function> >
     // Find consumers of each function relate groups with their children
     map<string, vector<string> > children;
     for (auto &kv: env) {
-        map<string, Function> calls;
-        calls = find_direct_calls(kv.second);
+        map<string, Function> calls = find_direct_calls(kv.second);
         for (auto &c: calls)
             children[c.first].push_back(kv.first);
     }
 
+    // Add inlined functions to their child group
+    for (auto &in: inlines)
+        merge_groups(groups, children, in.first, in.second);
     /*
 	std::cout << "==========" << std::endl;
 	std::cout << "Consumers:" << std::endl;
@@ -1610,7 +1645,7 @@ map<string, vector<Function> >
 
                     float overlap_ratio = ((float)redun_cost)/tile_cost;
 
-                    if (overlap_ratio > 0.2)
+                    if (overlap_ratio > 0.5)
                         merge = false;
 
                     if (merge) {
@@ -1627,18 +1662,7 @@ map<string, vector<Function> >
         // Do the necessary actions required to perform the merge
         // if there is a merge candidate
         if (!fixpoint) {
-            vector<Function> cand_funcs = groups[cand_group];
-            groups.erase(cand_group);
-            groups[child_group].insert(groups[child_group].end(),
-                    cand_funcs.begin(), cand_funcs.end());
-            // Fix the children mapping
-            children.erase(cand_group);
-            for (auto &f: children) {
-                vector<string> &children = f.second;
-                for (unsigned int i = 0; i < children.size(); i++)
-                    if (children[i] == cand_group)
-                        children[i] = child_group;
-            }
+            merge_groups(groups, children, cand_group, child_group);
             //std::cout << "Megre candidate" << std::endl;
             //std::cout << cand_group << std::endl;
         }
@@ -1682,7 +1706,13 @@ void disp_regions(map<string, Box> &regions) {
     }
 }
 
+void disp_inlines(map<string, string> &inlines) {
+    for (auto& in: inlines)
+        std::cout << in.first << "->" << in.second << std::endl;
+}
+
 map<string, string> simple_inline(map<string, vector<const Call*>> &all_calls,
+                                  map<string, vector<string> > &consumers,
                                   map<string, Function> &env) {
     map<string, string> inlines;
     for (auto& fcalls: all_calls) {
@@ -1698,11 +1728,12 @@ map<string, string> simple_inline(map<string, vector<const Call*>> &all_calls,
                 // in is_one_to_one
                 bool one_to_one = (!arg.as<Cast>()) && is_one_to_one(arg);
                 all_one_to_one = all_one_to_one && (one_to_one
-                        || is_simple_const(arg));
+                                                    || is_simple_const(arg));
             }
         }
         if (all_one_to_one && num_calls == 1) {
-            inlines[fcalls.first] = fcalls.second[0]->func.name();
+            assert(consumers[fcalls.first].size() == 1);
+            inlines[fcalls.first] = consumers[fcalls.first][0];
             env[fcalls.first].schedule().store_level().var = "";
             env[fcalls.first].schedule().compute_level().var = "";
         }
@@ -1867,42 +1898,50 @@ void schedule_advisor(const vector<Function> &outputs,
 
     // TODO explain structure
     map<string, vector<const Call*> > all_calls;
+    map<string, vector<string> > consumers;
     for (auto& kv:env) {
 
     	FindCallArgs call_args;
     	kv.second.accept(&call_args);
     	//std::cout << kv.second.name() << ":" << std::endl;
     	for (auto& fcalls: call_args.calls){
+            consumers[fcalls.first].push_back(kv.first);
     		all_calls[fcalls.first].insert(all_calls[fcalls.first].end(),
     								  	   fcalls.second.begin(),
                                            fcalls.second.end());
-    		/*for (auto& call: fcalls.second){
+            /*
+    		for (auto& call: fcalls.second){
     			std::cout << fcalls.first << "(";
     			for(auto& arg: call->args){
     				std::cout << arg << ",";
     			}
     			std::cout << "),";
-    		}*/
+    		}
+            */
     	}
     	//std::cout << std::endl;
     }
 
     // Make obvious inline decisions early. Grouping downstream may end up with
     // a function that is inlined as the representative of the group. This will
-    // result in a conflicting schedule. TODO Handle this case properly.
+    // result in a conflicting schedule.
     map<string, string> inlines;
     if (auto_inline)
-        inlines = simple_inline(all_calls, env);
+        inlines = simple_inline(all_calls, consumers, env);
+
+    std::cout << "Inlining:" << std::endl;
+    disp_inlines(inlines);
+    std::cout << std::endl;
 
     bool overlap_tile = true;
-    auto_vec = true;
+    auto_vec = false;
     auto_par = true;
     if (overlap_tile) {
         // For each function compute all the regions of upstream functions required
         // to compute a region of the function
 
         // Dependence analysis
-        int tile_size = 64;
+        int tile_size = 128;
         // TODO explain structures
         map<string, map<string, Box> > func_dep_regions;
         map<string, vector<std::map<string, Box> > > func_overlaps;
@@ -1916,7 +1955,11 @@ void schedule_advisor(const vector<Function> &outputs,
             // For now assuming all dimensions are going to be tiled by size 32
             // and they start at origin
             for (int arg = 0; arg < num_args; arg++) {
-                tile_sizes.push_back(tile_size);
+                // Restrict the tiling to 2d
+                if (arg < 2)
+                    tile_sizes.push_back(tile_size);
+                else
+                    tile_sizes.push_back(1);
                 offsets.push_back(0);
             }
 
@@ -1934,8 +1977,8 @@ void schedule_advisor(const vector<Function> &outputs,
             assert(func_overlaps.find(kv.first) == func_overlaps.end());
             for (int arg = 0; arg < num_args; arg++) {
                 map<string, Box> overlaps = redundant_regions(kv.second, arg,
-                        tile_sizes, offsets,
-                        env, func_val_bounds);
+                                                              tile_sizes, offsets,
+                                                              env, func_val_bounds);
                 func_overlaps[kv.first].push_back(overlaps);
 
                 /*
@@ -1952,7 +1995,9 @@ void schedule_advisor(const vector<Function> &outputs,
 
         map<string, vector<Function> > groups;
         groups = grouping_overlap_tile(env, func_dep_regions, func_overlaps,
-                                       func_cost, func_val_bounds);
+                                       func_cost, inlines, func_val_bounds);
+
+        //disp_grouping(groups);
 
         // Code generation
         for (auto& g: groups) {
@@ -1967,7 +2012,9 @@ void schedule_advisor(const vector<Function> &outputs,
                 continue;
             vector<Bound> &bounds = g_out.schedule().bounds();
             for(int i = 0; i < (int)dims.size() - 1; i++)
-                vars.push_back(dims[i].var);
+                // Restricting tiling to 2D
+                if (i < 2)
+                    vars.push_back(dims[i].var);
             for(unsigned int i = 0; i < bounds.size(); i++) {
                 std::cout << g_out.name() << " " << bounds[i].var << "("
                           << bounds[i].min  << "," << bounds[i].extent << ")"
@@ -1984,7 +2031,7 @@ void schedule_advisor(const vector<Function> &outputs,
                     }
                 assert(index!=-1);
                 num_tile_dims++;
-                split_dim(g_out, index, tile_size, true);
+                split_dim(g_out, index, tile_size, false);
                 if (inner_tile_dim < (int)dims.size() - 1) {
                     swap_dim(g_out, index, inner_tile_dim);
                     inner_tile_dim++;
@@ -1994,7 +2041,6 @@ void schedule_advisor(const vector<Function> &outputs,
             if (g_out.is_pure()) {
                 // Fuse all the tile dims?
                 int outer_dim = dims.size() - 2;
-                std::cout << num_tile_dims << std::endl;
                 for (int i = 0; i < num_tile_dims - 1; i++) {
                     if (outer_dim > 0) {
                         fuse_dim(g_out, outer_dim, outer_dim - 1);
@@ -2007,16 +2053,16 @@ void schedule_advisor(const vector<Function> &outputs,
                     parallelize_dim(g_out, levels);
                 if (auto_vec) {
                     simple_vectorize(g_out, 0, 8);
+                    inner_tile_dim++;
                 }
             }
             for (auto &m: g.second) {
                 if (m.name() != g_out.name() &&
                         inlines.find(m.name()) == inlines.end()) {
-                    int outer_dim = dims.size() - 2;
                     m.schedule().store_level().func = g_out.name();
-                    m.schedule().store_level().var = dims[outer_dim].var;
+                    m.schedule().store_level().var = dims[inner_tile_dim].var;
                     m.schedule().compute_level().func = g_out.name();
-                    m.schedule().compute_level().var = dims[outer_dim].var;
+                    m.schedule().compute_level().var = dims[inner_tile_dim].var;
                     if (m.is_pure() && auto_vec)
                         simple_vectorize(m, 0, 8);
                 }

@@ -16,6 +16,7 @@ int main(int argc, char **argv) {
     //blur_x.store_at(blur_y, y).compute_at(blur_y, yi).vectorize(x, 8);
 
     blur_y.compile_to_file("halide_blur", {input});
+    blur_y.compile_to_lowered_stmt("halide_blur_lower", {input});
 
     return 0;
 }
