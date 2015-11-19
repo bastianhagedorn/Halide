@@ -2045,6 +2045,7 @@ void schedule_advisor(const vector<Function> &outputs,
     disp_inlines(inlines);
     std::cout << std::endl;
 
+    int vec_len = 8;
     bool overlap_tile = true;
     auto_vec = true;
     auto_par = true;
@@ -2177,7 +2178,8 @@ void schedule_advisor(const vector<Function> &outputs,
                 if (auto_par)
                     parallelize_dim(g_out, levels);
                 if (auto_vec) {
-                    simple_vectorize(g_out, 0, 8);
+                    if (check_dim_size(g_out, 0, vec_len, pipeline_bounds))
+                        simple_vectorize(g_out, 0, vec_len);
                     //inner_tile_dim++;
                 }
             }
@@ -2192,7 +2194,8 @@ void schedule_advisor(const vector<Function> &outputs,
                     m.schedule().compute_level().func = g_out.name();
                     m.schedule().compute_level().var = dims[compute_level].var;
                     if (m.is_pure() && auto_vec)
-                        simple_vectorize(m, 0, 8);
+                        if (check_dim_size(m, 0, vec_len, pipeline_bounds))
+                            simple_vectorize(m, 0, vec_len);
                 }
             }
         }
@@ -2228,7 +2231,8 @@ void schedule_advisor(const vector<Function> &outputs,
                     // and on the machine characteristics. For now just doing a
                     // blind 8 width vectorization.
                     if (kv.second.dimensions() > 1 && auto_vec)
-                        simple_vectorize(kv.second, 0, 8);
+                        if (check_dim_size(kv.second, 0, vec_len, pipeline_bounds))
+                            simple_vectorize(kv.second, 0, vec_len);
                 } else {
                     // Parallelism in reductions can be tricky
                     std::cout << std::endl;
