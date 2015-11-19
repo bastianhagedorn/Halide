@@ -1,5 +1,6 @@
 #include <cstdio>
 #include <chrono>
+#include <iostream>
 
 #include "local_laplacian.h"
 
@@ -22,6 +23,7 @@ int main(int argc, char **argv) {
     Image<uint16_t> output(input.width(), input.height(), 3);
     int timing = atoi(argv[5]);
 
+    std::cout << input.width() << "," << input.height() << std::endl;
     // Timing code
     double best = benchmark(timing, 1, [&]() {
         local_laplacian(levels, alpha/(levels-1), beta, input, output);

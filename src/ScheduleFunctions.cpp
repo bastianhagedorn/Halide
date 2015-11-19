@@ -1409,8 +1409,8 @@ int box_area(Box &b) {
                 break;
             }
         } else {
-            std::cout << "Box area computation failed" << std::endl;
-            std::cout << "min:" << b[i].min << " max:" << b[i].max << std::endl;
+            // std::cout << "Box area computation failed" << std::endl;
+            // std::cout << "min:" << b[i].min << " max:" << b[i].max << std::endl;
             box_area = -1;
             break;
         }
@@ -1866,6 +1866,31 @@ void vectorize_dim(Function &func, int dim, int vec_width) {
               << func.name() << " vectorized" << std::endl;
 }
 
+bool check_dim_size(Function &func, int dim, int min_size,
+                    map<string, Box> &pipeline_bounds) {
+    if (pipeline_bounds.find(func.name()) == pipeline_bounds.end()) {
+        // Optimistic
+        return true;
+    }
+    else {
+        Box &b = pipeline_bounds[func.name()];
+        vector<Dim> &dims = func.schedule().dims();
+        const vector<string> vars = func.args();
+        for (unsigned int i = 0; i < vars.size(); i++)
+            if (dims[dim].var == vars[i]) {
+                if ((b[i].min.as<IntImm>()) && (b[i].max.as<IntImm>())) {
+                    const IntImm * bmin = b[i].min.as<IntImm>();
+                    const IntImm * bmax = b[i].max.as<IntImm>();
+                    int size = bmax->value - bmin->value + 1;
+                    return size >= min_size;
+                } else  {
+                    return true;
+                }
+            }
+    }
+    return true;
+}
+
 void simple_vectorize(Function &func, int inner_dim, int vec_width) {
     // Collect all the load args
     FindCallArgs find;
@@ -1908,6 +1933,62 @@ void schedule_advisor(const vector<Function> &outputs,
 
     // TODO infer the bounds of each function in the pipeline based on the
     // estimates of output sizes and the parameters
+
+    // Check if the bounds are available for all the outputs of the pipeline
+    bool bounds_avail = true;
+    for (auto &out : outputs) {
+        const vector<Bound> &bounds = out.schedule().bounds();
+        if (bounds.size() != out.args().size()) {
+            bounds_avail = false;
+            break;
+        }
+        vector<string> vars = out.args();
+
+        for (unsigned int i = 0; i < bounds.size(); i++) {
+            if (std::find(vars.begin(), vars.end(), bounds[i].var) == vars.end()
+                || !((bounds[i].min.as<IntImm>()) &&
+                    (bounds[i].extent.as<IntImm>())))  {
+                bounds_avail = false;
+                break;
+            }
+        }
+    }
+    // std::cout << "output bounds:" << bounds_avail << std::endl;
+    map<string, Box> pipeline_bounds;
+    if (bounds_avail) {
+        for (auto &out: outputs) {
+            vector<int> tile_sizes;
+            vector<int> offsets;
+            vector<string> vars = out.args();
+            for (unsigned int i = 0; i < vars.size(); i++)
+                for (auto &b: out.schedule().bounds())
+                    if (b.var == vars[i]) {
+                        const IntImm * bmin = b.min.as<IntImm>();
+                        const IntImm * bextent = b.extent.as<IntImm>();
+                        tile_sizes.push_back(bextent->value);
+                        offsets.push_back(bmin->value);
+                    }
+
+            map<string, Box> regions = regions_required(out, tile_sizes,
+                                                        offsets, env,
+                                                        func_val_bounds);
+            Box out_box;
+            for (unsigned int i = 0; i < tile_sizes.size(); i++)
+                out_box.push_back(Interval(offsets[i], offsets[i] +
+                                                       tile_sizes[i] - 1));
+            regions[out.name()] = out_box;
+
+            for (auto& reg: regions) {
+                // Merge region with an existing region for the function in
+                // the global map
+                if (pipeline_bounds.find(reg.first) == pipeline_bounds.end())
+                    pipeline_bounds[reg.first] = reg.second;
+                else
+                    merge_boxes(pipeline_bounds[reg.first], reg.second);
+            }
+        }
+    }
+    disp_regions(pipeline_bounds);
 
     // TODO Method for estimating cost when reductions are involved
     // TODO explain structure
@@ -1969,8 +2050,8 @@ void schedule_advisor(const vector<Function> &outputs,
     auto_par = true;
     int tile_dims = 2;
     if (overlap_tile) {
-        // For each function compute all the regions of upstream functions required
-        // to compute a region of the function
+        // For each function compute all the regions of upstream functions
+        // required to compute a region of the function
 
         // Dependence analysis
         int tile_size = 128;
@@ -2022,8 +2103,8 @@ void schedule_advisor(const vector<Function> &outputs,
                 */
             }
         }
-        // Grouping
 
+        // Grouping
         map<string, vector<Function> > groups;
         groups = grouping_overlap_tile(env, func_dep_regions, func_overlaps,
                                        func_cost, inlines, func_val_bounds);
@@ -2039,12 +2120,16 @@ void schedule_advisor(const vector<Function> &outputs,
             assert(inlines.find(g_out.name()) == inlines.end());
             vector<string> vars;
             vector<Dim> &dims = g_out.schedule().dims();
-            if (dims.size() <= 0)
+            if (dims.size() <= 0 || !g_out.is_pure())
                 continue;
-            for(int i = 0; i < (int)dims.size() - 1; i++)
+            for(int i = 0; i < (int)dims.size() - 1; i++) {
                 // Restricting tiling to 2D
-                if (i < tile_dims)
-                    vars.push_back(dims[i].var);
+                if (i < tile_dims) {
+                    // Check if dimension is large enough to tile
+                    if (check_dim_size(g_out, i, tile_size, pipeline_bounds))
+                        vars.push_back(dims[i].var);
+                }
+            }
 
             // TODO use the bounds
             /*
@@ -2076,16 +2161,17 @@ void schedule_advisor(const vector<Function> &outputs,
                 */
                 move_dim_to_outermost(g_out, index + 1);
             }
-
+            int num_fused_dims = 0;
             if (g_out.is_pure()) {
                 // Fuse all the tile dims?
                 int outer_dim = dims.size() - 2;
-                /*for (int i = 0; i < num_tile_dims - 1; i++) {
+                for (int i = 0; i < num_tile_dims - 1; i++) {
                     if (outer_dim > 0) {
                         fuse_dim(g_out, outer_dim, outer_dim - 1);
                         outer_dim = dims.size() - 2;
+                        num_fused_dims++;
                     }
-                }*/
+                }
                 vector<int> levels;
                 levels.push_back(outer_dim);
                 if (auto_par)
@@ -2098,11 +2184,13 @@ void schedule_advisor(const vector<Function> &outputs,
             for (auto &m: g.second) {
                 int outer_dim = dims.size() - 2;
                 if (m.name() != g_out.name() &&
-                        inlines.find(m.name()) == inlines.end()) {
+                   inlines.find(m.name()) == inlines.end() && num_tile_dims > 0) {
+                    int compute_level = outer_dim - num_tile_dims +
+                                                    num_fused_dims + 1;
                     m.schedule().store_level().func = g_out.name();
-                    m.schedule().store_level().var = dims[outer_dim].var;
+                    m.schedule().store_level().var = dims[compute_level].var;
                     m.schedule().compute_level().func = g_out.name();
-                    m.schedule().compute_level().var = dims[outer_dim].var;
+                    m.schedule().compute_level().var = dims[compute_level].var;
                     if (m.is_pure() && auto_vec)
                         simple_vectorize(m, 0, 8);
                 }

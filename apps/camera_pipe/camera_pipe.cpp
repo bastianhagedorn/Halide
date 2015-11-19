@@ -263,7 +263,7 @@ Func process(Func raw, Type result_type,
     processed(tx, ty, c) = curved(tx, ty, c);
 
     // Schedule
-    processed.bound(c, 0, 3); // bound color loop 0-3, properly
+    processed.bound(c, 0, 3).bound(tx, 0, 2560).bound(ty, 0, 1920); // bound color loop 0-3, properly
     if (schedule == 0) {
         // Compute in chunks over tiles, vectorized by 8
         denoised.compute_at(processed, tx).vectorize(x, 8);

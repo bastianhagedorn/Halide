@@ -75,6 +75,7 @@ int main(int argc, char **argv) {
     Func final("final");
     final(x, y, c) = normalize(x, y, c);
 
+    final.bound(x, 0, 1536).bound(y, 0, 2560).bound(c, 0, 3);
     std::cout << "Finished function setup." << std::endl;
 
     int sched;
@@ -186,6 +187,7 @@ int main(int argc, char **argv) {
 
     Image<float> in_png = load_image(argv[1]);
     Image<float> out(in_png.width(), in_png.height(), 3);
+    std::cout << in_png.width() << "," << in_png.height() << std::endl;
     assert(in_png.channels() == 4);
     input.set(in_png);
 
