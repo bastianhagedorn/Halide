@@ -1493,13 +1493,14 @@ int region_cost(map<string, Box> &regions,
 
 int overlap_cost(string cons, Function prod,
                  map<string, vector<map<string, Box> > > &func_overlaps,
-                 map<string, vector<pair<int, int> > > &func_cost) {
+                 map<string, vector<pair<int, int> > > &func_cost, int dim=-1) {
     auto &overlaps = func_overlaps[cons];
     int total_area = 0;
-    for (unsigned int dim = 0; dim < overlaps.size(); dim++) {
+    for (unsigned int d = 0; d < overlaps.size(); d++) {
         // Overlap area
-        if (overlaps[dim].find(prod.name()) != overlaps[dim].end()) {
-            int area = box_area(overlaps[dim][prod.name()]);
+        if (overlaps[d].find(prod.name()) != overlaps[d].end()
+                && (dim==-1 || dim == (int)d) ) {
+            int area = box_area(overlaps[d][prod.name()]);
             if (area >= 0)
                 total_area += area;
             else
@@ -1518,12 +1519,12 @@ int overlap_cost(string cons, Function prod,
 
 int overlap_cost(string cons, vector<Function> &prods,
                  map<string, vector<map<string, Box> > > &func_overlaps,
-                 map<string, vector<pair<int, int> > > &func_cost) {
+                 map<string, vector<pair<int, int> > > &func_cost, int dim=-1) {
 
     int total_cost = 0;
     for(auto& p: prods) {
         if (p.name()!=cons) {
-            int cost = overlap_cost(cons, p, func_overlaps, func_cost);
+            int cost = overlap_cost(cons, p, func_overlaps, func_cost, dim);
             if (cost < 0)
                 // Cost could not be estimated
                 return -1;
@@ -1602,7 +1603,7 @@ map<string, vector<Function> >
             children[c.first].insert(kv.first);
     }
 
-    disp_children(children);
+    // disp_children(children);
     // Add inlined functions to their child group
     for (auto &in: inlines) {
         string dest = in.second;
@@ -1655,8 +1656,13 @@ map<string, vector<Function> >
 
                     // This should never happen since we would not have merged
                     // without knowing the costs
+
+                    // Actually this can happen when you can prove inlining is
+                    // legit but cannot get the bounds for determining the cost
+                    // of the tile
                     if (cost < 0)
-                        assert(0);
+                        //assert(0);
+                        merge = false;
                     redun_cost += cost;
 
                     cost = overlap_cost(child_group, groups[cand_group],
@@ -2006,7 +2012,7 @@ void schedule_advisor(const vector<Function> &outputs,
             }
         }
     }
-    disp_regions(pipeline_bounds);
+    // disp_regions(pipeline_bounds);
 
     // TODO Method for estimating cost when reductions are involved
     // TODO explain structure
@@ -2073,7 +2079,7 @@ void schedule_advisor(const vector<Function> &outputs,
         // required to compute a region of the function
 
         // Dependence analysis
-        int tile_size = 128;
+        int tile_size = 256;
         // TODO explain structures
         map<string, map<string, Box> > func_dep_regions;
         map<string, vector<std::map<string, Box> > > func_overlaps;
@@ -2104,8 +2110,8 @@ void schedule_advisor(const vector<Function> &outputs,
             /*
             std::cout << "Function regions required for " << kv.first << ":" << std::endl;
             disp_regions(regions);
-            std::cout << std::endl;
-            */
+            std::cout << std::endl; */
+
 
             assert(func_overlaps.find(kv.first) == func_overlaps.end());
             for (int arg = 0; arg < std::min(tile_dims, num_args); arg++) {
@@ -2118,8 +2124,7 @@ void schedule_advisor(const vector<Function> &outputs,
                     kv.second.args()[arg]  << " " << kv.first
                     << ":" << std::endl;
                 disp_regions(overlaps);
-                std::cout << std::endl;
-                */
+                std::cout << std::endl; */
             }
         }
 
@@ -2147,6 +2152,37 @@ void schedule_advisor(const vector<Function> &outputs,
                     // Check if dimension is large enough to tile
                     if (check_dim_size(g_out, i, tile_size, pipeline_bounds))
                         vars.push_back(dims[i].var);
+                }
+            }
+
+
+            // TODO Eventually this weird step should be changed into something
+            // that actually gives proper ordering within a tile
+
+            // Find the level at which the tiles should be computed
+            // int min_overlap = 0;
+            map<string, Function> calls = find_direct_calls(g_out);
+            vector<Function> prods;
+
+            // Captures the reads even if there are no members in the group
+            for(auto &c: calls)
+                prods.push_back(c.second);
+            for(auto &m: g.second)
+                if (calls.find(m.name()) == calls.end())
+                    prods.push_back(m);
+
+            int zero_reuse_dim = -1;
+            for(int i = 0; i < (int)dims.size() - 1; i++) {
+            // Skip the variables that are chosen for tiling and are above the
+            // tiling
+                if (i >= tile_dims) {
+                    int cost = overlap_cost(g_out.name(), prods, func_overlaps,
+                                            func_cost, i);
+                    if (cost == 0)
+                        zero_reuse_dim = i;
+
+                    std::cout << g_out.name() << "," << dims[i].var << ","
+                              << cost << std::endl;
                 }
             }
 
@@ -2184,6 +2220,7 @@ void schedule_advisor(const vector<Function> &outputs,
             if (g_out.is_pure()) {
                 // Fuse all the tile dims?
                 int outer_dim = dims.size() - 2;
+                /*
                 for (int i = 0; i < num_tile_dims - 1; i++) {
                     if (outer_dim > 0) {
                         fuse_dim(g_out, outer_dim, outer_dim - 1);
@@ -2191,6 +2228,7 @@ void schedule_advisor(const vector<Function> &outputs,
                         num_fused_dims++;
                     }
                 }
+                */
                 vector<int> levels;
                 levels.push_back(outer_dim);
                 if (auto_par)
