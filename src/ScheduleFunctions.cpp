@@ -1666,10 +1666,9 @@ map<string, vector<Function> >
 
                     float overlap_ratio = ((float)redun_cost)/tile_cost;
 
-                    if (overlap_ratio > 0.01) {
-                        std::cout << redun_cost << "," << tile_cost << std::endl;
-                        std::cout << cand_group << "," << child_group << std::endl;
-
+                    if (overlap_ratio > 0.1) {
+                        //std::cout << redun_cost << "," << tile_cost << std::endl;
+                        //std::cout << cand_group << "," << child_group << std::endl;
                         merge = false;
                     }
 
@@ -1756,8 +1755,8 @@ map<string, string> simple_inline(map<string, vector<const Call*>> &all_calls,
                                                     || is_simple_const(arg));
             }
         }
-        if (all_one_to_one && num_calls == 1) {
-            assert(consumers[fcalls.first].size() == 1);
+        if (consumers[fcalls.first].size() == 1 &&
+            all_one_to_one && num_calls <=3) {
             inlines[fcalls.first] = consumers[fcalls.first][0];
             env[fcalls.first].schedule().store_level().var = "";
             env[fcalls.first].schedule().compute_level().var = "";
@@ -1789,6 +1788,13 @@ void parallelize_dim(Function &func, vector<int> levels) {
                   << " of function " << func.name() << " parallelized"
                   << std::endl;
     }
+}
+
+void move_dim_to_outermost(Function& func, int dim) {
+
+    vector<Dim> &dims = func.schedule().dims();
+    dims.insert(dims.end() - 1, dims[dim]);
+    dims.erase(dims.begin() + dim);
 }
 
 void swap_dim(Function &func, int dim1, int dim2) {
@@ -1967,7 +1973,7 @@ void schedule_advisor(const vector<Function> &outputs,
         // to compute a region of the function
 
         // Dependence analysis
-        int tile_size = 256;
+        int tile_size = 128;
         // TODO explain structures
         map<string, map<string, Box> > func_dep_regions;
         map<string, vector<std::map<string, Box> > > func_overlaps;
@@ -1995,9 +2001,11 @@ void schedule_advisor(const vector<Function> &outputs,
             assert(func_dep_regions.find(kv.first) == func_dep_regions.end());
             func_dep_regions[kv.first] = regions;
 
+            /*
             std::cout << "Function regions required for " << kv.first << ":" << std::endl;
             disp_regions(regions);
             std::cout << std::endl;
+            */
 
             assert(func_overlaps.find(kv.first) == func_overlaps.end());
             for (int arg = 0; arg < std::min(tile_dims, num_args); arg++) {
@@ -2005,12 +2013,13 @@ void schedule_advisor(const vector<Function> &outputs,
                                                               tile_sizes, offsets,
                                                               env, func_val_bounds);
                 func_overlaps[kv.first].push_back(overlaps);
-
+                /*
                 std::cout << "Function region overlaps for var " <<
                     kv.second.args()[arg]  << " " << kv.first
                     << ":" << std::endl;
                 disp_regions(overlaps);
                 std::cout << std::endl;
+                */
             }
         }
         // Grouping
@@ -2032,17 +2041,22 @@ void schedule_advisor(const vector<Function> &outputs,
             vector<Dim> &dims = g_out.schedule().dims();
             if (dims.size() <= 0)
                 continue;
-            vector<Bound> &bounds = g_out.schedule().bounds();
             for(int i = 0; i < (int)dims.size() - 1; i++)
                 // Restricting tiling to 2D
                 if (i < tile_dims)
                     vars.push_back(dims[i].var);
+
+            // TODO use the bounds
+            /*
+            vector<Bound> &bounds = g_out.schedule().bounds();
             for(unsigned int i = 0; i < bounds.size(); i++) {
                 std::cout << g_out.name() << " " << bounds[i].var << "("
                           << bounds[i].min  << "," << bounds[i].extent << ")"
                           << std::endl;
             }
-            int inner_tile_dim = 0;
+            */
+
+            //int inner_tile_dim = 0;
             int num_tile_dims = 0;
             for(auto &v: vars) {
                 int index = -1;
@@ -2054,37 +2068,41 @@ void schedule_advisor(const vector<Function> &outputs,
                 assert(index!=-1);
                 num_tile_dims++;
                 split_dim(g_out, index, tile_size, false);
+                /*
                 if (inner_tile_dim < (int)dims.size() - 1) {
                     swap_dim(g_out, index, inner_tile_dim);
                     inner_tile_dim++;
                 }
+                */
+                move_dim_to_outermost(g_out, index + 1);
             }
 
             if (g_out.is_pure()) {
                 // Fuse all the tile dims?
                 int outer_dim = dims.size() - 2;
-                for (int i = 0; i < num_tile_dims - 1; i++) {
+                /*for (int i = 0; i < num_tile_dims - 1; i++) {
                     if (outer_dim > 0) {
                         fuse_dim(g_out, outer_dim, outer_dim - 1);
                         outer_dim = dims.size() - 2;
                     }
-                }
+                }*/
                 vector<int> levels;
                 levels.push_back(outer_dim);
                 if (auto_par)
                     parallelize_dim(g_out, levels);
                 if (auto_vec) {
                     simple_vectorize(g_out, 0, 8);
-                    inner_tile_dim++;
+                    //inner_tile_dim++;
                 }
             }
             for (auto &m: g.second) {
+                int outer_dim = dims.size() - 2;
                 if (m.name() != g_out.name() &&
                         inlines.find(m.name()) == inlines.end()) {
                     m.schedule().store_level().func = g_out.name();
-                    m.schedule().store_level().var = dims[inner_tile_dim].var;
+                    m.schedule().store_level().var = dims[outer_dim].var;
                     m.schedule().compute_level().func = g_out.name();
-                    m.schedule().compute_level().var = dims[inner_tile_dim].var;
+                    m.schedule().compute_level().var = dims[outer_dim].var;
                     if (m.is_pure() && auto_vec)
                         simple_vectorize(m, 0, 8);
                 }
