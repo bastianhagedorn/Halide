@@ -183,31 +183,31 @@ int main(int argc, char **argv) {
         Var x_outer, y_outer, x_inner, y_inner;
         /* first 3 downsamples */
         for(int l = 1; l <=3; l++){
-            downx[l].compute_at(downsampled[l], x).parallel(y).vectorize(x, VLEN);
-            downsampled[l].compute_root().parallel(y).vectorize(x, VLEN);
+            downx[l].compute_at(downsampled[l], x).parallel(y).vectorize(x, 8);
+            downsampled[l].compute_root().parallel(y).vectorize(x, 8);
         }
         /* remaining downsamples */
         for(int l = 4; l < levels-1; l++){
-            downsampled[l].compute_root().vectorize(x, VLEN).parallel(y);
+            downsampled[l].compute_root().vectorize(x, 8).parallel(y);
         }
 
         /* first L-3 upsamples */
         for(int l = levels-2; l > 3; l--){
-            upsampled[l].compute_root().vectorize(x, VLEN).parallel(y);
-            interpolated[l].compute_root().vectorize(x, VLEN).parallel(y);
+            upsampled[l].compute_root().vectorize(x, 8).parallel(y);
+            interpolated[l].compute_root().vectorize(x, 8).parallel(y);
             interpolated[l].unroll(x, 2).unroll(y, 2);
         }
-        upsampled[3].compute_at(final, x_outer).vectorize(x, VLEN);
-        interpolated[3].compute_at(final, x_outer).vectorize(x, VLEN);
+        upsampled[3].compute_at(final, x_outer).vectorize(x, 8);
+        interpolated[3].compute_at(final, x_outer).vectorize(x, 8);
         /* last upsamples */
         for(int l = 2; l >= 0; l--){
-            upsampledx[l].compute_at(final, x_outer).vectorize(x, VLEN);
-            upsampled[l].compute_at(final, x_outer).vectorize(x, VLEN);
-            interpolated[l].compute_at(final, x_outer).vectorize(x, VLEN);
+            upsampledx[l].compute_at(final, x_outer).vectorize(x, 8);
+            upsampled[l].compute_at(final, x_outer).vectorize(x, 8);
+            interpolated[l].compute_at(final, x_outer).vectorize(x, 8);
             interpolated[l].unroll(x, 2).unroll(y, 2);
         }
         final.tile(x, y, x_outer, y_outer, x_inner, y_inner, 128, 16);
-        final.parallel(y_outer).vectorize(x_inner, VLEN);
+        final.parallel(y_outer).vectorize(x_inner, 8);
         final.bound(x, 0, input.width());
         final.bound(y, 0, input.height());
         final.bound(c, 0, 3);

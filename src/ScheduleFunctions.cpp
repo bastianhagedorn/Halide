@@ -1496,6 +1496,7 @@ int overlap_cost(string cons, Function prod,
                  map<string, vector<pair<int, int> > > &func_cost, int dim=-1) {
     auto &overlaps = func_overlaps[cons];
     int total_area = 0;
+    assert((int)overlaps.size() > dim);
     for (unsigned int d = 0; d < overlaps.size(); d++) {
         // Overlap area
         if (overlaps[d].find(prod.name()) != overlaps[d].end()
@@ -1780,7 +1781,7 @@ map<string, string> simple_inline(map<string, vector<const Call*>> &all_calls,
             }
         }
         if (consumers[fcalls.first].size() == 1 &&
-            all_one_to_one && num_calls <=3) {
+            all_one_to_one && num_calls <= 1) {
             inlines[fcalls.first] = consumers[fcalls.first][0];
             env[fcalls.first].schedule().store_level().var = "";
             env[fcalls.first].schedule().compute_level().var = "";
@@ -1818,6 +1819,18 @@ void move_dim_to_outermost(Function& func, int dim) {
 
     vector<Dim> &dims = func.schedule().dims();
     dims.insert(dims.end() - 1, dims[dim]);
+    dims.erase(dims.begin() + dim);
+}
+
+void move_dim_to_var(Function& func, int dim, string var) {
+
+    vector<Dim> &dims = func.schedule().dims();
+    int cand_dim = -1;
+    for (unsigned int i = 0;  i < dims.size(); i++)
+        if (dims[i].var == var)
+            cand_dim = i;
+    assert(cand_dim != -1);
+    dims.insert(dims.begin() + cand_dim, dims[dim]);
     dims.erase(dims.begin() + dim);
 }
 
@@ -2079,7 +2092,7 @@ void schedule_advisor(const vector<Function> &outputs,
         // required to compute a region of the function
 
         // Dependence analysis
-        int tile_size = 256;
+        int tile_size = 128;
         // TODO explain structures
         map<string, map<string, Box> > func_dep_regions;
         map<string, vector<std::map<string, Box> > > func_overlaps;
@@ -2161,6 +2174,7 @@ void schedule_advisor(const vector<Function> &outputs,
 
             // Find the level at which the tiles should be computed
             // int min_overlap = 0;
+            /*
             map<string, Function> calls = find_direct_calls(g_out);
             vector<Function> prods;
 
@@ -2180,11 +2194,16 @@ void schedule_advisor(const vector<Function> &outputs,
                                             func_cost, i);
                     if (cost == 0)
                         zero_reuse_dim = i;
-
                     std::cout << g_out.name() << "," << dims[i].var << ","
                               << cost << std::endl;
                 }
             }
+            string zero_reuse_var;
+            if (zero_reuse_dim != -1)
+                zero_reuse_var = dims[zero_reuse_dim].var;
+            else
+                zero_reuse_var = dims[dims.size() - 1].var;
+            */
 
             // TODO use the bounds
             /*
@@ -2198,6 +2217,7 @@ void schedule_advisor(const vector<Function> &outputs,
 
             //int inner_tile_dim = 0;
             int num_tile_dims = 0;
+            //string inner_tile_var = dims[dims.size() - 1].var;
             for(auto &v: vars) {
                 int index = -1;
                 for (int i = 0; i < (int)dims.size() - 1; i++)
@@ -2206,20 +2226,30 @@ void schedule_advisor(const vector<Function> &outputs,
                         break;
                     }
                 assert(index!=-1);
-                num_tile_dims++;
                 split_dim(g_out, index, tile_size, false);
                 /*
                 if (inner_tile_dim < (int)dims.size() - 1) {
                     swap_dim(g_out, index, inner_tile_dim);
                     inner_tile_dim++;
-                }
-                */
+                }*/
                 move_dim_to_outermost(g_out, index + 1);
+                /*
+                move_dim_to_var(g_out, index + 1, zero_reuse_var);
+                if (num_tile_dims == 0)
+                    for (int i = 0; i < (int)dims.size(); i++)
+                        if (dims[i].var == zero_reuse_var) {
+                            inner_tile_var = dims[i - 1].var;
+                            break;
+                        }
+                */
+                num_tile_dims++;
             }
+            // int num_par_dims = std::min(2, (int)dims.size() - 1);
             int num_fused_dims = 0;
             if (g_out.is_pure()) {
                 // Fuse all the tile dims?
                 int outer_dim = dims.size() - 2;
+                //for (int i = 0; i < num_par_dims - 1; i++) {
                 /*
                 for (int i = 0; i < num_tile_dims - 1; i++) {
                     if (outer_dim > 0) {
@@ -2227,8 +2257,7 @@ void schedule_advisor(const vector<Function> &outputs,
                         outer_dim = dims.size() - 2;
                         num_fused_dims++;
                     }
-                }
-                */
+                }*/
                 vector<int> levels;
                 levels.push_back(outer_dim);
                 if (auto_par)
@@ -2241,11 +2270,20 @@ void schedule_advisor(const vector<Function> &outputs,
             }
             for (auto &m: g.second) {
                 int outer_dim = dims.size() - 2;
+                /* int inner_tile_dim = dims.size() - 1;
+                for (unsigned int i = 0; i < dims.size(); i++)
+                    if (dims[i].var == inner_tile_var) {
+                        inner_tile_dim = i;
+                        break;
+                    }
+                */
                 if (m.name() != g_out.name() &&
                    inlines.find(m.name()) == inlines.end() && num_tile_dims > 0) {
+                    //int compute_level = inner_tile_dim;
                     int compute_level = outer_dim - num_tile_dims +
                                                     num_fused_dims + 1;
                     m.schedule().store_level().func = g_out.name();
+                    //m.schedule().store_level().var = dims[compute_level+1].var;
                     m.schedule().store_level().var = dims[compute_level].var;
                     m.schedule().compute_level().func = g_out.name();
                     m.schedule().compute_level().var = dims[compute_level].var;
