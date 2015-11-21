@@ -178,6 +178,41 @@ int main(int argc, char **argv) {
         }
         break;
     }
+    case 5:
+    {
+        Var x_outer, y_outer, x_inner, y_inner;
+        /* first 3 downsamples */
+        for(int l = 1; l <=3; l++){
+            downx[l].compute_at(downsampled[l], x).parallel(y).vectorize(x, VLEN);
+            downsampled[l].compute_root().parallel(y).vectorize(x, VLEN);
+        }
+        /* remaining downsamples */
+        for(int l = 4; l < levels-1; l++){
+            downsampled[l].compute_root().vectorize(x, VLEN).parallel(y);
+        }
+
+        /* first L-3 upsamples */
+        for(int l = levels-2; l > 3; l--){
+            upsampled[l].compute_root().vectorize(x, VLEN).parallel(y);
+            interpolated[l].compute_root().vectorize(x, VLEN).parallel(y);
+            interpolated[l].unroll(x, 2).unroll(y, 2);
+        }
+        upsampled[3].compute_at(final, x_outer).vectorize(x, VLEN);
+        interpolated[3].compute_at(final, x_outer).vectorize(x, VLEN);
+        /* last upsamples */
+        for(int l = 2; l >= 0; l--){
+            upsampledx[l].compute_at(final, x_outer).vectorize(x, VLEN);
+            upsampled[l].compute_at(final, x_outer).vectorize(x, VLEN);
+            interpolated[l].compute_at(final, x_outer).vectorize(x, VLEN);
+            interpolated[l].unroll(x, 2).unroll(y, 2);
+        }
+        final.tile(x, y, x_outer, y_outer, x_inner, y_inner, 128, 16);
+        final.parallel(y_outer).vectorize(x_inner, VLEN);
+        final.bound(x, 0, input.width());
+        final.bound(y, 0, input.height());
+        final.bound(c, 0, 3);
+        break;
+    }
     default:
         std::cout << "Auto-Schedule" << std::endl;
     }
