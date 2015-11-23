@@ -1867,6 +1867,7 @@ void split_dim(Function &func, int dim, int split_size, bool partial) {
     dims[dim].var = inner_name;
     dims[dim+1].var = outer_name;
     dims[dim+1].pure = dims[dim].pure;
+    dims[dim+1].for_type = dims[dim].for_type;
 
     // Add the split to the splits list
     Split split = {old_name, outer_name, inner_name, split_size,
