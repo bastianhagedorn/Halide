@@ -1301,8 +1301,7 @@ void simplify_box(Box& b) {
 /* Compute the regions of functions required to compute a tile of the function
    'f' given sizes of the tile and offset in each dimension. */
 std::map<string, Box> regions_required(Function f,
-                                       const vector<int> &tile_sizes,
-                                       const vector<int> &offsets,
+                                       const vector< pair<Expr, Expr> > &sym_bounds,
                                        map<string, Function> &env,
                                        const FuncValueBounds &func_val_bounds){
     // Define the bounds for each variable of the function
@@ -1320,7 +1319,7 @@ std::map<string, Box> regions_required(Function f,
     // approximations which are not desirable. Going forward as we encounter
     // more exotic patterns we will need to revisit this simple analysis.
     for (int arg = 0; arg < num_args; arg++)
-        bounds.push_back(Interval(offsets[arg], tile_sizes[arg] - 1));
+        bounds.push_back(Interval(sym_bounds[arg].first, sym_bounds[arg].second));
 
     std::map<string, Box> regions;
     // Add the function and its region to the queue
@@ -1365,25 +1364,26 @@ std::map<string, Box> regions_required(Function f,
 /* Compute the redundant regions computed while computing a tile of the function
    'f' given sizes of the tile in each dimension. */
 std::map<string, Box> redundant_regions(Function f, int dir,
-                                        const vector<int> &tile_sizes,
-                                        const vector<int> &offsets,
+                                        const vector<pair<Expr, Expr>> &sym_bounds,
                                         map<string, Function> &env,
                                         const FuncValueBounds &func_val_bounds){
-    std::map<string, Box> regions = regions_required(f, tile_sizes,
-                                                     offsets, env,
+    std::map<string, Box> regions = regions_required(f, sym_bounds, env,
                                                      func_val_bounds);
-    vector<int> shifted_offsets;
+    vector<pair<Expr, Expr>> shifted_bounds;
     int num_args = f.args().size();
     for (int arg = 0; arg < num_args; arg++) {
-        if (dir == arg)
-            shifted_offsets.push_back(offsets[arg] + tile_sizes[arg]);
+        if (dir == arg) {
+            Expr len = sym_bounds[arg].second - sym_bounds[arg].first + 1;
+            pair<Expr, Expr> bounds = make_pair(sym_bounds[arg].first + len,
+                                              sym_bounds[arg].second + len);
+            shifted_bounds.push_back(bounds);
+        }
         else
-            shifted_offsets.push_back(offsets[arg]);
+            shifted_bounds.push_back(sym_bounds[arg]);
     }
 
-    std::map<string, Box> regions_shifted = regions_required(f, tile_sizes,
-                                                             shifted_offsets, env,
-                                                             func_val_bounds);
+    std::map<string, Box> regions_shifted = regions_required(f, shifted_bounds,
+                                                             env, func_val_bounds);
 
     std::map<string, Box> overalps;
     for (auto& reg: regions) {
@@ -1807,12 +1807,8 @@ void parallelize_dim(Function &func, vector<int> levels) {
     vector<Dim> &dims = func.schedule().dims();
     // TODO Provide an option for collapsing all the parallel
     // loops
-    for (auto dim: levels) {
+    for (auto dim: levels)
         dims[dim].for_type = ForType::Parallel;
-        std::cout << "Variable " << dims[dim].var
-                  << " of function " << func.name() << " parallelized"
-                  << std::endl;
-    }
 }
 
 void move_dim_to_outermost(Function& func, int dim) {
@@ -1900,8 +1896,6 @@ void vectorize_dim(Function &func, int dim, int vec_width) {
     vector<Dim> &dims = func.schedule().dims();
     split_dim(func, dim, vec_width, false);
     dims[dim].for_type = ForType::Vectorized;
-    std::cout << "Variable " << dims[dim].var << " of function "
-              << func.name() << " vectorized" << std::endl;
 }
 
 bool check_dim_size(Function &func, int dim, int min_size,
@@ -1947,51 +1941,43 @@ void simple_vectorize(Function &func, int inner_dim, int vec_width) {
 void interval_analysis( map<string, Function> &env,
                         const FuncValueBounds &func_val_bounds,
                         map<string, map<string, Box> > &func_dep_regions,
-                        map<string, vector< map<string, Box> > > &func_overlaps) {
+                        map<string, vector< map<string, Box> > > &func_overlaps,
+                        map<string, vector< pair<Var, Var> > > &func_sym) {
 
-    int tile_dims = 2;
     for (auto& kv : env) {
-        // Have to decide which dimensions are being tiled and restrict it to
-        // only pure functions or formulate a plan for reductions
-        int num_args = kv.second.args().size();
-        int tile_size = 128;
-        vector<int> tile_sizes;
-        vector<int> offsets;
-        // For now assuming all dimensions are going to be tiled by size 32
-        // and they start at origin
-        for (int arg = 0; arg < num_args; arg++) {
-            // Restrict the tiling to 2d
-            if (arg < tile_dims)
-                tile_sizes.push_back(tile_size);
-            else
-                tile_sizes.push_back(1);
-            offsets.push_back(0);
+        // For each argument create a variables which will server as the lower
+        // and upper bounds of the interval corresponding to the argument
+        const vector<string>  &args = kv.second.args();
+        vector< pair<Expr, Expr> > sym_bounds;
+        for (unsigned int arg = 0; arg < args.size(); arg++) {
+                Var lower = Var(args[arg] + "_l");
+                Var upper = Var(args[arg] + "_u");
+                pair<Var, Var> sym = make_pair(lower, upper);
+                pair<Expr, Expr> bounds = make_pair(Expr(lower), Expr(upper));
+                func_sym[kv.first].push_back(sym);
+                sym_bounds.push_back(bounds);
         }
 
-        map<string, Box> regions = regions_required(kv.second, tile_sizes,
-                                                    offsets, env,
-                                                    func_val_bounds);
+        map<string, Box> regions = regions_required(kv.second, sym_bounds,
+                                                    env, func_val_bounds);
         assert(func_dep_regions.find(kv.first) == func_dep_regions.end());
         func_dep_regions[kv.first] = regions;
 
-        /*
-           std::cout << "Function regions required for " << kv.first << ":" << std::endl;
-           disp_regions(regions);
-           std::cout << std::endl; */
-
+        std::cout << "Function regions required for " << kv.first << ":" << std::endl;
+        disp_regions(regions);
+        std::cout << std::endl;
 
         assert(func_overlaps.find(kv.first) == func_overlaps.end());
-        for (int arg = 0; arg < std::min(tile_dims, num_args); arg++) {
+        for (unsigned int arg = 0; arg < args.size(); arg++) {
             map<string, Box> overlaps = redundant_regions(kv.second, arg,
-                                                          tile_sizes, offsets,
-                                                          env, func_val_bounds);
+                                                          sym_bounds, env,
+                                                          func_val_bounds);
             func_overlaps[kv.first].push_back(overlaps);
-            /*
-               std::cout << "Function region overlaps for var " <<
-               kv.second.args()[arg]  << " " << kv.first
-               << ":" << std::endl;
-               disp_regions(overlaps);
-               std::cout << std::endl; */
+
+            std::cout << "Function region overlaps for var " <<
+                kv.second.args()[arg]  << " " << kv.first << ":" << std::endl;
+            disp_regions(overlaps);
+            std::cout << std::endl;
         }
     }
 }
@@ -2024,7 +2010,11 @@ void schedule_advisor(const vector<Function> &outputs,
     // TODO infer the bounds of each function in the pipeline based on the
     // estimates of output sizes and the parameters
 
+    // TODO explain strcuture
+    map<string, Box> pipeline_bounds;
+
     // Check if the bounds are available for all the outputs of the pipeline
+    /*
     bool bounds_avail = true;
     for (auto &out : outputs) {
         const vector<Bound> &bounds = out.schedule().bounds();
@@ -2044,8 +2034,6 @@ void schedule_advisor(const vector<Function> &outputs,
         }
     }
     // std::cout << "output bounds:" << bounds_avail << std::endl;
-    // TODO explain strcuture
-    map<string, Box> pipeline_bounds;
     if (bounds_avail) {
         for (auto &out: outputs) {
             vector<int> tile_sizes;
@@ -2079,6 +2067,7 @@ void schedule_advisor(const vector<Function> &outputs,
             }
         }
     }
+    */
     // disp_regions(pipeline_bounds);
 
     // TODO Method for estimating cost when reductions are involved
@@ -2150,9 +2139,11 @@ void schedule_advisor(const vector<Function> &outputs,
         // TODO explain structures
         map<string, map<string, Box> > func_dep_regions;
         map<string, vector< map<string, Box> > > func_overlaps;
+        map<string, vector< pair<Var, Var> > > func_sym_bounds;
 
         int tile_size = 128;
-        interval_analysis(env, func_val_bounds, func_dep_regions, func_overlaps);
+        interval_analysis(env, func_val_bounds, func_dep_regions,
+                          func_overlaps, func_sym_bounds);
 
         // Grouping
         map<string, vector<Function> > groups;
