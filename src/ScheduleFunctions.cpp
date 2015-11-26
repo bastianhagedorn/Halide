@@ -1301,9 +1301,9 @@ void simplify_box(Box& b) {
 /* Compute the regions of functions required to compute a tile of the function
    'f' given sizes of the tile and offset in each dimension. */
 std::map<string, Box> regions_required(Function f,
-                                       const std::vector<int> &tile_sizes,
-                                       const std::vector<int> &offsets,
-                                       std::map<std::string, Function> &env,
+                                       const vector<int> &tile_sizes,
+                                       const vector<int> &offsets,
+                                       map<string, Function> &env,
                                        const FuncValueBounds &func_val_bounds){
     // Define the bounds for each variable of the function
     std::vector<Interval> bounds;
@@ -1365,9 +1365,9 @@ std::map<string, Box> regions_required(Function f,
 /* Compute the redundant regions computed while computing a tile of the function
    'f' given sizes of the tile in each dimension. */
 std::map<string, Box> redundant_regions(Function f, int dir,
-                                        const std::vector<int> &tile_sizes,
-                                        const std::vector<int> &offsets,
-                                        std::map<std::string, Function> &env,
+                                        const vector<int> &tile_sizes,
+                                        const vector<int> &offsets,
+                                        map<string, Function> &env,
                                         const FuncValueBounds &func_val_bounds){
     std::map<string, Box> regions = regions_required(f, tile_sizes,
                                                      offsets, env,
@@ -1944,6 +1944,58 @@ void simple_vectorize(Function &func, int inner_dim, int vec_width) {
         vectorize_dim(func, inner_dim, vec_width);
 }
 
+void interval_analysis( map<string, Function> &env,
+                        const FuncValueBounds &func_val_bounds,
+                        map<string, map<string, Box> > &func_dep_regions,
+                        map<string, vector< map<string, Box> > > &func_overlaps) {
+
+    int tile_dims = 2;
+    for (auto& kv : env) {
+        // Have to decide which dimensions are being tiled and restrict it to
+        // only pure functions or formulate a plan for reductions
+        int num_args = kv.second.args().size();
+        int tile_size = 128;
+        vector<int> tile_sizes;
+        vector<int> offsets;
+        // For now assuming all dimensions are going to be tiled by size 32
+        // and they start at origin
+        for (int arg = 0; arg < num_args; arg++) {
+            // Restrict the tiling to 2d
+            if (arg < tile_dims)
+                tile_sizes.push_back(tile_size);
+            else
+                tile_sizes.push_back(1);
+            offsets.push_back(0);
+        }
+
+        map<string, Box> regions = regions_required(kv.second, tile_sizes,
+                                                    offsets, env,
+                                                    func_val_bounds);
+        assert(func_dep_regions.find(kv.first) == func_dep_regions.end());
+        func_dep_regions[kv.first] = regions;
+
+        /*
+           std::cout << "Function regions required for " << kv.first << ":" << std::endl;
+           disp_regions(regions);
+           std::cout << std::endl; */
+
+
+        assert(func_overlaps.find(kv.first) == func_overlaps.end());
+        for (int arg = 0; arg < std::min(tile_dims, num_args); arg++) {
+            map<string, Box> overlaps = redundant_regions(kv.second, arg,
+                                                          tile_sizes, offsets,
+                                                          env, func_val_bounds);
+            func_overlaps[kv.first].push_back(overlaps);
+            /*
+               std::cout << "Function region overlaps for var " <<
+               kv.second.args()[arg]  << " " << kv.first
+               << ":" << std::endl;
+               disp_regions(overlaps);
+               std::cout << std::endl; */
+        }
+    }
+}
+
 void schedule_advisor(const vector<Function> &outputs,
                       const vector<string> &order,
                       map<string, Function> &env,
@@ -1992,6 +2044,7 @@ void schedule_advisor(const vector<Function> &outputs,
         }
     }
     // std::cout << "output bounds:" << bounds_avail << std::endl;
+    // TODO explain strcuture
     map<string, Box> pipeline_bounds;
     if (bounds_avail) {
         for (auto &out: outputs) {
@@ -2093,54 +2146,13 @@ void schedule_advisor(const vector<Function> &outputs,
         // required to compute a region of the function
 
         // Dependence analysis
-        int tile_size = 128;
+
         // TODO explain structures
         map<string, map<string, Box> > func_dep_regions;
-        map<string, vector<std::map<string, Box> > > func_overlaps;
+        map<string, vector< map<string, Box> > > func_overlaps;
 
-        for (auto& kv : env) {
-            // Have to decide which dimensions are being tiled and restrict it to
-            // only pure functions or formulate a plan for reductions
-            int num_args = kv.second.args().size();
-            vector<int> tile_sizes;
-            vector<int> offsets;
-            // For now assuming all dimensions are going to be tiled by size 32
-            // and they start at origin
-            for (int arg = 0; arg < num_args; arg++) {
-                // Restrict the tiling to 2d
-                if (arg < tile_dims)
-                    tile_sizes.push_back(tile_size);
-                else
-                    tile_sizes.push_back(1);
-                offsets.push_back(0);
-            }
-
-            map<string, Box> regions = regions_required(kv.second, tile_sizes,
-                                                        offsets, env,
-                                                        func_val_bounds);
-            assert(func_dep_regions.find(kv.first) == func_dep_regions.end());
-            func_dep_regions[kv.first] = regions;
-
-            /*
-            std::cout << "Function regions required for " << kv.first << ":" << std::endl;
-            disp_regions(regions);
-            std::cout << std::endl; */
-
-
-            assert(func_overlaps.find(kv.first) == func_overlaps.end());
-            for (int arg = 0; arg < std::min(tile_dims, num_args); arg++) {
-                map<string, Box> overlaps = redundant_regions(kv.second, arg,
-                                                              tile_sizes, offsets,
-                                                              env, func_val_bounds);
-                func_overlaps[kv.first].push_back(overlaps);
-                /*
-                std::cout << "Function region overlaps for var " <<
-                    kv.second.args()[arg]  << " " << kv.first
-                    << ":" << std::endl;
-                disp_regions(overlaps);
-                std::cout << std::endl; */
-            }
-        }
+        int tile_size = 128;
+        interval_analysis(env, func_val_bounds, func_dep_regions, func_overlaps);
 
         // Grouping
         map<string, vector<Function> > groups;
