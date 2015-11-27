@@ -16,12 +16,16 @@ out.png: process
 	./process ../images/rgb.png 8 1 1 10 out.png
 
 bench: process
-	HL_NUM_THREADS=1 numactl --physcpubind=0 ./process ../images/rgb.png 8 1 1 10 out.png
-	HL_NUM_THREADS=4 numactl --physcpubind=0-3 ./process ../images/rgb.png 8 1 1 10 out.png
-	HL_NUM_THREADS=8 numactl --physcpubind=0-7 ./process ../images/rgb.png 8 1 1 10 out.png
-	HL_NUM_THREADS=16 numactl --physcpubind=0-15 ./process ../images/rgb.png 8 1 1 10 out.png
-	HL_NUM_THREADS=32 numactl --physcpubind=0-31 ./process ../images/rgb.png 8 1 1 10 out.png
-	HL_NUM_THREADS=64 numactl --physcpubind=0-63 ./process ../images/rgb.png 8 1 1 10 out.png
+	HL_NUM_THREADS=1   ./process ../images/rgb.png 8 1 1 10 out.png
+	HL_NUM_THREADS=2   ./process ../images/rgb.png 8 1 1 10 out.png
+	HL_NUM_THREADS=4  ./process ../images/rgb.png 8 1 1 10 out.png
+	HL_NUM_THREADS=8  ./process ../images/rgb.png 8 1 1 10 out.png
+	#HL_NUM_THREADS=1 numactl --physcpubind=0 ./process ../images/rgb.png 8 1 1 10 out.png
+	#HL_NUM_THREADS=4 numactl --physcpubind=0-3 ./process ../images/rgb.png 8 1 1 10 out.png
+	#HL_NUM_THREADS=8 numactl --physcpubind=0-7 ./process ../images/rgb.png 8 1 1 10 out.png
+	#HL_NUM_THREADS=16 numactl --physcpubind=0-15 ./process ../images/rgb.png 8 1 1 10 out.png
+	#HL_NUM_THREADS=32 numactl --physcpubind=0-31 ./process ../images/rgb.png 8 1 1 10 out.png
+	#HL_NUM_THREADS=64 numactl --physcpubind=0-63 ./process ../images/rgb.png 8 1 1 10 out.png
 
 # Build rules for generating a visualization of the pipeline using HalideTraceViz
 process_viz: local_laplacian_viz.o

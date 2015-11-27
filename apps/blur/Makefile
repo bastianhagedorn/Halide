@@ -21,12 +21,16 @@ test: test.cpp halide_blur.o
 	$(CXX) $(CXXFLAGS) $(OPENMP_FLAGS) -msse2 -Wall -O2 test.cpp halide_blur.o -o test -lpthread -ldl $(PNGFLAGS)
 
 bench: test
-	HL_NUM_THREADS=1 numactl --physcpubind=0 ./test
-	HL_NUM_THREADS=4 numactl --physcpubind=0-3 ./test
-	HL_NUM_THREADS=8 numactl --physcpubind=0-7 ./test
-	HL_NUM_THREADS=16 numactl --physcpubind=0-15 ./test
-	HL_NUM_THREADS=32 numactl --physcpubind=0-31 ./test
-	HL_NUM_THREADS=64 numactl --physcpubind=0-63 ./test
+	OMP_NUM_THREADS=1 HL_NUM_THREADS=1 ./test
+	OMP_NUM_THREADS=2 HL_NUM_THREADS=2 ./test
+	OMP_NUM_THREADS=4 HL_NUM_THREADS=4 ./test
+	OMP_NUM_THREADS=8 HL_NUM_THREADS=8 ./test
+	#HL_NUM_THREADS=1 numactl --physcpubind=0 ./test
+	#HL_NUM_THREADS=4 numactl --physcpubind=0-3 ./test
+	#HL_NUM_THREADS=8 numactl --physcpubind=0-7 ./test
+	#HL_NUM_THREADS=16 numactl --physcpubind=0-15 ./test
+	#HL_NUM_THREADS=32 numactl --physcpubind=0-31 ./test
+	#HL_NUM_THREADS=64 numactl --physcpubind=0-63 ./test
 
 clean:
 	rm -f test halide_blur.o halide_blur

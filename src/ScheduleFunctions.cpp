@@ -1300,12 +1300,15 @@ void simplify_box(Box& b) {
 
 std::map<string, Box> sym_to_concrete_bounds(vector< pair<Var, Var> > &sym,
                                              vector< pair<int, int> > &bounds,
+                                             vector<bool> &eval,
                                              map<string, Box> &sym_regions) {
 
     map<string, Expr> replacements;
     for (unsigned int i = 0; i < sym.size(); i++) {
-        replacements[sym[i].first.name()] = bounds[i].first;
-        replacements[sym[i].second.name()] = bounds[i].second;
+        if (eval[i]) {
+            replacements[sym[i].first.name()] = bounds[i].first;
+            replacements[sym[i].second.name()] = bounds[i].second;
+        }
     }
     map<string, Box> concrete_regions;
     for (const auto &r: sym_regions) {
@@ -2007,6 +2010,28 @@ void interval_analysis( map<string, Function> &env,
     }
 }
 
+bool check_bounds_on_outputs(const vector<Function> &outputs) {
+    bool bounds_avail = true;
+    for (auto &out : outputs) {
+        const vector<Bound> &bounds = out.schedule().bounds();
+        if (bounds.size() != out.args().size()) {
+            bounds_avail = false;
+            break;
+        }
+        vector<string> vars = out.args();
+
+        for (unsigned int i = 0; i < bounds.size(); i++) {
+            if (std::find(vars.begin(), vars.end(), bounds[i].var) == vars.end()
+                    || !((bounds[i].min.as<IntImm>()) &&
+                        (bounds[i].extent.as<IntImm>())))  {
+                bounds_avail = false;
+                break;
+            }
+        }
+    }
+    return bounds_avail;
+}
+
 void schedule_advisor(const vector<Function> &outputs,
                       const vector<string> &order,
                       map<string, Function> &env,
@@ -2037,63 +2062,6 @@ void schedule_advisor(const vector<Function> &outputs,
 
     // TODO explain strcuture
     map<string, Box> pipeline_bounds;
-
-    // Check if the bounds are available for all the outputs of the pipeline
-    /*
-    bool bounds_avail = true;
-    for (auto &out : outputs) {
-        const vector<Bound> &bounds = out.schedule().bounds();
-        if (bounds.size() != out.args().size()) {
-            bounds_avail = false;
-            break;
-        }
-        vector<string> vars = out.args();
-
-        for (unsigned int i = 0; i < bounds.size(); i++) {
-            if (std::find(vars.begin(), vars.end(), bounds[i].var) == vars.end()
-                || !((bounds[i].min.as<IntImm>()) &&
-                    (bounds[i].extent.as<IntImm>())))  {
-                bounds_avail = false;
-                break;
-            }
-        }
-    }
-    // std::cout << "output bounds:" << bounds_avail << std::endl;
-    if (bounds_avail) {
-        for (auto &out: outputs) {
-            vector<int> tile_sizes;
-            vector<int> offsets;
-            vector<string> vars = out.args();
-            for (unsigned int i = 0; i < vars.size(); i++)
-                for (auto &b: out.schedule().bounds())
-                    if (b.var == vars[i]) {
-                        const IntImm * bmin = b.min.as<IntImm>();
-                        const IntImm * bextent = b.extent.as<IntImm>();
-                        tile_sizes.push_back(bextent->value);
-                        offsets.push_back(bmin->value);
-                    }
-
-            map<string, Box> regions = regions_required(out, tile_sizes,
-                                                        offsets, env,
-                                                        func_val_bounds);
-            Box out_box;
-            for (unsigned int i = 0; i < tile_sizes.size(); i++)
-                out_box.push_back(Interval(offsets[i], offsets[i] +
-                                                       tile_sizes[i] - 1));
-            regions[out.name()] = out_box;
-
-            for (auto& reg: regions) {
-                // Merge region with an existing region for the function in
-                // the global map
-                if (pipeline_bounds.find(reg.first) == pipeline_bounds.end())
-                    pipeline_bounds[reg.first] = reg.second;
-                else
-                    merge_boxes(pipeline_bounds[reg.first], reg.second);
-            }
-        }
-    }
-    */
-    // disp_regions(pipeline_bounds);
 
     // TODO Method for estimating cost when reductions are involved
     // TODO explain structure
@@ -2155,6 +2123,8 @@ void schedule_advisor(const vector<Function> &outputs,
     auto_vec = true;
     auto_par = true;
     unsigned int tile_dims = 2;
+    int tile_size = 128;
+
     if (overlap_tile) {
 
         // Dependence analysis
@@ -2170,27 +2140,28 @@ void schedule_advisor(const vector<Function> &outputs,
         map<string, map<string, Box> > func_dep_regions;
         map<string, vector< map<string, Box> > > func_overlaps;
 
-        int tile_size = 128;
         interval_analysis(env, func_val_bounds, func_sym_dep_regions,
                           func_sym_overlaps, func_sym);
 
         for (auto &reg: func_sym_dep_regions) {
             const vector<string> &args = env[reg.first].args();
             vector<pair<int, int> > bounds;
+            vector<bool> eval;
             for (unsigned int i = 0; i < args.size(); i++) {
                 if (i < tile_dims)
                     bounds.push_back(make_pair(0, tile_size - 1));
                 else
                     bounds.push_back(make_pair(0, 1));
+                eval.push_back(true);
             }
             func_dep_regions[reg.first] =
-                            sym_to_concrete_bounds(func_sym[reg.first], bounds,
+                            sym_to_concrete_bounds(func_sym[reg.first], bounds, eval,
                                                    func_sym_dep_regions[reg.first]);
 
             for (auto &dir: func_sym_overlaps[reg.first]) {
                 map<string, Box> concrete_reg =
                             sym_to_concrete_bounds(func_sym[reg.first], bounds,
-                                                   dir);
+                                                   eval, dir);
                 func_overlaps[reg.first].push_back(concrete_reg);
             }
         }
@@ -2199,6 +2170,57 @@ void schedule_advisor(const vector<Function> &outputs,
             disp_regions(reg.second);
             std::cout << std::endl;
         }
+
+        bool bounds_avail = check_bounds_on_outputs(outputs);
+        // std::cout << "output bounds:" << bounds_avail << std::endl;
+
+        if (bounds_avail) {
+            for (auto &out: outputs) {
+                vector<pair<int, int> > bounds;
+                vector<bool> eval;
+                vector<string> vars = out.args();
+                for (unsigned int i = 0; i < vars.size(); i++) {
+                    bool found = false;
+                    for (auto &b: out.schedule().bounds())
+                        if (b.var == vars[i]) {
+                            const IntImm * bmin = b.min.as<IntImm>();
+                            const IntImm * bextent = b.extent.as<IntImm>();
+                            pair<int, int> p = make_pair(bmin->value, bmin->value
+                                                         + bextent->value - 1);
+                            bounds.push_back(p);
+                            eval.push_back(true);
+                            found = true;
+                        }
+                    if(!found) {
+                        bounds.push_back(make_pair(-1, -1));
+                        eval.push_back(false);
+                    }
+                }
+
+                map<string, Box> regions =
+                    sym_to_concrete_bounds(func_sym[out.name()], bounds, eval,
+                                           func_sym_dep_regions[out.name()]);
+
+                // Add the output region to the pipeline bounds as well
+                Box out_box;
+                for (unsigned int i = 0; i < bounds.size(); i++)
+                    out_box.push_back(Interval(bounds[i].first,
+                                               bounds[i].second));
+                regions[out.name()] = out_box;
+
+                for (auto& reg: regions) {
+                    // Merge region with an existing region for the function in
+                    // the global map
+                    if (pipeline_bounds.find(reg.first) == pipeline_bounds.end())
+                        pipeline_bounds[reg.first] = reg.second;
+                    else
+                        merge_boxes(pipeline_bounds[reg.first], reg.second);
+                }
+            }
+        }
+
+        // disp_regions(pipeline_bounds);
+
         // Grouping
         map<string, vector<Function> > groups;
         groups = grouping_overlap_tile(env, func_dep_regions, func_overlaps,
