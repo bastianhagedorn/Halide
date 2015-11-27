@@ -1663,7 +1663,7 @@ map<string, vector<Function> >
         for (auto &g: groups) {
             if (children.find(g.first) != children.end()) {
                 // Pick a function for doing the grouping. This is a tricky
-                // chocie for now picking one function arbitrarily
+                // choice for now picking one function arbitrarily
 
                 // TODO be careful about inputs and outputs to the pipeline
                 int num_children = children[g.first].size();
@@ -1807,7 +1807,7 @@ map<string, string> simple_inline(map<string, vector<const Call*>> &all_calls,
             }
         }
         if (consumers[fcalls.first].size() == 1 &&
-            all_one_to_one && num_calls <= 1) {
+                all_one_to_one && num_calls == 1) {
             inlines[fcalls.first] = consumers[fcalls.first][0];
             env[fcalls.first].schedule().store_level().var = "";
             env[fcalls.first].schedule().compute_level().var = "";
@@ -2228,7 +2228,7 @@ void schedule_advisor(const vector<Function> &outputs,
 
         //disp_grouping(groups);
 
-        // Code generation
+        // Schedule generation based on grouping
         for (auto& g: groups) {
             // Create a tiled traversal for the output of the group
             Function &g_out = env[g.first];
