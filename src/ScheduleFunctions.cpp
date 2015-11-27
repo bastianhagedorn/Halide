@@ -1298,12 +1298,35 @@ void simplify_box(Box& b) {
     }
 }
 
-/* Compute the regions of functions required to compute a tile of the function
-   'f' given sizes of the tile and offset in each dimension. */
-std::map<string, Box> regions_required(Function f,
-                                       const vector< pair<Expr, Expr> > &sym_bounds,
-                                       map<string, Function> &env,
-                                       const FuncValueBounds &func_val_bounds){
+std::map<string, Box> sym_to_concrete_bounds(vector< pair<Var, Var> > &sym,
+                                             vector< pair<int, int> > &bounds,
+                                             map<string, Box> &sym_regions) {
+
+    map<string, Expr> replacements;
+    for (unsigned int i = 0; i < sym.size(); i++) {
+        replacements[sym[i].first.name()] = bounds[i].first;
+        replacements[sym[i].second.name()] = bounds[i].second;
+    }
+    map<string, Box> concrete_regions;
+    for (const auto &r: sym_regions) {
+        Box concrete_box;
+        for (unsigned int i = 0; i < r.second.size(); i++) {
+            Expr lower = simplify(substitute(replacements, r.second[i].min));
+            Expr upper = simplify(substitute(replacements, r.second[i].max));
+            Interval concrete_bounds = Interval(lower, upper);
+            concrete_box.push_back(concrete_bounds);
+        }
+        concrete_regions[r.first] = concrete_box;
+    }
+    return concrete_regions;
+}
+
+/* Compute the regions of functions required to compute a region of the function
+   'f' given symbolic sizes of the tile in each dimension. */
+map<string, Box> regions_required(Function f,
+                                  const vector< pair<Expr, Expr> > &sym_bounds,
+                                  map<string, Function> &env,
+                                  const FuncValueBounds &func_val_bounds){
     // Define the bounds for each variable of the function
     std::vector<Interval> bounds;
     int num_args = f.args().size();
@@ -1321,17 +1344,17 @@ std::map<string, Box> regions_required(Function f,
     for (int arg = 0; arg < num_args; arg++)
         bounds.push_back(Interval(sym_bounds[arg].first, sym_bounds[arg].second));
 
-    std::map<string, Box> regions;
+    map<string, Box> regions;
     // Add the function and its region to the queue
     std::deque< pair<Function, std::vector<Interval> > > f_queue;
     f_queue.push_back(make_pair(f, bounds));
     // Recursively compute the regions required
     while(!f_queue.empty()) {
         Function curr_f = f_queue.front().first;
-        std::vector<Interval> curr_bounds = f_queue.front().second;
+        vector<Interval> curr_bounds = f_queue.front().second;
         f_queue.pop_front();
         for (auto& val: curr_f.values()) {
-            std::map<string, Box> curr_regions;
+            map<string, Box> curr_regions;
             Scope<Interval> curr_scope;
             int interval_index = 0;
             for (auto& arg: curr_f.args()) {
@@ -1963,9 +1986,10 @@ void interval_analysis( map<string, Function> &env,
         assert(func_dep_regions.find(kv.first) == func_dep_regions.end());
         func_dep_regions[kv.first] = regions;
 
+        /*
         std::cout << "Function regions required for " << kv.first << ":" << std::endl;
         disp_regions(regions);
-        std::cout << std::endl;
+        std::cout << std::endl; */
 
         assert(func_overlaps.find(kv.first) == func_overlaps.end());
         for (unsigned int arg = 0; arg < args.size(); arg++) {
@@ -1974,10 +1998,11 @@ void interval_analysis( map<string, Function> &env,
                                                           func_val_bounds);
             func_overlaps[kv.first].push_back(overlaps);
 
+            /*
             std::cout << "Function region overlaps for var " <<
                 kv.second.args()[arg]  << " " << kv.first << ":" << std::endl;
             disp_regions(overlaps);
-            std::cout << std::endl;
+            std::cout << std::endl; */
         }
     }
 }
@@ -2129,22 +2154,51 @@ void schedule_advisor(const vector<Function> &outputs,
     bool overlap_tile = true;
     auto_vec = true;
     auto_par = true;
-    int tile_dims = 2;
+    unsigned int tile_dims = 2;
     if (overlap_tile) {
-        // For each function compute all the regions of upstream functions
-        // required to compute a region of the function
 
         // Dependence analysis
 
+        // For each function compute all the regions of upstream functions
+        // required to compute a region of the function
+
         // TODO explain structures
+        map<string, map<string, Box> > func_sym_dep_regions;
+        map<string, vector< map<string, Box> > > func_sym_overlaps;
+        map<string, vector< pair<Var, Var> > > func_sym;
+
         map<string, map<string, Box> > func_dep_regions;
         map<string, vector< map<string, Box> > > func_overlaps;
-        map<string, vector< pair<Var, Var> > > func_sym_bounds;
 
         int tile_size = 128;
-        interval_analysis(env, func_val_bounds, func_dep_regions,
-                          func_overlaps, func_sym_bounds);
+        interval_analysis(env, func_val_bounds, func_sym_dep_regions,
+                          func_sym_overlaps, func_sym);
 
+        for (auto &reg: func_sym_dep_regions) {
+            const vector<string> &args = env[reg.first].args();
+            vector<pair<int, int> > bounds;
+            for (unsigned int i = 0; i < args.size(); i++) {
+                if (i < tile_dims)
+                    bounds.push_back(make_pair(0, tile_size - 1));
+                else
+                    bounds.push_back(make_pair(0, 1));
+            }
+            func_dep_regions[reg.first] =
+                            sym_to_concrete_bounds(func_sym[reg.first], bounds,
+                                                   func_sym_dep_regions[reg.first]);
+
+            for (auto &dir: func_sym_overlaps[reg.first]) {
+                map<string, Box> concrete_reg =
+                            sym_to_concrete_bounds(func_sym[reg.first], bounds,
+                                                   dir);
+                func_overlaps[reg.first].push_back(concrete_reg);
+            }
+        }
+
+        for (auto &reg: func_dep_regions) {
+            disp_regions(reg.second);
+            std::cout << std::endl;
+        }
         // Grouping
         map<string, vector<Function> > groups;
         groups = grouping_overlap_tile(env, func_dep_regions, func_overlaps,
@@ -2165,7 +2219,7 @@ void schedule_advisor(const vector<Function> &outputs,
                 continue;
             for(int i = 0; i < (int)dims.size() - 1; i++) {
                 // Restricting tiling to 2D
-                if (i < tile_dims) {
+                if (i < (int)tile_dims) {
                     // Check if dimension is large enough to tile
                     if (check_dim_size(g_out, i, tile_size, pipeline_bounds))
                         vars.push_back(dims[i].var);
