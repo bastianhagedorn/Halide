@@ -1605,11 +1605,73 @@ void disp_children(map<string, set<string> > &children) {
     }
 }
 
+int choose_candidate(const vector< pair<string, string> > &cand_pairs,
+                     map<string, Function> &env, map<string, Box> &pipeline_bounds,
+                     map<string, map<string, Box> > &func_dep_regions,
+                     map<string, vector<map<string, Box> > > &func_overlaps,
+                     map<string, vector<pair<int, int> > > &func_cost) {
+
+    /*
+    cand_group = g.first;
+    // Should only have a single child
+    child_group = *children[g.first].begin();
+    // Check if the merge is profitable
+    int redun_cost = 0;
+    bool merge = true;
+
+    // Estimate the amount of redundant compute introduced by
+    // overlap tiling the merged group
+
+    int cost = overlap_cost(child_group, groups[child_group],
+            func_overlaps, func_cost);
+
+    // The cost of a group can be undetermined when you can prove
+    // inlining is legit but cannot get the bounds for determining
+    // the cost of the tile
+    if (cost < 0)
+        merge = false;
+    redun_cost += cost;
+
+    cost = overlap_cost(child_group, groups[cand_group],
+            func_overlaps, func_cost);
+    if (cost < 0)
+        merge = false;
+    else
+        redun_cost += cost;
+
+    map<string, Box> all_reg = func_dep_regions[child_group];
+    map<string, Box> group_reg;
+
+    for (auto &f: groups[child_group])
+        if (f.name() != child_group)
+            group_reg[f.name()] = all_reg[f.name()];
+
+    for (auto &f: groups[cand_group])
+        group_reg[f.name()] = all_reg[f.name()];
+
+    int tile_cost = region_cost(group_reg, func_cost);
+    if (tile_cost < 0)
+        merge = false;
+
+    //int tile_size = region_size(group_reg, env);
+
+    float overlap_ratio = ((float)redun_cost)/tile_cost;
+
+    if (overlap_ratio > 0.1) {
+        //std::cout << redun_cost << "," << tile_cost << std::endl;
+        //std::cout << cand_group << "," << child_group << std::endl;
+        merge = false;
+    }
+    */
+    return -1;
+}
+
 map<string, vector<Function> >
     grouping_overlap_tile(map<string, Function> &env,
                           map<string, map<string, Box> > &func_dep_regions,
                           map<string, vector<map<string, Box> > > &func_overlaps,
                           map<string, vector<pair<int, int> > > &func_cost,
+                          map<string, Box> &pipeline_bounds,
                           map<string, string> &inlines,
                           const FuncValueBounds &func_val_bounds) {
 
@@ -1642,6 +1704,7 @@ map<string, vector<Function> >
         }
         merge_groups(groups, children, in.first, dest);
     }
+
     /*
 	std::cout << "==========" << std::endl;
 	std::cout << "Consumers:" << std::endl;
@@ -1659,83 +1722,31 @@ map<string, vector<Function> >
     while(!fixpoint) {
         string cand_group, child_group;
         fixpoint = true;
-        // Find a group which has a single child
+        vector< pair<string, string> > cand_pairs;
+        // Find all the groups which have a single child
         for (auto &g: groups) {
             if (children.find(g.first) != children.end()) {
-                // Pick a function for doing the grouping. This is a tricky
-                // choice for now picking one function arbitrarily
-
                 // TODO be careful about inputs and outputs to the pipeline
                 int num_children = children[g.first].size();
                 if (num_children == 1) {
-                    cand_group = g.first;
-                    // Should only have a single child
-                    child_group = *children[g.first].begin();
-                    // Check if the merge is profitable
-                    int redun_cost = 0;
-                    bool merge = true;
-
-                    // Estimate the amount of redundant compute introduced by
-                    // overlap tiling the merged group
-
-                    int cost = overlap_cost(child_group, groups[child_group],
-                                            func_overlaps, func_cost);
-
-                    // This should never happen since we would not have merged
-                    // without knowing the costs
-
-                    // Actually this can happen when you can prove inlining is
-                    // legit but cannot get the bounds for determining the cost
-                    // of the tile
-                    if (cost < 0)
-                        //assert(0);
-                        merge = false;
-                    redun_cost += cost;
-
-                    cost = overlap_cost(child_group, groups[cand_group],
-                                        func_overlaps, func_cost);
-                    if (cost < 0)
-                        merge = false;
-                    else
-                        redun_cost += cost;
-
-                    map<string, Box> all_reg = func_dep_regions[child_group];
-                    map<string, Box> group_reg;
-
-                    for (auto &f: groups[child_group])
-                        if (f.name() != child_group)
-                            group_reg[f.name()] = all_reg[f.name()];
-
-                    for (auto &f: groups[cand_group])
-                        group_reg[f.name()] = all_reg[f.name()];
-
-                    int tile_cost = region_cost(group_reg, func_cost);
-                    if (tile_cost < 0)
-                        merge = false;
-
-                    //int tile_size = region_size(group_reg, env);
-
-                    float overlap_ratio = ((float)redun_cost)/tile_cost;
-
-                    if (overlap_ratio > 0.1) {
-                        //std::cout << redun_cost << "," << tile_cost << std::endl;
-                        //std::cout << cand_group << "," << child_group << std::endl;
-                        merge = false;
-                    }
-
-                    if (merge) {
-                        //std::cout << redun_cost << std::endl;
-                        //std::cout << tile_cost << std::endl;
-                        //std::cout << tile_size << std::endl;
-                        // Set flag for further iteration
-                        fixpoint = false;
-                        break;
-                    }
+                    auto cand = make_pair(g.first, *children[g.first].begin());
+                    cand_pairs.push_back(cand);
                 }
             }
         }
-        // Do the necessary actions required to perform the merge
-        // if there is a merge candidate
+
+        // Pick a pair of groups to merge. This is a tricky choice.
+        int cand_index = choose_candidate(cand_pairs, env, pipeline_bounds,
+                                          func_dep_regions, func_overlaps,
+                                          func_cost);
+        if (cand_index != -1) {
+            cand_group = cand_pairs[cand_index].first;
+            child_group = cand_pairs[cand_index].second;
+            fixpoint = false;
+        }
+
+        // Do the necessary book keeping required to perform the merge if
+        // there is a merge candidate
         if (!fixpoint) {
             merge_groups(groups, children, cand_group, child_group);
             //std::cout << "Megre candidate" << std::endl;
@@ -2224,7 +2235,8 @@ void schedule_advisor(const vector<Function> &outputs,
         // Grouping
         map<string, vector<Function> > groups;
         groups = grouping_overlap_tile(env, func_dep_regions, func_overlaps,
-                                       func_cost, inlines, func_val_bounds);
+                                       func_cost, pipeline_bounds, inlines,
+                                       func_val_bounds);
 
         //disp_grouping(groups);
 
