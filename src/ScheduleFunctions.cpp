@@ -1605,11 +1605,88 @@ void disp_children(map<string, set<string> > &children) {
     }
 }
 
+void disp_box(Box &b) {
+    for (unsigned int dim = 0; dim < b.size(); dim++)
+        std::cout << "(" << b[dim].min << "," << b[dim].max << ")";
+}
+
 int choose_candidate(const vector< pair<string, string> > &cand_pairs,
+                     map<string, vector<Function> > &groups,
                      map<string, Function> &env, map<string, Box> &pipeline_bounds,
                      map<string, map<string, Box> > &func_dep_regions,
                      map<string, vector<map<string, Box> > > &func_overlaps,
                      map<string, vector<pair<int, int> > > &func_cost) {
+
+    // The choose candidate operates by considering many posssible fusion
+    // structures between each pair of candidates. The options considered are
+    // computing a all functions in both the groups at some granularity of the
+    // output function in the child group.
+    //
+    // Among these options the only ones considered are the ones that satisfy
+    // the parallelism and fast memory size specification. This means the
+    // following things:
+    //
+    // 1) Do all the intermediate buffers fit in the fast level of memory. One
+    // needs to account for eary frees and the high watermark of intermediate
+    // storage. There might be performance gains by doing the buffer
+    // allocation statically as opposed to dynamic allocation. It might be
+    // useful to investigate this both on CPU and GPU architectures.
+    //
+    // 2) Is the amount of redundant computation introduced in the process
+    // give the best redundant compute vs. locality trade-off. One way to
+    // handle this is to start with the option that introduces the least amount
+    // of redundant computation and check if that satisfies the other criteria.
+    // Then consider the next option until it gets to a point where it is
+    // beneficial to load from slow memory than to redundantly compute.
+    //
+    // 3) Does the fused group have enough parallelism both for multiple cores.
+    // This can get tricky as it has load balancing aspect to it too. For
+    // example, if the group can be split into 10 tiles and there are 4 cores the
+    // latency of the entire pipeline is 2 tiles. So either the number of tiles
+    // have to a multiple of the cores or large in number to avoid the load
+    // imbalance. Till this point I have not noticed the collapse being
+    // particularly useful it might be an issue with Halide task scheduling. I
+    // need experiments confirming this obsevation.
+    //
+    // 4) Does the fusion limit vectorization. Reordering function dimensions
+    // and modifying data layout have significant interactions with
+    // vectorization. As a first pass the goal is to not miss any obvious
+    // vectorization and does not not create new oportunities.  Generating a
+    // schedule which makes good use of vector units is a challenging problem
+    // in itself.  It might be worthwile to perform a prepass on the pipeline
+    // to first decide what is going to be vectorized and prevent further
+    // phases from interfering with that decision.
+    //
+    // The options that are currently conisdered are computing at different
+    // granularities at each level of the function. The tile sizes at each
+    // level are determined by the sizes of the intermediate data and the size
+    // of the fast memory. We then construct a list of valid options atmost one
+    // per candidate pair. For choosing among the options there needs to be
+    // benefit associated with each of the options. The benefit we associate
+    // with each of the choices is the potential number of accesses to slow
+    // memory that are eliminated weighted by the inverse of the arithmetic
+    // intensity of the child group in the pair.
+
+    for (auto &p: cand_pairs) {
+        std::cout << "(" << p.first << "," << p.second << ")" << std::endl;
+        if (pipeline_bounds.find(p.second) != pipeline_bounds.end()) {
+            std::cout << "Child size:" << std::endl;
+            Box &b = pipeline_bounds[p.second];
+            std::cout << p.second;
+            disp_box(b);
+            std::cout << std::endl;
+        }
+        std::cout << "Child function characteristics:" << std::endl;
+        std::cout << "Loads:" << func_cost[p.second][0].second <<
+                     " Ops:" << func_cost[p.second][0].first  << std::endl;
+        std::cout << "Expr:" << env[p.second].values()[0] << std::endl;
+        std::cout << std::endl;
+    }
+
+    // The choose candidate
+    // The candidates that are going to be fused should satisfy the following
+    // criteria:
+    //
 
     /*
     cand_group = g.first;
@@ -1736,9 +1813,10 @@ map<string, vector<Function> >
         }
 
         // Pick a pair of groups to merge. This is a tricky choice.
-        int cand_index = choose_candidate(cand_pairs, env, pipeline_bounds,
-                                          func_dep_regions, func_overlaps,
-                                          func_cost);
+        int cand_index = choose_candidate(cand_pairs, groups, env,
+                                          pipeline_bounds, func_dep_regions,
+                                          func_overlaps, func_cost);
+
         if (cand_index != -1) {
             cand_group = cand_pairs[cand_index].first;
             child_group = cand_pairs[cand_index].second;
@@ -1780,14 +1858,7 @@ void disp_schedule_and_storage_mapping(map<string, Function> &env) {
 void disp_regions(map<string, Box> &regions) {
     for (auto& reg: regions) {
         std::cout << reg.first;
-        // Be wary of the cost of simplification and verify if this can be
-        // done better
-        // The simplifies do take for ever :( try local laplacian. Early
-        // simplification helps but needs further investigation.
-        for (unsigned int b = 0; b < reg.second.size(); b++)
-            std::cout << "(" << simplify(reg.second[b].min) << ","
-                << simplify(reg.second[b].max) << ")";
-
+        disp_box(reg.second);
         std::cout << std::endl;
     }
 }
