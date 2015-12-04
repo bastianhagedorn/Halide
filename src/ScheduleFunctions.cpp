@@ -1298,32 +1298,6 @@ void simplify_box(Box& b) {
     }
 }
 
-std::map<string, Box> sym_to_concrete_bounds(vector< pair<Var, Var> > &sym,
-                                             vector< pair<int, int> > &bounds,
-                                             vector<bool> &eval,
-                                             map<string, Box> &sym_regions) {
-
-    map<string, Expr> replacements;
-    for (unsigned int i = 0; i < sym.size(); i++) {
-        if (eval[i]) {
-            replacements[sym[i].first.name()] = bounds[i].first;
-            replacements[sym[i].second.name()] = bounds[i].second;
-        }
-    }
-    map<string, Box> concrete_regions;
-    for (const auto &r: sym_regions) {
-        Box concrete_box;
-        for (unsigned int i = 0; i < r.second.size(); i++) {
-            Expr lower = simplify(substitute(replacements, r.second[i].min));
-            Expr upper = simplify(substitute(replacements, r.second[i].max));
-            Interval concrete_bounds = Interval(lower, upper);
-            concrete_box.push_back(concrete_bounds);
-        }
-        concrete_regions[r.first] = concrete_box;
-    }
-    return concrete_regions;
-}
-
 /* Compute the regions of functions required to compute a region of the function
    'f' given symbolic sizes of the tile in each dimension. */
 map<string, Box> regions_required(Function f,
@@ -1437,6 +1411,93 @@ map<string, Box> redundant_regions(Function f, int dir,
 
     return overalps;
 }
+
+map<string, Box> sym_to_concrete_bounds(vector< pair<Var, Var> > &sym,
+                                        vector< pair<int, int> > &bounds,
+                                        vector<bool> &eval,
+                                        map<string, Box> &sym_regions) {
+
+    map<string, Expr> replacements;
+    for (unsigned int i = 0; i < sym.size(); i++) {
+        if (eval[i]) {
+            replacements[sym[i].first.name()] = bounds[i].first;
+            replacements[sym[i].second.name()] = bounds[i].second;
+        }
+    }
+    map<string, Box> concrete_regions;
+    for (const auto &r: sym_regions) {
+        Box concrete_box;
+        for (unsigned int i = 0; i < r.second.size(); i++) {
+            Expr lower = simplify(substitute(replacements, r.second[i].min));
+            Expr upper = simplify(substitute(replacements, r.second[i].max));
+            Interval concrete_bounds = Interval(lower, upper);
+            concrete_box.push_back(concrete_bounds);
+        }
+        concrete_regions[r.first] = concrete_box;
+    }
+    return concrete_regions;
+}
+
+struct DependenceAnalysis {
+
+    map<string, Function> &env;
+    const FuncValueBounds &func_val_bounds;
+    map<string, map<string, Box> > func_dep_regions;
+    map<string, vector< map<string, Box> > > func_overlaps;
+    map<string, vector< pair<Var, Var> > > func_sym;
+
+
+    DependenceAnalysis(map<string, Function> &_env,
+                     const FuncValueBounds &_func_val_bounds):
+                     env(_env), func_val_bounds(_func_val_bounds) {
+        for (auto& kv : env) {
+            // For each argument create a variables which will server as the lower
+            // and upper bounds of the interval corresponding to the argument
+            const vector<string>  &args = kv.second.args();
+            vector< pair<Expr, Expr> > sym_bounds;
+            for (unsigned int arg = 0; arg < args.size(); arg++) {
+                Var lower = Var(args[arg] + "_l");
+                Var upper = Var(args[arg] + "_u");
+                pair<Var, Var> sym = make_pair(lower, upper);
+                pair<Expr, Expr> bounds = make_pair(Expr(lower), Expr(upper));
+                func_sym[kv.first].push_back(sym);
+                sym_bounds.push_back(bounds);
+            }
+
+            map<string, Box> regions = regions_required(kv.second, sym_bounds,
+                                                        env, func_val_bounds);
+            assert(func_dep_regions.find(kv.first) == func_dep_regions.end());
+            func_dep_regions[kv.first] = regions;
+
+            /*
+               std::cout << "Function regions required for " << kv.first << ":" << std::endl;
+               disp_regions(regions);
+               std::cout << std::endl; */
+
+            assert(func_overlaps.find(kv.first) == func_overlaps.end());
+            for (unsigned int arg = 0; arg < args.size(); arg++) {
+                map<string, Box> overlaps = redundant_regions(kv.second, arg,
+                        sym_bounds, env,
+                        func_val_bounds);
+                func_overlaps[kv.first].push_back(overlaps);
+
+                /*
+                   std::cout << "Function region overlaps for var " <<
+                   kv.second.args()[arg]  << " " << kv.first << ":" << std::endl;
+                   disp_regions(overlaps);
+                   std::cout << std::endl; */
+            }
+        }
+    }
+
+    map<string, Box> concrete_dep_regions(string name, vector<bool> &eval,
+                                          vector<pair<int, int> > &bounds) {
+        return sym_to_concrete_bounds(func_sym[name], bounds, eval,
+                                      func_dep_regions[name]);
+    }
+};
+
+
 
 int box_area(Box &b) {
     int box_area = 1;
@@ -1627,8 +1688,6 @@ struct Group {
     vector<Function> members;
 };
 
-
-
 void evaluate_option(Option opt, map<string, vector<Function> > &groups,
                      map<string, Function> &env,
                      map<string, Box> &pipeline_bounds,
@@ -1716,10 +1775,9 @@ void evaluate_option(Option opt, map<string, vector<Function> > &groups,
 
 int choose_candidate(const vector< pair<string, string> > &cand_pairs,
                      map<string, vector<Function> > &groups,
-                     map<string, Function> &env, map<string, Box> &pipeline_bounds,
-                     map<string, map<string, Box> > &func_dep_regions,
-                     map<string, vector<map<string, Box> > > &func_overlaps,
-                     map<string, vector<pair<int, int> > > &func_cost) {
+                     map<string, Box> &pipeline_bounds,
+                     map<string, vector<pair<int, int> > > &func_cost,
+                     DependenceAnalysis &analy) {
 
     // The choose candidate operates by considering many posssible fusion
     // structures between each pair of candidates. The options considered are
@@ -1793,13 +1851,13 @@ int choose_candidate(const vector< pair<string, string> > &cand_pairs,
         std::cout << "Child function characteristics:" << std::endl;
         std::cout << "Loads:" << func_cost[p.second][0].second <<
                      " Ops:" << func_cost[p.second][0].first  << std::endl;
-        std::cout << "Expr:" << env[p.second].values()[0] << std::endl;
+        std::cout << "Expr:" << analy.env[p.second].values()[0] << std::endl;
         std::cout << std::endl;
 
         // For each of the pairs create an option and evaluate
 
         // Get the output function of the child group
-        Function output = env[p.second];
+        Function output = analy.env[p.second];
         const vector<string> &args = output.args();
         // From the outer to the inner most argument
         for (int i = (int)args.size() - 1; i >= 0; i --) {
@@ -1821,14 +1879,10 @@ int choose_candidate(const vector< pair<string, string> > &cand_pairs,
 }
 
 map<string, vector<Function> >
-grouping(map<string, Function> &env,
-        map<string, map<string, Box> > &func_dep_regions,
-        map<string, vector<map<string, Box> > > &func_overlaps,
-        map<string, vector< pair<Var, Var> > > &func_sym,
-        map<string, vector<pair<int, int> > > &func_cost,
-        map<string, Box> &pipeline_bounds,
-        map<string, string> &inlines,
-        const FuncValueBounds &func_val_bounds) {
+grouping(map<string, vector<pair<int, int> > > &func_cost,
+         map<string, Box> &pipeline_bounds,
+         map<string, string> &inlines,
+         DependenceAnalysis &analy) {
 
     map<string, vector<Function> > groups;
 
@@ -1836,12 +1890,12 @@ grouping(map<string, Function> &env,
     // a given set of sizes
 
     // Place each function in its own group
-    for (auto &kv: env)
+    for (auto &kv: analy.env)
         groups[kv.first].push_back(kv.second);
 
     // Find consumers of each function relate groups with their children
     map<string, set<string> > children;
-    for (auto &kv: env) {
+    for (auto &kv: analy.env) {
         map<string, Function> calls = find_direct_calls(kv.second);
         for (auto &c: calls)
             children[c.first].insert(kv.first);
@@ -1891,9 +1945,8 @@ grouping(map<string, Function> &env,
         }
 
         // Pick a pair of groups to merge. This is a tricky choice.
-        int cand_index = choose_candidate(cand_pairs, groups, env,
-                                          pipeline_bounds, func_dep_regions,
-                                          func_overlaps, func_cost);
+        int cand_index = choose_candidate(cand_pairs, groups, pipeline_bounds,
+                                          func_cost, analy);
 
         if (cand_index != -1) {
             cand_group = cand_pairs[cand_index].first;
@@ -2124,50 +2177,14 @@ void simple_vectorize(Function &func, int inner_dim, int vec_width) {
         vectorize_dim(func, inner_dim, vec_width);
 }
 
+
+
 void interval_analysis( map<string, Function> &env,
                         const FuncValueBounds &func_val_bounds,
                         map<string, map<string, Box> > &func_dep_regions,
                         map<string, vector< map<string, Box> > > &func_overlaps,
                         map<string, vector< pair<Var, Var> > > &func_sym) {
 
-    for (auto& kv : env) {
-        // For each argument create a variables which will server as the lower
-        // and upper bounds of the interval corresponding to the argument
-        const vector<string>  &args = kv.second.args();
-        vector< pair<Expr, Expr> > sym_bounds;
-        for (unsigned int arg = 0; arg < args.size(); arg++) {
-                Var lower = Var(args[arg] + "_l");
-                Var upper = Var(args[arg] + "_u");
-                pair<Var, Var> sym = make_pair(lower, upper);
-                pair<Expr, Expr> bounds = make_pair(Expr(lower), Expr(upper));
-                func_sym[kv.first].push_back(sym);
-                sym_bounds.push_back(bounds);
-        }
-
-        map<string, Box> regions = regions_required(kv.second, sym_bounds,
-                                                    env, func_val_bounds);
-        assert(func_dep_regions.find(kv.first) == func_dep_regions.end());
-        func_dep_regions[kv.first] = regions;
-
-        /*
-        std::cout << "Function regions required for " << kv.first << ":" << std::endl;
-        disp_regions(regions);
-        std::cout << std::endl; */
-
-        assert(func_overlaps.find(kv.first) == func_overlaps.end());
-        for (unsigned int arg = 0; arg < args.size(); arg++) {
-            map<string, Box> overlaps = redundant_regions(kv.second, arg,
-                                                          sym_bounds, env,
-                                                          func_val_bounds);
-            func_overlaps[kv.first].push_back(overlaps);
-
-            /*
-            std::cout << "Function region overlaps for var " <<
-                kv.second.args()[arg]  << " " << kv.first << ":" << std::endl;
-            disp_regions(overlaps);
-            std::cout << std::endl; */
-        }
-    }
 }
 
 bool check_bounds_on_outputs(const vector<Function> &outputs) {
@@ -2200,14 +2217,11 @@ void schedule_advisor(const vector<Function> &outputs,
                       bool auto_par, bool auto_vec) {
 
     if (root_default) {
-    	// Changing the default to compute root. This does not completely
-    	// clear the user schedules since the splits are already part of
-    	// the domain. I do not know if there is a clean way to remove them.
-    	// For now have an additional option in the benchmarks which turns
-    	// on auto-scheduling and ensures that none of the functions have
-    	// user specified schedules. This also touches on the topic of
-        // completing partial schedules specified by the user as opposed
-        // to completely erasing them.
+        // Changing the default to compute root. This does not completely clear
+        // the user schedules since the splits are already part of the domain. I
+        // do not know if there is a clean way to remove them.  This also
+        // touches on the topic of completing partial schedules specified by the
+        // user as opposed to completely erasing them.
     	for (auto& kv : env) {
     		// Have to reset the splits as well
     		kv.second.schedule().store_level().func = "";
@@ -2292,15 +2306,9 @@ void schedule_advisor(const vector<Function> &outputs,
         // For each function compute all the regions of upstream functions
         // required to compute a region of the function
 
-        // TODO explain structures
-        map<string, map<string, Box> > func_dep_regions;
-        map<string, vector< map<string, Box> > > func_overlaps;
-        map<string, vector< pair<Var, Var> > > func_sym;
+        DependenceAnalysis analy(env, func_val_bounds);
 
-        interval_analysis(env, func_val_bounds, func_dep_regions,
-                          func_overlaps, func_sym);
-
-        for (auto &reg: func_dep_regions) {
+        for (auto &reg: analy.func_dep_regions) {
             disp_regions(reg.second);
             std::cout << std::endl;
         }
@@ -2332,8 +2340,7 @@ void schedule_advisor(const vector<Function> &outputs,
                 }
 
                 map<string, Box> regions =
-                    sym_to_concrete_bounds(func_sym[out.name()], bounds, eval,
-                                           func_dep_regions[out.name()]);
+                        analy.concrete_dep_regions(out.name(), eval, bounds);
 
                 // Add the output region to the pipeline bounds as well
                 Box out_box;
@@ -2353,12 +2360,11 @@ void schedule_advisor(const vector<Function> &outputs,
             }
         }
 
-        // disp_regions(pipeline_bounds);
+        //disp_regions(pipeline_bounds);
 
         // Grouping
         map<string, vector<Function> > groups;
-        groups = grouping(env, func_dep_regions, func_overlaps, func_sym,
-                          func_cost, pipeline_bounds, inlines, func_val_bounds);
+        groups = grouping(func_cost, pipeline_bounds, inlines, analy);
 
         //disp_grouping(groups);
 
@@ -2381,7 +2387,6 @@ void schedule_advisor(const vector<Function> &outputs,
                         vars.push_back(dims[i].var);
                 }
             }
-
 
             // TODO Eventually this weird step should be changed into something
             // that actually gives proper ordering within a tile
