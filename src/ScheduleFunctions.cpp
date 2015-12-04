@@ -1389,12 +1389,12 @@ map<string, Box> regions_required(Function f,
 
 /* Compute the redundant regions computed while computing a tile of the function
    'f' given sizes of the tile in each dimension. */
-std::map<string, Box> redundant_regions(Function f, int dir,
-                                        const vector<pair<Expr, Expr>> &sym_bounds,
-                                        map<string, Function> &env,
-                                        const FuncValueBounds &func_val_bounds){
-    std::map<string, Box> regions = regions_required(f, sym_bounds, env,
-                                                     func_val_bounds);
+map<string, Box> redundant_regions(Function f, int dir,
+                                   const vector<pair<Expr, Expr>> &sym_bounds,
+                                   map<string, Function> &env,
+                                   const FuncValueBounds &func_val_bounds){
+    map<string, Box> regions = regions_required(f, sym_bounds, env,
+                                                func_val_bounds);
     vector<pair<Expr, Expr>> shifted_bounds;
     int num_args = f.args().size();
     for (int arg = 0; arg < num_args; arg++) {
@@ -1408,10 +1408,10 @@ std::map<string, Box> redundant_regions(Function f, int dir,
             shifted_bounds.push_back(sym_bounds[arg]);
     }
 
-    std::map<string, Box> regions_shifted = regions_required(f, shifted_bounds,
-                                                             env, func_val_bounds);
+    map<string, Box> regions_shifted = regions_required(f, shifted_bounds,
+                                                        env, func_val_bounds);
 
-    std::map<string, Box> overalps;
+    map<string, Box> overalps;
     for (auto& reg: regions) {
         if (regions_shifted.find(reg.first) == regions.end()) {
             // Interesting case to be dealt with
@@ -1432,9 +1432,9 @@ std::map<string, Box> redundant_regions(Function f, int dir,
         }
     }
     // Simplify
-    for (auto &f : overalps) {
+    for (auto &f : overalps)
         simplify_box(f.second);
-    }
+
     return overalps;
 }
 
@@ -1610,84 +1610,55 @@ void disp_box(Box &b) {
         std::cout << "(" << b[dim].min << "," << b[dim].max << ")";
 }
 
-int choose_candidate(const vector< pair<string, string> > &cand_pairs,
-                     map<string, vector<Function> > &groups,
-                     map<string, Function> &env, map<string, Box> &pipeline_bounds,
+struct Option {
+    // Option is the cost when the prod_group is merged with the child_group
+    // and computed at the granularity of the tile given by tile_sizes
+    string prod_group;
+    string child_group;
+    // Tile sizes of along dimensions of the output of the child group
+    // A tile size of -1 indicates no tiling along the dimension
+    vector<int> tile_sizes;
+    // A score indicating the benefit of the option
+    float benefit;
+};
+
+struct Group {
+    string output;
+    vector<Function> members;
+};
+
+
+
+void evaluate_option(Option opt, map<string, vector<Function> > &groups,
+                     map<string, Function> &env,
+                     map<string, Box> &pipeline_bounds,
                      map<string, map<string, Box> > &func_dep_regions,
-                     map<string, vector<map<string, Box> > > &func_overlaps,
+                     map<string, vector<map<string, Box> >> &func_overlaps,
                      map<string, vector<pair<int, int> > > &func_cost) {
-
-    // The choose candidate operates by considering many posssible fusion
-    // structures between each pair of candidates. The options considered are
-    // computing a all functions in both the groups at some granularity of the
-    // output function in the child group.
-    //
-    // Among these options the only ones considered are the ones that satisfy
-    // the parallelism and fast memory size specification. This means the
-    // following things:
-    //
-    // 1) Do all the intermediate buffers fit in the fast level of memory. One
-    // needs to account for eary frees and the high watermark of intermediate
-    // storage. There might be performance gains by doing the buffer
-    // allocation statically as opposed to dynamic allocation. It might be
-    // useful to investigate this both on CPU and GPU architectures.
-    //
-    // 2) Is the amount of redundant computation introduced in the process
-    // give the best redundant compute vs. locality trade-off. One way to
-    // handle this is to start with the option that introduces the least amount
-    // of redundant computation and check if that satisfies the other criteria.
-    // Then consider the next option until it gets to a point where it is
-    // beneficial to load from slow memory than to redundantly compute.
-    //
-    // 3) Does the fused group have enough parallelism both for multiple cores.
-    // This can get tricky as it has load balancing aspect to it too. For
-    // example, if the group can be split into 10 tiles and there are 4 cores the
-    // latency of the entire pipeline is 2 tiles. So either the number of tiles
-    // have to a multiple of the cores or large in number to avoid the load
-    // imbalance. Till this point I have not noticed the collapse being
-    // particularly useful it might be an issue with Halide task scheduling. I
-    // need experiments confirming this obsevation.
-    //
-    // 4) Does the fusion limit vectorization. Reordering function dimensions
-    // and modifying data layout have significant interactions with
-    // vectorization. As a first pass the goal is to not miss any obvious
-    // vectorization and does not not create new oportunities.  Generating a
-    // schedule which makes good use of vector units is a challenging problem
-    // in itself.  It might be worthwile to perform a prepass on the pipeline
-    // to first decide what is going to be vectorized and prevent further
-    // phases from interfering with that decision.
-    //
-    // The options that are currently conisdered are computing at different
-    // granularities at each level of the function. The tile sizes at each
-    // level are determined by the sizes of the intermediate data and the size
-    // of the fast memory. We then construct a list of valid options atmost one
-    // per candidate pair. For choosing among the options there needs to be
-    // benefit associated with each of the options. The benefit we associate
-    // with each of the choices is the potential number of accesses to slow
-    // memory that are eliminated weighted by the inverse of the arithmetic
-    // intensity of the child group in the pair.
-
-    for (auto &p: cand_pairs) {
-        std::cout << "(" << p.first << "," << p.second << ")" << std::endl;
-        if (pipeline_bounds.find(p.second) != pipeline_bounds.end()) {
-            std::cout << "Child size:" << std::endl;
-            Box &b = pipeline_bounds[p.second];
-            std::cout << p.second;
-            disp_box(b);
-            std::cout << std::endl;
+/*
+    for (auto &reg: func_sym_dep_regions) {
+        const vector<string> &args = env[reg.first].args();
+        vector<pair<int, int> > bounds;
+        vector<bool> eval;
+        for (unsigned int i = 0; i < args.size(); i++) {
+            if (i < tile_dims)
+                bounds.push_back(make_pair(0, tile_size - 1));
+            else
+                bounds.push_back(make_pair(0, 1));
+            eval.push_back(true);
         }
-        std::cout << "Child function characteristics:" << std::endl;
-        std::cout << "Loads:" << func_cost[p.second][0].second <<
-                     " Ops:" << func_cost[p.second][0].first  << std::endl;
-        std::cout << "Expr:" << env[p.second].values()[0] << std::endl;
-        std::cout << std::endl;
+        func_dep_regions[reg.first] =
+            sym_to_concrete_bounds(func_sym[reg.first], bounds, eval,
+                    func_sym_dep_regions[reg.first]);
+
+        for (auto &dir: func_sym_overlaps[reg.first]) {
+            map<string, Box> concrete_reg =
+                sym_to_concrete_bounds(func_sym[reg.first], bounds,
+                        eval, dir);
+            func_overlaps[reg.first].push_back(concrete_reg);
+        }
     }
-
-    // The choose candidate
-    // The candidates that are going to be fused should satisfy the following
-    // criteria:
-    //
-
+*/
     /*
     cand_group = g.first;
     // Should only have a single child
@@ -1740,17 +1711,124 @@ int choose_candidate(const vector< pair<string, string> > &cand_pairs,
         merge = false;
     }
     */
+
+}
+
+int choose_candidate(const vector< pair<string, string> > &cand_pairs,
+                     map<string, vector<Function> > &groups,
+                     map<string, Function> &env, map<string, Box> &pipeline_bounds,
+                     map<string, map<string, Box> > &func_dep_regions,
+                     map<string, vector<map<string, Box> > > &func_overlaps,
+                     map<string, vector<pair<int, int> > > &func_cost) {
+
+    // The choose candidate operates by considering many posssible fusion
+    // structures between each pair of candidates. The options considered are
+    // computing a all functions in both the groups at some granularity of the
+    // output function in the child group.
+    //
+    // Among these options the only ones considered are the ones that satisfy
+    // the machine constraints. This means the following things:
+    //
+    // 1) Do all the intermediate buffers fit in the fast level of memory. One
+    // needs to account for eary frees and the high watermark of intermediate
+    // storage. There might be performance gains by doing the buffer
+    // allocation statically as opposed to dynamic allocation. It might be
+    // useful to investigate this both on CPU and GPU architectures.
+    //
+    // 2) Is the amount of redundant computation introduced in the process
+    // give the best redundant compute vs. locality trade-off. One way to
+    // handle this is to start with the option that introduces the least amount
+    // of redundant computation and check if that satisfies the other criteria.
+    // Then consider the next option until it gets to a point where it is
+    // beneficial to load from slow memory than to redundantly compute.
+    //
+    // 3) Does the fused group have enough parallelism both for multiple cores.
+    // This can get tricky as it has load balancing aspect to it too. For
+    // example, if the group can be split into 10 tiles and there are 4 cores the
+    // latency of the entire pipeline is 2 tiles. So either the number of tiles
+    // have to a multiple of the cores or large in number to avoid the load
+    // imbalance. Till this point I have not noticed the collapse being
+    // particularly useful it might be an issue with Halide task scheduling. I
+    // need experiments confirming this obsevation.
+    //
+    // 4) Does the fusion limit vectorization. Reordering function dimensions
+    // and modifying data layout have significant interactions with
+    // vectorization. As a first pass the goal is to not miss any obvious
+    // vectorization and does not not create new oportunities.  Generating a
+    // schedule which makes good use of vector units is a challenging problem
+    // in itself.  It might be worthwile to perform a prepass on the pipeline
+    // to first decide what is going to be vectorized and prevent further
+    // phases from interfering with that decision.
+    //
+    // The options that are currently conisdered are computing at different
+    // granularities at each level of the output function. The tile sizes at
+    // each level are determined by the sizes of the intermediate data and the
+    // size of the fast memory. We then construct a list of valid options atmost
+    // one per candidate pair. For choosing among the options there needs to be
+    // benefit associated with each of the options. The benefit we associate
+    // with each of the choices is the potential number of accesses to slow
+    // memory that are eliminated weighted by the inverse of the arithmetic
+    // intensity of the child group in the pair.
+
+    // Hard code machine parameters for now
+    /*
+    int fast_mem_size = 100;
+    float overlap_thresh = 0.1;
+    int parallelism = 8;
+    */
+    // TODO should consider vector length too
+
+    vector<Option> options;
+    vector<int> size_variants = {256, 128, 64, 32, 16};
+    for (auto &p: cand_pairs) {
+
+        std::cout << "(" << p.first << "," << p.second << ")" << std::endl;
+        if (pipeline_bounds.find(p.second) != pipeline_bounds.end()) {
+            std::cout << "Child size:" << std::endl;
+            Box &b = pipeline_bounds[p.second];
+            std::cout << p.second;
+            disp_box(b);
+            std::cout << std::endl;
+        }
+        std::cout << "Child function characteristics:" << std::endl;
+        std::cout << "Loads:" << func_cost[p.second][0].second <<
+                     " Ops:" << func_cost[p.second][0].first  << std::endl;
+        std::cout << "Expr:" << env[p.second].values()[0] << std::endl;
+        std::cout << std::endl;
+
+        // For each of the pairs create an option and evaluate
+
+        // Get the output function of the child group
+        Function output = env[p.second];
+        const vector<string> &args = output.args();
+        // From the outer to the inner most argument
+        for (int i = (int)args.size() - 1; i >= 0; i --) {
+            for (auto s: size_variants) {
+                Option opt;
+                opt.prod_group = p.first;
+                opt.child_group = p.second;
+                opt.benefit = -1;
+                for (int j = 0; j < i; j++)
+                    opt.tile_sizes.push_back(-1);
+                for (unsigned int j = i; j < args.size(); j++)
+                    opt.tile_sizes.push_back(s);
+                // evaluate_option(opt);
+            }
+
+        }
+    }
     return -1;
 }
 
 map<string, vector<Function> >
-    grouping_overlap_tile(map<string, Function> &env,
-                          map<string, map<string, Box> > &func_dep_regions,
-                          map<string, vector<map<string, Box> > > &func_overlaps,
-                          map<string, vector<pair<int, int> > > &func_cost,
-                          map<string, Box> &pipeline_bounds,
-                          map<string, string> &inlines,
-                          const FuncValueBounds &func_val_bounds) {
+grouping(map<string, Function> &env,
+        map<string, map<string, Box> > &func_dep_regions,
+        map<string, vector<map<string, Box> > > &func_overlaps,
+        map<string, vector< pair<Var, Var> > > &func_sym,
+        map<string, vector<pair<int, int> > > &func_cost,
+        map<string, Box> &pipeline_bounds,
+        map<string, string> &inlines,
+        const FuncValueBounds &func_val_bounds) {
 
     map<string, vector<Function> > groups;
 
@@ -2215,38 +2293,12 @@ void schedule_advisor(const vector<Function> &outputs,
         // required to compute a region of the function
 
         // TODO explain structures
-        map<string, map<string, Box> > func_sym_dep_regions;
-        map<string, vector< map<string, Box> > > func_sym_overlaps;
-        map<string, vector< pair<Var, Var> > > func_sym;
-
         map<string, map<string, Box> > func_dep_regions;
         map<string, vector< map<string, Box> > > func_overlaps;
+        map<string, vector< pair<Var, Var> > > func_sym;
 
-        interval_analysis(env, func_val_bounds, func_sym_dep_regions,
-                          func_sym_overlaps, func_sym);
-
-        for (auto &reg: func_sym_dep_regions) {
-            const vector<string> &args = env[reg.first].args();
-            vector<pair<int, int> > bounds;
-            vector<bool> eval;
-            for (unsigned int i = 0; i < args.size(); i++) {
-                if (i < tile_dims)
-                    bounds.push_back(make_pair(0, tile_size - 1));
-                else
-                    bounds.push_back(make_pair(0, 1));
-                eval.push_back(true);
-            }
-            func_dep_regions[reg.first] =
-                            sym_to_concrete_bounds(func_sym[reg.first], bounds, eval,
-                                                   func_sym_dep_regions[reg.first]);
-
-            for (auto &dir: func_sym_overlaps[reg.first]) {
-                map<string, Box> concrete_reg =
-                            sym_to_concrete_bounds(func_sym[reg.first], bounds,
-                                                   eval, dir);
-                func_overlaps[reg.first].push_back(concrete_reg);
-            }
-        }
+        interval_analysis(env, func_val_bounds, func_dep_regions,
+                          func_overlaps, func_sym);
 
         for (auto &reg: func_dep_regions) {
             disp_regions(reg.second);
@@ -2281,7 +2333,7 @@ void schedule_advisor(const vector<Function> &outputs,
 
                 map<string, Box> regions =
                     sym_to_concrete_bounds(func_sym[out.name()], bounds, eval,
-                                           func_sym_dep_regions[out.name()]);
+                                           func_dep_regions[out.name()]);
 
                 // Add the output region to the pipeline bounds as well
                 Box out_box;
@@ -2305,9 +2357,8 @@ void schedule_advisor(const vector<Function> &outputs,
 
         // Grouping
         map<string, vector<Function> > groups;
-        groups = grouping_overlap_tile(env, func_dep_regions, func_overlaps,
-                                       func_cost, pipeline_bounds, inlines,
-                                       func_val_bounds);
+        groups = grouping(env, func_dep_regions, func_overlaps, func_sym,
+                          func_cost, pipeline_bounds, inlines, func_val_bounds);
 
         //disp_grouping(groups);
 
