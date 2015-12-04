@@ -1636,26 +1636,7 @@ void add_children(map<string, set<string> > &children,
     }
 }
 
-void merge_groups(map<string, vector<Function> > &groups,
-                  map<string, set<string> > &children,
-                  string cand_group, string child_group) {
 
-    assert(groups.find(child_group) != groups.end());
-    vector<Function> cand_funcs = groups[cand_group];
-
-    groups.erase(cand_group);
-    groups[child_group].insert(groups[child_group].end(),
-            cand_funcs.begin(), cand_funcs.end());
-    // Fix the children mapping
-    children.erase(cand_group);
-    for (auto &f: children) {
-        set<string> &children = f.second;
-        if (children.find(cand_group) != children.end()) {
-            children.erase(cand_group);
-            children.insert(child_group);
-        }
-    }
-}
 
 void disp_children(map<string, set<string> > &children) {
     for (auto &f: children) {
@@ -1671,113 +1652,134 @@ void disp_box(Box &b) {
         std::cout << "(" << b[dim].min << "," << b[dim].max << ")";
 }
 
-struct Option {
-    // Option is the cost when the prod_group is merged with the child_group
-    // and computed at the granularity of the tile given by tile_sizes
-    string prod_group;
-    string child_group;
-    // Tile sizes of along dimensions of the output of the child group
-    // A tile size of -1 indicates no tiling along the dimension
-    vector<int> tile_sizes;
-    // A score indicating the benefit of the option
-    float benefit;
-};
+struct Partitioner {
 
-struct Group {
-    string output;
-    vector<Function> members;
-};
+    struct Option {
+        // Option is the cost when the prod_group is merged with the child_group
+        // and computed at the granularity of the tile given by tile_sizes
+        string prod_group;
+        string child_group;
+        // Tile sizes of along dimensions of the output of the child group
+        // A tile size of -1 indicates no tiling along the dimension
+        vector<int> tile_sizes;
+        // A score indicating the benefit of the option
+        float benefit;
+    };
 
-void evaluate_option(Option opt, map<string, vector<Function> > &groups,
-                     map<string, Function> &env,
-                     map<string, Box> &pipeline_bounds,
-                     map<string, map<string, Box> > &func_dep_regions,
-                     map<string, vector<map<string, Box> >> &func_overlaps,
-                     map<string, vector<pair<int, int> > > &func_cost) {
-/*
-    for (auto &reg: func_sym_dep_regions) {
-        const vector<string> &args = env[reg.first].args();
-        vector<pair<int, int> > bounds;
-        vector<bool> eval;
-        for (unsigned int i = 0; i < args.size(); i++) {
-            if (i < tile_dims)
-                bounds.push_back(make_pair(0, tile_size - 1));
-            else
-                bounds.push_back(make_pair(0, 1));
-            eval.push_back(true);
+    map<string, Box> &pipeline_bounds;
+    map<string, vector<pair<int, int> > > &func_cost;
+    map<string, string> &inlines;
+    DependenceAnalysis &analy;
+
+    map<string, vector<Function> > groups;
+    map<string, set<string> > children;
+
+    Partitioner(map<string, Box> &_pipeline_bounds,
+                map<string, string> &_inlines, DependenceAnalysis &_analy,
+                map<string, vector<pair<int, int> > > &_func_cost):
+                pipeline_bounds(_pipeline_bounds), inlines(_inlines),
+                analy(_analy), func_cost(_func_cost) {
+        // Place each function in its own group
+        for (auto &kv: analy.env)
+            groups[kv.first].push_back(kv.second);
+
+        // Find consumers of each function relate groups with their children
+        for (auto &kv: analy.env) {
+            map<string, Function> calls = find_direct_calls(kv.second);
+            for (auto &c: calls)
+                children[c.first].insert(kv.first);
         }
-        func_dep_regions[reg.first] =
-            sym_to_concrete_bounds(func_sym[reg.first], bounds, eval,
-                    func_sym_dep_regions[reg.first]);
 
-        for (auto &dir: func_sym_overlaps[reg.first]) {
-            map<string, Box> concrete_reg =
-                sym_to_concrete_bounds(func_sym[reg.first], bounds,
-                        eval, dir);
-            func_overlaps[reg.first].push_back(concrete_reg);
+        // disp_children(children);
+        // Add inlined functions to their child group
+        for (auto &in: inlines) {
+            string dest = in.second;
+            if (groups.find(dest) == groups.end()) {
+                for (auto &g: groups)
+                    for (auto &m: g.second)
+                        if (m.name() == dest)
+                            dest = g.first;
+            }
+            merge_groups(in.first, dest);
         }
     }
-*/
-    /*
-    cand_group = g.first;
-    // Should only have a single child
-    child_group = *children[g.first].begin();
-    // Check if the merge is profitable
-    int redun_cost = 0;
-    bool merge = true;
 
-    // Estimate the amount of redundant compute introduced by
-    // overlap tiling the merged group
+    void merge_groups(string cand_group, string child_group)
+    {
+        assert(groups.find(child_group) != groups.end());
+        vector<Function> cand_funcs = groups[cand_group];
 
-    int cost = overlap_cost(child_group, groups[child_group],
-            func_overlaps, func_cost);
-
-    // The cost of a group can be undetermined when you can prove
-    // inlining is legit but cannot get the bounds for determining
-    // the cost of the tile
-    if (cost < 0)
-        merge = false;
-    redun_cost += cost;
-
-    cost = overlap_cost(child_group, groups[cand_group],
-            func_overlaps, func_cost);
-    if (cost < 0)
-        merge = false;
-    else
-        redun_cost += cost;
-
-    map<string, Box> all_reg = func_dep_regions[child_group];
-    map<string, Box> group_reg;
-
-    for (auto &f: groups[child_group])
-        if (f.name() != child_group)
-            group_reg[f.name()] = all_reg[f.name()];
-
-    for (auto &f: groups[cand_group])
-        group_reg[f.name()] = all_reg[f.name()];
-
-    int tile_cost = region_cost(group_reg, func_cost);
-    if (tile_cost < 0)
-        merge = false;
-
-    //int tile_size = region_size(group_reg, env);
-
-    float overlap_ratio = ((float)redun_cost)/tile_cost;
-
-    if (overlap_ratio > 0.1) {
-        //std::cout << redun_cost << "," << tile_cost << std::endl;
-        //std::cout << cand_group << "," << child_group << std::endl;
-        merge = false;
+        groups.erase(cand_group);
+        groups[child_group].insert(groups[child_group].end(),
+                cand_funcs.begin(), cand_funcs.end());
+        // Fix the children mapping
+        children.erase(cand_group);
+        for (auto &f: children) {
+            set<string> &children = f.second;
+            if (children.find(cand_group) != children.end()) {
+                children.erase(cand_group);
+                children.insert(child_group);
+            }
+        }
     }
-    */
 
+    void disp_grouping() {
+        for (auto& g: groups) {
+            std::cout << "Group " <<  g.first  << " :"<< std::endl;
+            for (auto& m: g.second)
+                std::cout << m.name() << std::endl;
+        }
+    }
+
+    int choose_candidate(const vector< pair<string, string> > &cand_pairs);
+    map<string, vector<Function> > overlap_tile();
+
+};
+
+map<string, vector<Function> > Partitioner::overlap_tile() {
+
+    // Partition the pipeline by iteratively merging groups until a fixpoint
+    bool fixpoint = false;
+    while(!fixpoint) {
+        string cand_group, child_group;
+        fixpoint = true;
+        vector< pair<string, string> > cand_pairs;
+        // Find all the groups which have a single child
+        for (auto &g: groups) {
+            if (children.find(g.first) != children.end()) {
+                // TODO be careful about inputs and outputs to the pipeline
+                int num_children = children[g.first].size();
+                if (num_children == 1) {
+                    auto cand = make_pair(g.first, *children[g.first].begin());
+                    cand_pairs.push_back(cand);
+                }
+            }
+        }
+
+        // Pick a pair of groups to merge. This is a tricky choice.
+        int cand_index = choose_candidate(cand_pairs, groups, pipeline_bounds,
+                                          func_cost, analy);
+
+        if (cand_index != -1) {
+            cand_group = cand_pairs[cand_index].first;
+            child_group = cand_pairs[cand_index].second;
+            fixpoint = false;
+        }
+
+        // Do the necessary book keeping required to perform the merge if
+        // there is a merge candidate
+        if (!fixpoint) {
+            merge_groups(groups, children, cand_group, child_group);
+            //std::cout << "Megre candidate" << std::endl;
+            //std::cout << cand_group << std::endl;
+        }
+    }
+
+    return groups;
 }
 
-int choose_candidate(const vector< pair<string, string> > &cand_pairs,
-                     map<string, vector<Function> > &groups,
-                     map<string, Box> &pipeline_bounds,
-                     map<string, vector<pair<int, int> > > &func_cost,
-                     DependenceAnalysis &analy) {
+int Partitioner::choose_candidate(
+                    const vector< pair<string, string> > &cand_pairs) {
 
     // The choose candidate operates by considering many posssible fusion
     // structures between each pair of candidates. The options considered are
@@ -1878,94 +1880,6 @@ int choose_candidate(const vector< pair<string, string> > &cand_pairs,
     return -1;
 }
 
-map<string, vector<Function> >
-grouping(map<string, vector<pair<int, int> > > &func_cost,
-         map<string, Box> &pipeline_bounds,
-         map<string, string> &inlines,
-         DependenceAnalysis &analy) {
-
-    map<string, vector<Function> > groups;
-
-    // Determine the functions and the dimensions that can be tiled with
-    // a given set of sizes
-
-    // Place each function in its own group
-    for (auto &kv: analy.env)
-        groups[kv.first].push_back(kv.second);
-
-    // Find consumers of each function relate groups with their children
-    map<string, set<string> > children;
-    for (auto &kv: analy.env) {
-        map<string, Function> calls = find_direct_calls(kv.second);
-        for (auto &c: calls)
-            children[c.first].insert(kv.first);
-    }
-
-    // disp_children(children);
-    // Add inlined functions to their child group
-    for (auto &in: inlines) {
-        string dest = in.second;
-        if (groups.find(dest) == groups.end()) {
-            for (auto &g: groups)
-                for (auto &m: g.second)
-                    if (m.name() == dest)
-                        dest = g.first;
-        }
-        merge_groups(groups, children, in.first, dest);
-    }
-
-    /*
-	std::cout << "==========" << std::endl;
-	std::cout << "Consumers:" << std::endl;
-	std::cout << "==========" << std::endl;
-    for (auto& f : consumers) {
-        std::cout << f.first <<  " consumed by:" << std::endl;
-        for (auto& c: f.second)
-            std::cout << c.name() << std::endl;
-    }
-    */
-
-    // Partition the pipeline by iteratively merging groups until a fixpoint
-
-    bool fixpoint = false;
-    while(!fixpoint) {
-        string cand_group, child_group;
-        fixpoint = true;
-        vector< pair<string, string> > cand_pairs;
-        // Find all the groups which have a single child
-        for (auto &g: groups) {
-            if (children.find(g.first) != children.end()) {
-                // TODO be careful about inputs and outputs to the pipeline
-                int num_children = children[g.first].size();
-                if (num_children == 1) {
-                    auto cand = make_pair(g.first, *children[g.first].begin());
-                    cand_pairs.push_back(cand);
-                }
-            }
-        }
-
-        // Pick a pair of groups to merge. This is a tricky choice.
-        int cand_index = choose_candidate(cand_pairs, groups, pipeline_bounds,
-                                          func_cost, analy);
-
-        if (cand_index != -1) {
-            cand_group = cand_pairs[cand_index].first;
-            child_group = cand_pairs[cand_index].second;
-            fixpoint = false;
-        }
-
-        // Do the necessary book keeping required to perform the merge if
-        // there is a merge candidate
-        if (!fixpoint) {
-            merge_groups(groups, children, cand_group, child_group);
-            //std::cout << "Megre candidate" << std::endl;
-            //std::cout << cand_group << std::endl;
-        }
-    }
-
-    return groups;
-}
-
 void disp_function_value_bounds(const FuncValueBounds &func_val_bounds) {
 
 	for (auto& kv: func_val_bounds) {
@@ -2027,15 +1941,6 @@ map<string, string> simple_inline(map<string, vector<const Call*>> &all_calls,
         }
     }
     return inlines;
-}
-
-void disp_grouping(map<string, vector<Function> > &groups) {
-
-    for (auto& g: groups) {
-        std::cout << "Group " <<  g.first  << " :"<< std::endl;
-        for (auto& m: g.second)
-            std::cout << m.name() << std::endl;
-    }
 }
 
 // Helpers for schedule surgery
@@ -2177,16 +2082,6 @@ void simple_vectorize(Function &func, int inner_dim, int vec_width) {
         vectorize_dim(func, inner_dim, vec_width);
 }
 
-
-
-void interval_analysis( map<string, Function> &env,
-                        const FuncValueBounds &func_val_bounds,
-                        map<string, map<string, Box> > &func_dep_regions,
-                        map<string, vector< map<string, Box> > > &func_overlaps,
-                        map<string, vector< pair<Var, Var> > > &func_sym) {
-
-}
-
 bool check_bounds_on_outputs(const vector<Function> &outputs) {
     bool bounds_avail = true;
     for (auto &out : outputs) {
@@ -2281,7 +2176,7 @@ void schedule_advisor(const vector<Function> &outputs,
     	//std::cout << std::endl;
     }
 
-    // Make obvious inline decisions early. Grouping downstream may end up with
+    // Make obvious inline decisions early. Partitioning downstream may end up with
     // a function that is inlined as the representative of the group. This will
     // result in a conflicting schedule.
     map<string, string> inlines;
@@ -2364,7 +2259,9 @@ void schedule_advisor(const vector<Function> &outputs,
 
         // Grouping
         map<string, vector<Function> > groups;
-        groups = grouping(func_cost, pipeline_bounds, inlines, analy);
+
+        Partitioner part(pipeline_bounds, inlines, analy, func_cost);
+        groups = part.overlap_tile();
 
         //disp_grouping(groups);
 
