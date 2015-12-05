@@ -1762,6 +1762,16 @@ struct Partitioner {
         }
     }
 
+    void disp_option(Option &opt) {
+        std::cout << opt.prod_group << "->" << opt.child_group << std::endl;
+        std::cout << "[";
+        for (unsigned int i = 0; i < opt.tile_sizes.size(); i++) {
+            std::cout << opt.tile_sizes[i] << ",";
+        }
+        std::cout << "]" << std::endl;
+        std::cout << "benefit:" << opt.benefit << std::endl;
+    }
+
     int choose_candidate(const vector< pair<string, string> > &cand_pairs);
     map<string, vector<Function> > overlap_tile();
     void evaluate_option(Option &opt);
@@ -1831,6 +1841,7 @@ int get_extent_estimate(Function &f, map<string, Box> &bounds, int dim) {
 
 void Partitioner::evaluate_option(Option &opt) {
 
+    disp_option(opt);
     // Get the symbolic bounds of required regions and overlaps
     // for the output of the child group
     map<string, Box>  &dep_reg = analy.func_dep_regions[opt.child_group];
@@ -1897,6 +1908,7 @@ void Partitioner::evaluate_option(Option &opt) {
                                         estimate_tiles;
     }
 
+    std::cout << "num tiles:" << estimate_tiles << std::endl;
     if (arch_params.parallelism > estimate_tiles) {
         // Option did not satisfy the parallelism constraint
         opt.benefit = -1;
@@ -1905,6 +1917,36 @@ void Partitioner::evaluate_option(Option &opt) {
 
     dep_reg = analy.concrete_dep_regions(opt.child_group, eval, bounds);
     dep_overlaps = analy.concrete_overlap_regions(opt.child_group, eval, bounds);
+
+    // Cost model
+
+    // We currently assume a two level memory model. The fast_mem_size field in
+    // the arch parameters gives the size of the fast memory. Additionally, the
+    // ratio of load from fast memory vs slow memory is encoded in the machine
+    // parameters.
+
+    // Computing the cost the function regions required for the group that are
+    // not computed within the group are considered as loads from slow memory.
+    // We compute the size of the intermediate buffers that are required to
+    // compute the output of the group.
+
+    // inter_s = size of the intermediates in the fused group
+    // M = fast memory size
+    // s_c = the cost of loading from slow memory
+    // f_c = the cost of loading from fast memory
+    // op_c = the cost of computing an op
+
+    // The benefit of an option is the reduction in the number of operations
+    // that read/write to slow memory and the benefit is calculated per tile
+    //
+    // if inter_s fits in fast memory then
+    //    inter_s * s_c - (inter_s * f_c + (redundant_ops) * op_c)
+    //    => inter_s * (s_c - f_c) - (redundant_ops) * op_c
+    // else
+    //    hit = max(2M - inter_s, 0) assuming LRU
+    //    inter_s * s_c - (hit * f_c + (inter_s - hit) * s_c + (redundant_ops)
+    //                     * op_c)
+    //    => hit * (s_c - f_c) - (redundant_ops) * op_c
 
     //for (auto &f: prod_funcs) {
     //}
