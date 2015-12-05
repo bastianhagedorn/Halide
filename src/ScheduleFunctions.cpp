@@ -1667,9 +1667,9 @@ struct Partitioner {
     };
 
     map<string, Box> &pipeline_bounds;
-    map<string, vector<pair<int, int> > > &func_cost;
     map<string, string> &inlines;
     DependenceAnalysis &analy;
+    map<string, vector<pair<int, int> > > &func_cost;
 
     map<string, vector<Function> > groups;
     map<string, set<string> > children;
@@ -1757,8 +1757,7 @@ map<string, vector<Function> > Partitioner::overlap_tile() {
         }
 
         // Pick a pair of groups to merge. This is a tricky choice.
-        int cand_index = choose_candidate(cand_pairs, groups, pipeline_bounds,
-                                          func_cost, analy);
+        int cand_index = choose_candidate(cand_pairs);
 
         if (cand_index != -1) {
             cand_group = cand_pairs[cand_index].first;
@@ -1769,7 +1768,7 @@ map<string, vector<Function> > Partitioner::overlap_tile() {
         // Do the necessary book keeping required to perform the merge if
         // there is a merge candidate
         if (!fixpoint) {
-            merge_groups(groups, children, cand_group, child_group);
+            merge_groups(cand_group, child_group);
             //std::cout << "Megre candidate" << std::endl;
             //std::cout << cand_group << std::endl;
         }
