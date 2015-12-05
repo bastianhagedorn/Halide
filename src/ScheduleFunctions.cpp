@@ -1446,10 +1446,9 @@ struct DependenceAnalysis {
     map<string, vector< map<string, Box> > > func_overlaps;
     map<string, vector< pair<Var, Var> > > func_sym;
 
-
     DependenceAnalysis(map<string, Function> &_env,
-                     const FuncValueBounds &_func_val_bounds):
-                     env(_env), func_val_bounds(_func_val_bounds) {
+                       const FuncValueBounds &_func_val_bounds):
+                       env(_env), func_val_bounds(_func_val_bounds) {
         for (auto& kv : env) {
             // For each argument create a variables which will server as the lower
             // and upper bounds of the interval corresponding to the argument
@@ -1495,24 +1494,45 @@ struct DependenceAnalysis {
         return sym_to_concrete_bounds(func_sym[name], bounds, eval,
                                       func_dep_regions[name]);
     }
+
+    vector< map<string, Box> > concrete_overlap_regions(
+                                             string name, vector<bool> &eval,
+                                             vector<pair<int, int> > &bounds) {
+        vector< map<string, Box> > conc_overlaps;
+        for (auto & dir: func_overlaps[name]) {
+            map<string, Box> conc_reg =
+                sym_to_concrete_bounds(func_sym[name], bounds, eval, dir);
+            conc_overlaps.push_back(conc_reg);
+        }
+        return conc_overlaps;
+    }
+
 };
 
+int get_extent(const Interval &i) {
 
+    if ((i.min.as<IntImm>()) && (i.max.as<IntImm>())) {
+        const IntImm * bmin = i.min.as<IntImm>();
+        const IntImm * bmax = i.max.as<IntImm>();
+        // Count only if the overlap makes sense
+        if (bmin->value <= bmax->value)
+            return (bmax->value - bmin->value + 1);
+        else
+            return 0;
+    }
+    return -1;
+}
 
 int box_area(Box &b) {
     int box_area = 1;
     for(unsigned int i = 0; i < b.size(); i++) {
         // Maybe should check for unsigned integers and floats too
-        if ((b[i].min.as<IntImm>()) && (b[i].max.as<IntImm>())) {
-            const IntImm * bmin = b[i].min.as<IntImm>();
-            const IntImm * bmax = b[i].max.as<IntImm>();
-            // Count only if the overlap makes sense
-            if (bmin->value <= bmax->value)
-                box_area = box_area * (bmax->value - bmin->value + 1);
-            else {
-                box_area = 0;
-                break;
-            }
+        int extent = get_extent(b[i]);
+        if (extent > 0)
+            box_area = box_area * extent;
+        else if (extent == 0) {
+            box_area = 0;
+            break;
         } else {
             // std::cout << "Box area computation failed" << std::endl;
             // std::cout << "min:" << b[i].min << " max:" << b[i].max << std::endl;
@@ -1636,8 +1656,6 @@ void add_children(map<string, set<string> > &children,
     }
 }
 
-
-
 void disp_children(map<string, set<string> > &children) {
     for (auto &f: children) {
         std::cout << f.first <<  ":" << std::endl;
@@ -1666,6 +1684,12 @@ struct Partitioner {
         float benefit;
     };
 
+    struct MachineParams {
+        int parallelism;
+        int vec_len;
+        int fast_mem_size;
+    };
+
     map<string, Box> &pipeline_bounds;
     map<string, string> &inlines;
     DependenceAnalysis &analy;
@@ -1673,6 +1697,8 @@ struct Partitioner {
 
     map<string, vector<Function> > groups;
     map<string, set<string> > children;
+
+    MachineParams arch_params;
 
     Partitioner(map<string, Box> &_pipeline_bounds,
                 map<string, string> &_inlines, DependenceAnalysis &_analy,
@@ -1702,6 +1728,11 @@ struct Partitioner {
             }
             merge_groups(in.first, dest);
         }
+
+        // Initialize
+        arch_params.parallelism = 4;
+        arch_params.vec_len = 8;
+        arch_params.fast_mem_size = 100;
     }
 
     void merge_groups(string cand_group, string child_group)
@@ -1733,7 +1764,7 @@ struct Partitioner {
 
     int choose_candidate(const vector< pair<string, string> > &cand_pairs);
     map<string, vector<Function> > overlap_tile();
-
+    void evaluate_option(Option &opt);
 };
 
 map<string, vector<Function> > Partitioner::overlap_tile() {
@@ -1775,6 +1806,161 @@ map<string, vector<Function> > Partitioner::overlap_tile() {
     }
 
     return groups;
+}
+
+int get_extent_estimate(Function &f, map<string, Box> &bounds, int dim) {
+
+    vector<string> vars = f.args();
+    int estimate = -1;
+    for (auto &b: f.schedule().bounds())
+        if (b.var == vars[dim]) {
+            const IntImm * bmin = b.min.as<IntImm>();
+            const IntImm * bextent = b.extent.as<IntImm>();
+            estimate = bmin->value + bextent->value - 1;
+        }
+
+    if (bounds.find(f.name()) != bounds.end()) {
+        Interval &I = bounds[f.name()][dim];
+        int extent = get_extent(I);
+        if (extent > 0)
+            estimate = std::max(estimate, extent);
+    }
+
+    return estimate;
+}
+
+void Partitioner::evaluate_option(Option &opt) {
+
+    // Get the symbolic bounds of required regions and overlaps
+    // for the output of the child group
+    map<string, Box>  &dep_reg = analy.func_dep_regions[opt.child_group];
+    vector< map<string, Box> > &dep_overlaps =
+                                    analy.func_overlaps[opt.child_group];
+
+    map<string, Box> conc_reg;
+    vector< map<string, Box> > conc_overlaps;
+
+    // For each function in the prod and child group that is not the
+    // output figure out the concrete bounds
+
+    vector<string> prod_funcs;
+    for (auto &f: groups[opt.prod_group])
+        prod_funcs.push_back(f.name());
+    for (auto &f: groups[opt.child_group])
+        if (f.name() != opt.child_group)
+            prod_funcs.push_back(f.name());
+
+    vector<pair<int, int> > bounds;
+    vector<bool> eval;
+
+    const vector<string> &args = analy.env[opt.child_group].args();
+
+    assert(opt.tile_sizes.size() == args.size());
+
+    // TODO Cosider precomputing the dimension esitmates for all the functions
+
+    vector<int> dim_estimates;
+    for (unsigned int i = 0; i < args.size(); i++) {
+        int estimate = get_extent_estimate(analy.env[opt.child_group],
+                                           pipeline_bounds, i);
+        dim_estimates.push_back(estimate);
+        if (estimate == -1) {
+            // This option cannot be evaluated so discaring the option
+            opt.benefit = -1;
+            return;
+        }
+    }
+
+    for (unsigned int i = 0; i < args.size(); i++) {
+        if (opt.tile_sizes[i] != -1) {
+            // Check if the bounds allow for tiling with the given tile size
+            if (dim_estimates[i] >= opt.tile_sizes[i])
+                bounds.push_back(make_pair(0, opt.tile_sizes[i] - 1));
+            else {
+                // If the dimension is too small do not tile it and set the
+                // extent of the bounds to that of the dimension estimate
+                opt.tile_sizes[i] = -1;
+                bounds.push_back(make_pair(0, dim_estimates[i]));
+            }
+        }
+        else
+             bounds.push_back(make_pair(0, dim_estimates[i]));
+
+        eval.push_back(true);
+    }
+
+    // Check parallelism i.e. count the number of tiles
+    int estimate_tiles = 1;
+    for (unsigned int i = 0; i < args.size(); i++) {
+        if (opt.tile_sizes[i] != -1)
+            estimate_tiles = std::ceil((float)dim_estimates[i]/opt.tile_sizes[i]) *
+                                        estimate_tiles;
+    }
+
+    if (arch_params.parallelism > estimate_tiles) {
+        // Option did not satisfy the parallelism constraint
+        opt.benefit = -1;
+        return;
+    }
+
+    dep_reg = analy.concrete_dep_regions(opt.child_group, eval, bounds);
+    dep_overlaps = analy.concrete_overlap_regions(opt.child_group, eval, bounds);
+
+    //for (auto &f: prod_funcs) {
+    //}
+
+    /*
+    cand_group = g.first;
+    // Should only have a single child
+    child_group = *children[g.first].begin();
+    // Check if the merge is profitable
+    int redun_cost = 0;
+    bool merge = true;
+
+    // Estimate the amount of redundant compute introduced by
+    // overlap tiling the merged group
+
+    int cost = overlap_cost(child_group, groups[child_group],
+            func_overlaps, func_cost);
+
+    // The cost of a group can be undetermined when you can prove
+    // inlining is legit but cannot get the bounds for determining
+    // the cost of the tile
+    if (cost < 0)
+        merge = false;
+    redun_cost += cost;
+
+    cost = overlap_cost(child_group, groups[cand_group],
+            func_overlaps, func_cost);
+    if (cost < 0)
+        merge = false;
+    else
+        redun_cost += cost;
+
+    map<string, Box> all_reg = func_dep_regions[child_group];
+    map<string, Box> group_reg;
+
+    for (auto &f: groups[child_group])
+        if (f.name() != child_group)
+            group_reg[f.name()] = all_reg[f.name()];
+
+    for (auto &f: groups[cand_group])
+        group_reg[f.name()] = all_reg[f.name()];
+
+    int tile_cost = region_cost(group_reg, func_cost);
+    if (tile_cost < 0)
+        merge = false;
+
+    //int tile_size = region_size(group_reg, env);
+
+    float overlap_ratio = ((float)redun_cost)/tile_cost;
+
+    if (overlap_ratio > 0.1) {
+        //std::cout << redun_cost << "," << tile_cost << std::endl;
+        //std::cout << cand_group << "," << child_group << std::endl;
+        merge = false;
+    }
+    */
 }
 
 int Partitioner::choose_candidate(
@@ -1829,14 +2015,6 @@ int Partitioner::choose_candidate(
     // memory that are eliminated weighted by the inverse of the arithmetic
     // intensity of the child group in the pair.
 
-    // Hard code machine parameters for now
-    /*
-    int fast_mem_size = 100;
-    float overlap_thresh = 0.1;
-    int parallelism = 8;
-    */
-    // TODO should consider vector length too
-
     vector<Option> options;
     vector<int> size_variants = {256, 128, 64, 32, 16};
     for (auto &p: cand_pairs) {
@@ -1871,7 +2049,7 @@ int Partitioner::choose_candidate(
                     opt.tile_sizes.push_back(-1);
                 for (unsigned int j = i; j < args.size(); j++)
                     opt.tile_sizes.push_back(s);
-                // evaluate_option(opt);
+                evaluate_option(opt);
             }
 
         }
@@ -2042,7 +2220,7 @@ void vectorize_dim(Function &func, int dim, int vec_width) {
 }
 
 bool check_dim_size(Function &func, int dim, int min_size,
-                    map<string, Box> &pipeline_bounds) {
+        map<string, Box> &pipeline_bounds) {
     if (pipeline_bounds.find(func.name()) == pipeline_bounds.end()) {
         // Optimistic
         return true;
@@ -2053,14 +2231,11 @@ bool check_dim_size(Function &func, int dim, int min_size,
         const vector<string> vars = func.args();
         for (unsigned int i = 0; i < vars.size(); i++)
             if (dims[dim].var == vars[i]) {
-                if ((b[i].min.as<IntImm>()) && (b[i].max.as<IntImm>())) {
-                    const IntImm * bmin = b[i].min.as<IntImm>();
-                    const IntImm * bmax = b[i].max.as<IntImm>();
-                    int size = bmax->value - bmin->value + 1;
-                    return size >= min_size;
-                } else  {
+                int extent = get_extent(b[i]);
+                if (extent >= 0)
+                    return extent >= min_size;
+                else
                     return true;
-                }
             }
     }
     return true;
