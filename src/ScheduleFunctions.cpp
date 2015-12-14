@@ -1412,6 +1412,126 @@ map<string, Box> redundant_regions(Function f, int dir,
     return overalps;
 }
 
+class ExprClone : public IRVisitor {
+
+public:
+    Expr e;
+    Expr clone;
+    map<Expr, Expr, ExprCompare> subs;
+    ExprClone(Expr _e) : e(_e) {
+        e.accept(this);
+        clone = subs[e];
+    }
+
+    using IRVisitor::visit;
+
+    template<typename T>
+        void clone_binary_operator(const T *op) {
+            op->a.accept(this);
+            op->b.accept(this);
+            Expr e = T::make(subs[op->a], subs[op->b]);
+            subs[op] = e;
+        }
+
+    void visit(const Add *op) {clone_binary_operator(op);}
+    void visit(const Sub *op) {clone_binary_operator(op);}
+    void visit(const Mul *op) {clone_binary_operator(op);}
+    void visit(const Div *op) {clone_binary_operator(op);}
+    void visit(const Mod *op) {clone_binary_operator(op);}
+    void visit(const Min *op) {clone_binary_operator(op);}
+    void visit(const Max *op) {clone_binary_operator(op);}
+    void visit(const EQ *op)  {clone_binary_operator(op);}
+    void visit(const NE *op)  {clone_binary_operator(op);}
+    void visit(const LT *op)  {clone_binary_operator(op);}
+    void visit(const LE *op)  {clone_binary_operator(op);}
+    void visit(const GT *op)  {clone_binary_operator(op);}
+    void visit(const GE *op)  {clone_binary_operator(op);}
+    void visit(const And *op) {clone_binary_operator(op);}
+    void visit(const Or *op)  {clone_binary_operator(op);}
+
+    void visit(const IntImm *op) { subs[op] = op;}
+    void visit(const UIntImm *op) { subs[op] = op;}
+    void visit(const FloatImm *op) { subs[op] = op;}
+    void visit(const StringImm *op) { subs[op] = op;}
+    void visit(const Variable *op)  { subs[op] = Variable::make(op->type,
+                                                                op->name);}
+
+    void visit(const Cast *op) {
+        op->value.accept(this);
+        Expr e = Cast::make(op->type, subs[op->value]);
+        subs[op] = e;
+    }
+
+    void visit(const Not *op) {
+        op->a.accept(this);
+        Expr e = Not::make(subs[op->a]);
+        subs[op] = e;
+    }
+
+    void visit(const Select *op)  {
+        op->condition.accept(this);
+        op->true_value.accept(this);
+        op->false_value.accept(this);
+        Expr e = Select::make(subs[op->condition], subs[op->true_value],
+                              subs[op->false_value]);
+        subs[op] = e;
+    }
+
+    void visit(const Load *op) {
+        op->index.accept(this);
+        Expr e = Load::make(op->type, op->name, subs[op->index],
+                            op->image, op->param);
+        subs[op] = e;
+    }
+
+    void visit(const Ramp *op) {
+        op->base.accept(this);
+        op->stride.accept(this);
+        Expr e = Ramp::make(subs[op->base], subs[op->stride], op->lanes);
+        subs[op] = e;
+    }
+
+    void visit(const Broadcast *op) {
+        op->value.accept(this);
+        Expr e = Broadcast::make(subs[op->value], op->lanes);
+        subs[op] = e;
+    }
+
+    void visit(const Call *op) {
+        vector<Expr > new_args(op->args.size());
+
+        for (size_t i = 0; i < op->args.size(); i++) {
+            op->args[i].accept(this);
+            new_args[i] = subs[op->args[i]];
+        }
+
+        Expr e = Call::make(op->type, op->name, new_args, op->call_type,
+                            op->func, op->value_index, op->image, op->param);
+        subs[op] = e;
+    }
+
+    void visit(const Let *op) {
+        op->value.accept(this);
+        op->body.accept(this);
+        Expr e = Let::make(op->name, subs[op->value], subs[op->body]);
+        subs[op] = e;
+    }
+
+    void visit(const LetStmt *op) { assert(0); }
+    void visit(const AssertStmt *op) { assert(0); }
+    void visit(const ProducerConsumer *op) { assert(0); }
+    void visit(const For *op) { assert(0); }
+    void visit(const Store *op) { assert(0); }
+    void visit(const Provide *op) { assert(0); }
+    void visit(const Allocate *op) { assert(0); }
+    void visit(const Free *op) { assert(0); }
+    void visit(const Realize *op) { assert(0); }
+    void visit(const Block *op) { assert(0); }
+    void visit(const IfThenElse *op) { assert(0);}
+    void visit(const Evaluate *op) { assert(0); }
+
+};
+
 map<string, Box> sym_to_concrete_bounds(vector< pair<Var, Var> > &sym,
                                         vector< pair<int, int> > &bounds,
                                         vector<bool> &eval,
@@ -1428,6 +1548,8 @@ map<string, Box> sym_to_concrete_bounds(vector< pair<Var, Var> > &sym,
     for (const auto &r: sym_regions) {
         Box concrete_box;
         for (unsigned int i = 0; i < r.second.size(); i++) {
+            //ExprClone cmin(r.second[i].min);
+            //ExprClone cmax(r.second[i].max);
             Expr lower = simplify(substitute(replacements, r.second[i].min));
             Expr upper = simplify(substitute(replacements, r.second[i].max));
             Interval concrete_bounds = Interval(lower, upper);
@@ -1476,8 +1598,8 @@ struct DependenceAnalysis {
             assert(func_overlaps.find(kv.first) == func_overlaps.end());
             for (unsigned int arg = 0; arg < args.size(); arg++) {
                 map<string, Box> overlaps = redundant_regions(kv.second, arg,
-                        sym_bounds, env,
-                        func_val_bounds);
+                                                              sym_bounds, env,
+                                                              func_val_bounds);
                 func_overlaps[kv.first].push_back(overlaps);
 
                 /*
@@ -1839,14 +1961,17 @@ int get_extent_estimate(Function &f, map<string, Box> &bounds, int dim) {
     return estimate;
 }
 
+void disp_regions(map<string, Box> &regions) {
+    for (auto& reg: regions) {
+        std::cout << reg.first;
+        disp_box(reg.second);
+        std::cout << std::endl;
+    }
+}
+
 void Partitioner::evaluate_option(Option &opt) {
 
     disp_option(opt);
-    // Get the symbolic bounds of required regions and overlaps
-    // for the output of the child group
-    map<string, Box>  &dep_reg = analy.func_dep_regions[opt.child_group];
-    vector< map<string, Box> > &dep_overlaps =
-                                    analy.func_overlaps[opt.child_group];
 
     map<string, Box> conc_reg;
     vector< map<string, Box> > conc_overlaps;
@@ -1915,8 +2040,8 @@ void Partitioner::evaluate_option(Option &opt) {
         return;
     }
 
-    dep_reg = analy.concrete_dep_regions(opt.child_group, eval, bounds);
-    dep_overlaps = analy.concrete_overlap_regions(opt.child_group, eval, bounds);
+    conc_reg = analy.concrete_dep_regions(opt.child_group, eval, bounds);
+    conc_overlaps = analy.concrete_overlap_regions(opt.child_group, eval, bounds);
 
     // Cost model
 
@@ -1948,8 +2073,14 @@ void Partitioner::evaluate_option(Option &opt) {
     //                     * op_c)
     //    => hit * (s_c - f_c) - (redundant_ops) * op_c
 
-    //for (auto &f: prod_funcs) {
-    //}
+    // Determine size of intermediates
+    disp_regions(conc_reg);
+    map<string, Box> prod_reg;
+    for (auto &f: prod_funcs)
+        prod_reg[f] = conc_reg[f];
+
+    int inter_s = region_size(prod_reg, analy.env);
+    std::cout << "intermediate size:" << inter_s << std::endl;
 
     /*
     cand_group = g.first;
@@ -2032,7 +2163,7 @@ int Partitioner::choose_candidate(
     // 3) Does the fused group have enough parallelism both for multiple cores.
     // This can get tricky as it has load balancing aspect to it too. For
     // example, if the group can be split into 10 tiles and there are 4 cores the
-    // latency of the entire pipeline is 2 tiles. So either the number of tiles
+    // latency of the entire pipeline is 3 tiles. So either the number of tiles
     // have to a multiple of the cores or large in number to avoid the load
     // imbalance. Till this point I have not noticed the collapse being
     // particularly useful it might be an issue with Halide task scheduling. I
@@ -2117,14 +2248,6 @@ void disp_schedule_and_storage_mapping(map<string, Function> &env) {
                   << std::endl;
     }
     std::cout << std::endl;
-}
-
-void disp_regions(map<string, Box> &regions) {
-    for (auto& reg: regions) {
-        std::cout << reg.first;
-        disp_box(reg.second);
-        std::cout << std::endl;
-    }
 }
 
 void disp_inlines(map<string, string> &inlines) {
