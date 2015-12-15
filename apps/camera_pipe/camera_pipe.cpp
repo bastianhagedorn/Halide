@@ -150,17 +150,17 @@ Func demosaic(Func deinterleaved) {
     if (schedule == 0) {
         // optimized for ARM
         // Compute these in chunks over tiles, vectorized by 8
-        g_r.compute_at(processed, tx).vectorize(x, 8);
-        g_b.compute_at(processed, tx).vectorize(x, 8);
-        r_gr.compute_at(processed, tx).vectorize(x, 8);
-        b_gr.compute_at(processed, tx).vectorize(x, 8);
-        r_gb.compute_at(processed, tx).vectorize(x, 8);
-        b_gb.compute_at(processed, tx).vectorize(x, 8);
-        r_b.compute_at(processed, tx).vectorize(x, 8);
-        b_r.compute_at(processed, tx).vectorize(x, 8);
+        g_r.compute_at(processed, tx)/*.vectorize(x, 8)*/;
+        g_b.compute_at(processed, tx)/*.vectorize(x, 8)*/;
+        r_gr.compute_at(processed, tx)/*.vectorize(x, 8)*/;
+        b_gr.compute_at(processed, tx)/*.vectorize(x, 8)*/;
+        r_gb.compute_at(processed, tx)/*.vectorize(x, 8)*/;
+        b_gb.compute_at(processed, tx)/*.vectorize(x, 8)*/;
+        r_b.compute_at(processed, tx)/*.vectorize(x, 8)*/;
+        b_r.compute_at(processed, tx)/*.vectorize(x, 8)*/;
         // These interleave in y, so unrolling them in y helps
         output.compute_at(processed, tx)
-            .vectorize(x, 8)
+            //.vectorize(x, 8)
             .unroll(y, 2)
             .reorder(c, x, y).bound(c, 0, 3).unroll(c);
     } else if (schedule == 1) {
@@ -265,11 +265,11 @@ Func process(Func raw, Type result_type,
     processed.bound(c, 0, 3).bound(tx, 0, 2560).bound(ty, 0, 1920); // bound color loop 0-3, properly
     if (schedule == 0) {
         // Compute in chunks over tiles, vectorized by 8
-        denoised.compute_at(processed, tx).vectorize(x, 8);
-        deinterleaved.compute_at(processed, tx).vectorize(x, 8).reorder(c, x, y).unroll(c);
-        corrected.compute_at(processed, tx).vectorize(x, 4).reorder(c, x, y).unroll(c);
+        denoised.compute_at(processed, tx)/*.vectorize(x, 8)*/;
+        deinterleaved.compute_at(processed, tx)/*.vectorize(x, 8)*/.reorder(c, x, y).unroll(c);
+        corrected.compute_at(processed, tx)/*.vectorize(x, 4)*/.reorder(c, x, y).unroll(c);
         processed.tile(tx, ty, xi, yi, 32, 32).reorder(xi, yi, c, tx, ty);
-        processed.parallel(ty);
+        processed/*.parallel(ty)*/;
     } else if (schedule == 1) {
         // Same as above, but don't vectorize (sse is bad at interleaved 16-bit ops)
         /*
@@ -329,6 +329,8 @@ int main(int argc, char **argv) {
     std::vector<Argument> args = {color_temp, gamma, contrast, input, matrix_3200, matrix_7000};
     processed.compile_to_file("curved", args);
     processed.compile_to_assembly("curved.s", args);
+    processed.compile_to_c("cam_c.cpp", args, "camc");
+    processed.compile_to_header("cam_c.h", args, "camc");
 
     return 0;
 }

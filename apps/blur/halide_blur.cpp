@@ -15,9 +15,15 @@ int main(int argc, char **argv) {
     //blur_y.split(y, y, yi, 8).parallel(y).vectorize(x, 8);
     //blur_x.store_at(blur_y, y).compute_at(blur_y, yi).vectorize(x, 8);
 
+    //blur_y.split(y, y, yi, 32).split(x, x, xi, 128).reorder(xi, yi, x, y).
+    //                                            parallel(y)/*.vectorize(xi, 8)*/;0
+    blur_x.compute_at(blur_y, x)/*.vectorize(x, 8)*/;
+
     blur_y.bound(x, 0, 6400).bound(y, 0, 4800);
     blur_y.compile_to_file("halide_blur", {input});
     blur_y.compile_to_lowered_stmt("halide_blur_lower", {input});
 
+    blur_y.compile_to_c("halide_gen_blur.cpp",  {input});
+    blur_y.compile_to_header("halide_gen_blur.h",  {input});
     return 0;
 }

@@ -5,6 +5,8 @@
 
 #include "benchmark.h"
 #include "halide_image.h"
+#include "halide_blur.h"
+#include "halide_gen_blur.h"
 
 using namespace Halide::Tools;
 
@@ -169,10 +171,6 @@ Image<uint16_t> blur_fast2(const Image<uint16_t> &in) {
     });
 
     return out;
-}
-
-extern "C" {
-#include "halide_blur.h"
 }
 
 Image<uint16_t> blur_halide(Image<uint16_t> in) {

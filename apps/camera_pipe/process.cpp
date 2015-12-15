@@ -3,6 +3,7 @@
 
 #include "benchmark.h"
 #include "curved.h"
+#include "cam_c.h"
 #include "halide_image.h"
 #include "halide_image_io.h"
 
