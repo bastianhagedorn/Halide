@@ -1808,6 +1808,7 @@ struct Partitioner {
         int parallelism;
         int vec_len;
         int fast_mem_size;
+        int balance;
     };
 
     map<string, Box> &pipeline_bounds;
@@ -1852,7 +1853,11 @@ struct Partitioner {
         // Initialize
         arch_params.parallelism = 4;
         arch_params.vec_len = 8;
-        arch_params.fast_mem_size = 100;
+        arch_params.balance = 5;
+        arch_params.fast_mem_size = 32 * 1024;
+        // L1 = 32K
+        // L2 = 256K
+        // L3 = 8192K
     }
 
     void merge_groups(string cand_group, string child_group)
@@ -2023,15 +2028,15 @@ void Partitioner::evaluate_option(Option &opt) {
     }
 
     // Check parallelism i.e. count the number of tiles
-    int estimate_par = 1;
+    int estimate_tiles = 1;
     for (unsigned int i = 0; i < args.size(); i++) {
         if (opt.tile_sizes[i] != -1)
-            estimate_par = std::ceil((float)dim_estimates[i]/opt.tile_sizes[i]) *
-                                        estimate_par;
+            estimate_tiles = std::ceil((float)dim_estimates[i]/opt.tile_sizes[i]) *
+                                        estimate_tiles;
     }
 
-    std::cout << "num tiles:" << estimate_par << std::endl;
-    if (arch_params.parallelism > estimate_par) {
+    std::cout << "num tiles:" << estimate_tiles << std::endl;
+    if (arch_params.parallelism > estimate_tiles) {
         // Option did not satisfy the parallelism constraint
         opt.benefit = -1;
         return;
@@ -2071,6 +2076,7 @@ void Partitioner::evaluate_option(Option &opt) {
     //    => hit * (s_c - f_c) - (redundant_ops) * op_c
 
     // Determine size of intermediates
+
     // disp_regions(conc_reg);
     map<string, Box> prod_reg;
     for (auto &f: prod_funcs)
@@ -2096,12 +2102,25 @@ void Partitioner::evaluate_option(Option &opt) {
         }
     }
 
-
     int total_work = region_cost(prod_reg, func_cost);
+    float ai = (float)total_work/inter_s;
     std::cout << "(Redundant work)/(Total work):" <<
                             (float)redundant_work/total_work << std::endl;
     std::cout << "Arithmetic Intensity:" <<
                             (float)total_work/inter_s << std::endl;
+
+    // Extend this to a multi level memory heirarchy
+    if (inter_s <= arch_params.fast_mem_size) {
+        opt.benefit = (inter_s/ai) * arch_params.balance - redundant_work;
+        opt.benefit *= estimate_tiles;
+    }
+    else if (inter_s <= 2 * arch_params.fast_mem_size) {
+        int hit = std::max(2 * arch_params.fast_mem_size - inter_s, 0);
+        opt.benefit = (hit/ai) * arch_params.balance - redundant_work;
+        opt.benefit *= estimate_tiles;
+    }
+    std::cout << "Benefit:" << opt.benefit << std::endl;
+
 }
 
 int Partitioner::choose_candidate(
