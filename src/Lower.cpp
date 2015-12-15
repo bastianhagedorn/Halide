@@ -60,7 +60,8 @@ using std::map;
 using std::pair;
 using std::make_pair;
 
-Stmt lower(const vector<Function> &outputs, const string &pipeline_name, const Target &t, const vector<IRMutator *> &custom_passes) {
+Stmt lower(const vector<Function> &outputs, const string &pipeline_name,
+           const Target &t, const vector<IRMutator *> &custom_passes, bool no_vec) {
 
     // Compute an environment
     map<string, Function> env;
@@ -220,10 +221,12 @@ Stmt lower(const vector<Function> &outputs, const string &pipeline_name, const T
     s = simplify(s);
     debug(2) << "Lowering after unrolling:\n" << s << "\n\n";
 
-    debug(1) << "Vectorizing...\n";
-    s = vectorize_loops(s);
-    s = simplify(s);
-    debug(2) << "Lowering after vectorizing:\n" << s << "\n\n";
+    if (no_vec) {
+        debug(1) << "Vectorizing...\n";
+        s = vectorize_loops(s);
+        s = simplify(s);
+        debug(2) << "Lowering after vectorizing:\n" << s << "\n\n";
+    }
 
     debug(1) << "Detecting vector interleavings...\n";
     s = rewrite_interleavings(s);

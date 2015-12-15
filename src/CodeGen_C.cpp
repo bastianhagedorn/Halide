@@ -1205,10 +1205,12 @@ void CodeGen_C::visit(const ProducerConsumer *op) {
 void CodeGen_C::visit(const For *op) {
     string id_min = print_expr(op->min);
     string id_extent = print_expr(op->extent);
-
     if (op->for_type == ForType::Parallel) {
         do_indent();
         stream << "#pragma omp parallel for\n";
+    } else if (op->for_type == ForType::Vectorized){
+        do_indent();
+        stream << "#pragma simd\n";
     } else {
         internal_assert(op->for_type == ForType::Serial)
             << "Can only emit serial or parallel for loops to C\n";

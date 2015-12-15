@@ -200,7 +200,8 @@ public:
      * contained Module suitable for further compilation. */
     EXPORT Module compile_to_module(const std::vector<Argument> &args,
                                     const std::string &fn_name,
-                                    const Target &target = get_target_from_environment());
+                                    const Target &target = get_target_from_environment(),
+                                    bool no_vec = false);
 
    /** Eagerly jit compile the function to machine code. This
      * normally happens on the first call to realize. If you're
@@ -426,7 +427,7 @@ bool voidable_halide_type(Type &t) {
 template<>
 inline bool voidable_halide_type<void>(Type &t) {
     return true;
-}        
+}
 
 template <typename T>
 bool scalar_arg_type_or_buffer(Type &t) {
