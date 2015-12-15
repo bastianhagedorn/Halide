@@ -1720,10 +1720,8 @@ int region_cost(map<string, Box> &regions,
     return total_cost;
 }
 
-int overlap_cost(string cons, Function prod,
-                 map<string, vector<map<string, Box> > > &func_overlaps,
+int overlap_cost(string cons, Function prod, vector<map<string, Box> > &overlaps,
                  map<string, vector<pair<int, int> > > &func_cost, int dim=-1) {
-    auto &overlaps = func_overlaps[cons];
     int total_area = 0;
     assert((int)overlaps.size() > dim);
     for (unsigned int d = 0; d < overlaps.size(); d++) {
@@ -1748,13 +1746,13 @@ int overlap_cost(string cons, Function prod,
 }
 
 int overlap_cost(string cons, vector<Function> &prods,
-                 map<string, vector<map<string, Box> > > &func_overlaps,
+                 vector<map<string, Box> > &overlaps,
                  map<string, vector<pair<int, int> > > &func_cost, int dim=-1) {
 
     int total_cost = 0;
     for(auto& p: prods) {
         if (p.name()!=cons) {
-            int cost = overlap_cost(cons, p, func_overlaps, func_cost, dim);
+            int cost = overlap_cost(cons, p, overlaps, func_cost, dim);
             if (cost < 0)
                 // Cost could not be estimated
                 return -1;
@@ -1990,7 +1988,6 @@ void Partitioner::evaluate_option(Option &opt) {
     vector<bool> eval;
 
     const vector<string> &args = analy.env[opt.child_group].args();
-
     assert(opt.tile_sizes.size() == args.size());
 
     // TODO Cosider precomputing the dimension esitmates for all the functions
@@ -2015,8 +2012,8 @@ void Partitioner::evaluate_option(Option &opt) {
             else {
                 // If the dimension is too small do not tile it and set the
                 // extent of the bounds to that of the dimension estimate
-                opt.tile_sizes[i] = -1;
-                bounds.push_back(make_pair(0, dim_estimates[i]));
+                opt.tile_sizes[i] = 1;
+                bounds.push_back(make_pair(0, 1));
             }
         }
         else
@@ -2026,15 +2023,15 @@ void Partitioner::evaluate_option(Option &opt) {
     }
 
     // Check parallelism i.e. count the number of tiles
-    int estimate_tiles = 1;
+    int estimate_par = 1;
     for (unsigned int i = 0; i < args.size(); i++) {
         if (opt.tile_sizes[i] != -1)
-            estimate_tiles = std::ceil((float)dim_estimates[i]/opt.tile_sizes[i]) *
-                                        estimate_tiles;
+            estimate_par = std::ceil((float)dim_estimates[i]/opt.tile_sizes[i]) *
+                                        estimate_par;
     }
 
-    std::cout << "num tiles:" << estimate_tiles << std::endl;
-    if (arch_params.parallelism > estimate_tiles) {
+    std::cout << "num tiles:" << estimate_par << std::endl;
+    if (arch_params.parallelism > estimate_par) {
         // Option did not satisfy the parallelism constraint
         opt.benefit = -1;
         return;
@@ -2074,7 +2071,7 @@ void Partitioner::evaluate_option(Option &opt) {
     //    => hit * (s_c - f_c) - (redundant_ops) * op_c
 
     // Determine size of intermediates
-    disp_regions(conc_reg);
+    // disp_regions(conc_reg);
     map<string, Box> prod_reg;
     for (auto &f: prod_funcs)
         prod_reg[f] = conc_reg[f];
@@ -2082,58 +2079,29 @@ void Partitioner::evaluate_option(Option &opt) {
     int inter_s = region_size(prod_reg, analy.env);
     std::cout << "intermediate size:" << inter_s << std::endl;
 
-    /*
-    cand_group = g.first;
-    // Should only have a single child
-    child_group = *children[g.first].begin();
-    // Check if the merge is profitable
-    int redun_cost = 0;
-    bool merge = true;
+    vector<Function> prods;
+    for (auto &f: prod_funcs)
+        prods.push_back(analy.env[f]);
 
-    // Estimate the amount of redundant compute introduced by
-    // overlap tiling the merged group
+    //for (auto &o: conc_overlaps)
+    //    disp_regions(o);
 
-    int cost = overlap_cost(child_group, groups[child_group],
-            func_overlaps, func_cost);
-
-    // The cost of a group can be undetermined when you can prove
-    // inlining is legit but cannot get the bounds for determining
-    // the cost of the tile
-    if (cost < 0)
-        merge = false;
-    redun_cost += cost;
-
-    cost = overlap_cost(child_group, groups[cand_group],
-            func_overlaps, func_cost);
-    if (cost < 0)
-        merge = false;
-    else
-        redun_cost += cost;
-
-    map<string, Box> all_reg = func_dep_regions[child_group];
-    map<string, Box> group_reg;
-
-    for (auto &f: groups[child_group])
-        if (f.name() != child_group)
-            group_reg[f.name()] = all_reg[f.name()];
-
-    for (auto &f: groups[cand_group])
-        group_reg[f.name()] = all_reg[f.name()];
-
-    int tile_cost = region_cost(group_reg, func_cost);
-    if (tile_cost < 0)
-        merge = false;
-
-    //int tile_size = region_size(group_reg, env);
-
-    float overlap_ratio = ((float)redun_cost)/tile_cost;
-
-    if (overlap_ratio > 0.1) {
-        //std::cout << redun_cost << "," << tile_cost << std::endl;
-        //std::cout << cand_group << "," << child_group << std::endl;
-        merge = false;
+    int redundant_work = 0;
+    for (unsigned int i = 0; i < args.size(); i++) {
+        if (opt.tile_sizes[i] != -1) {
+            int dir_red_work = overlap_cost(opt.child_group, prods,
+                                            conc_overlaps, func_cost, i);
+            if (dir_red_work != -1)
+                redundant_work += dir_red_work;
+        }
     }
-    */
+
+
+    int total_work = region_cost(prod_reg, func_cost);
+    std::cout << "(Redundant work)/(Total work):" <<
+                            (float)redundant_work/total_work << std::endl;
+    std::cout << "Arithmetic Intensity:" <<
+                            (float)total_work/inter_s << std::endl;
 }
 
 int Partitioner::choose_candidate(
@@ -2200,6 +2168,7 @@ int Partitioner::choose_candidate(
             disp_box(b);
             std::cout << std::endl;
         }
+
         std::cout << "Child function characteristics:" << std::endl;
         std::cout << "Loads:" << func_cost[p.second][0].second <<
                      " Ops:" << func_cost[p.second][0].first  << std::endl;
@@ -2542,10 +2511,11 @@ void schedule_advisor(const vector<Function> &outputs,
 
         DependenceAnalysis analy(env, func_val_bounds);
 
+        /*
         for (auto &reg: analy.func_dep_regions) {
             disp_regions(reg.second);
             std::cout << std::endl;
-        }
+        } */
 
         bool bounds_avail = check_bounds_on_outputs(outputs);
         // std::cout << "output bounds:" << bounds_avail << std::endl;
