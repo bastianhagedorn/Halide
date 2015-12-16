@@ -134,20 +134,20 @@ int main(int argc, char **argv) {
             }
             outGPyramid[j].compute_root().gpu_tile(x, y, blockw, blockh, DeviceAPI::Default_GPU);
         }
-    } else if(false) {
+    } else if(true) {
         // cpu schedule
         Var yi;
-        output.parallel(y, 32)/*.vectorize(x, 8)*/;
-        gray.compute_root().parallel(y, 32)/*.vectorize(x, 8)*/;
+        output.parallel(y, 32).vectorize(x, 8);
+        gray.compute_root().parallel(y, 32).vectorize(x, 8);
         for (int j = 0; j < 4; j++) {
             if (j > 0) {
                 inGPyramid[j]
-                    .compute_root().parallel(y, 32)/*.vectorize(x, 8)*/;
+                    .compute_root().parallel(y, 32).vectorize(x, 8);
                 gPyramid[j]
                     .compute_root().reorder_storage(x, k, y)
-                    .reorder(k, y).parallel(y, 8)/*.vectorize(x, 8)*/;
+                    .reorder(k, y).parallel(y, 8).vectorize(x, 8);
             }
-            outGPyramid[j].compute_root().parallel(y, 32)/*.vectorize(x, 8)*/;
+            outGPyramid[j].compute_root().parallel(y, 32).vectorize(x, 8);
         }
         for (int j = 4; j < J; j++) {
             inGPyramid[j].compute_root();

@@ -27,12 +27,13 @@ int main(int argc, char **argv) {
     std::cout << input.width() << "," << input.height() << std::endl;
     // Timing code
     double best = benchmark(timing, 1, [&]() {
-        local_laplacian(levels, alpha/(levels-1), beta, input, output);
+        llc(levels, alpha/(levels-1), beta, input, output);
+        //local_laplacian(levels, alpha/(levels-1), beta, input, output);
     });
     printf("%gus\n", best * 1e6);
 
-    //llc(levels, alpha/(levels-1), beta, input, output);
-    local_laplacian(levels, alpha/(levels-1), beta, input, output);
+    llc(levels, alpha/(levels-1), beta, input, output);
+    //local_laplacian(levels, alpha/(levels-1), beta, input, output);
 
     save_image(output, argv[6]);
 

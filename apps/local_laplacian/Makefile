@@ -1,6 +1,6 @@
 include ../support/Makefile.inc
 
-CXX=icpc -march=native -ansi-alias -ipo -O3 -Wall -g -openmp
+CXX=icpc -xhost -ansi-alias -ipo -O3 -Wall -g -openmp
 #CXX=g++ -march=native -O3 -Wall -fopenmp
 
 all: process
@@ -19,10 +19,10 @@ out.png: process
 	./process ../images/rgb.png 8 1 1 10 out.png
 
 bench: process
-	HL_NUM_THREADS=1  ./process ../images/rgb.png 8 1 1 10 out.png
-	HL_NUM_THREADS=2  ./process ../images/rgb.png 8 1 1 10 out.png
-	HL_NUM_THREADS=4  ./process ../images/rgb.png 8 1 1 10 out.png
-	HL_NUM_THREADS=8  ./process ../images/rgb.png 8 1 1 10 out.png
+	OMP_NUM_THREADS=1 HL_NUM_THREADS=1  ./process ../images/rgb.png 8 1 1 10 out.png
+	OMP_NUM_THREADS=2 HL_NUM_THREADS=2  ./process ../images/rgb.png 8 1 1 10 out.png
+	OMP_NUM_THREADS=4 HL_NUM_THREADS=4  ./process ../images/rgb.png 8 1 1 10 out.png
+	OMP_NUM_THREADS=8 HL_NUM_THREADS=8  ./process ../images/rgb.png 8 1 1 10 out.png
 	#HL_NUM_THREADS=1 numactl --physcpubind=0 ./process ../images/rgb.png 8 1 1 10 out.png
 	#HL_NUM_THREADS=4 numactl --physcpubind=0-3 ./process ../images/rgb.png 8 1 1 10 out.png
 	#HL_NUM_THREADS=8 numactl --physcpubind=0-7 ./process ../images/rgb.png 8 1 1 10 out.png

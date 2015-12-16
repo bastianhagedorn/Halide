@@ -666,11 +666,11 @@ void CodeGen_C::visit(const Mod *op) {
 }
 
 void CodeGen_C::visit(const Max *op) {
-    print_expr(Call::make(op->type, "max", {op->a, op->b}, Call::Extern));
+    print_expr(Call::make(op->type, "std::max", {op->a, op->b}, Call::Extern));
 }
 
 void CodeGen_C::visit(const Min *op) {
-    print_expr(Call::make(op->type, "min", {op->a, op->b}, Call::Extern));
+    print_expr(Call::make(op->type, "std::min", {op->a, op->b}, Call::Extern));
 }
 
 void CodeGen_C::visit(const EQ *op) {
@@ -759,7 +759,8 @@ void CodeGen_C::visit(const FloatImm *op) {
         u.as_float = op->value;
 
         ostringstream oss;
-        oss << "float_from_bits(" << u.as_uint << " /* " << u.as_float << " */)";
+        //oss << "float_from_bits(" << u.as_uint << " /* " << u.as_float << " */)";
+        oss << "(float)" << u.as_float;
         id = oss.str();
     }
 }

@@ -77,7 +77,7 @@ Stmt lower(const vector<Function> &outputs, const string &pipeline_name,
     // function. Used in later bounds inference passes.
     debug(1) << "Computing bounds of each function's value\n";
     FuncValueBounds func_bounds = compute_function_value_bounds(order, env);
-
+/*
     bool root_default = true;
     bool auto_inline = true;
     bool auto_par = true;
@@ -86,7 +86,7 @@ Stmt lower(const vector<Function> &outputs, const string &pipeline_name,
     schedule_advisor(outputs, order, env, func_bounds, root_default,
     				 auto_inline, auto_par, auto_vec);
     std::cout << print_loop_nest(outputs) << std::endl;
-
+*/
     bool any_memoized = false;
 
     debug(1) << "Creating initial loop nests...\n";
@@ -221,7 +221,7 @@ Stmt lower(const vector<Function> &outputs, const string &pipeline_name,
     s = simplify(s);
     debug(2) << "Lowering after unrolling:\n" << s << "\n\n";
 
-    if (no_vec) {
+    if (!no_vec) {
         debug(1) << "Vectorizing...\n";
         s = vectorize_loops(s);
         s = simplify(s);

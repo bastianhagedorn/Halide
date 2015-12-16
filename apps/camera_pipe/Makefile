@@ -6,7 +6,7 @@ else
   SCHEDULE=0
 endif
 
-CXX=icpc -march=native -ansi-alias -O3 -Wall -openmp
+CXX=icpc -march=native -ansi-alias -O3 -Wall -openmp -vec-report
 #CXX=g++ -march=native -O3 -Wall -fopenmp
 
 all: process
@@ -16,7 +16,7 @@ camera_pipe: ../../ camera_pipe.cpp
 	$(CXX) $(CXXFLAGS) camera_pipe.cpp -g $(LIB_HALIDE) -o camera_pipe -ldl -lpthread -lz $(LDFLAGS) -ltinfo
 
 curved.o: camera_pipe
-	./camera_pipe 8 1 # 8-bit output,
+	./camera_pipe 8 0 # 8-bit output,
 
 fcam/Demosaic.o: fcam/Demosaic.cpp fcam/Demosaic.h
 	$(CXX) $(CXXFLAGS) -c $< -o $@
@@ -24,7 +24,7 @@ fcam/Demosaic.o: fcam/Demosaic.cpp fcam/Demosaic.h
 fcam/Demosaic_ARM.o: fcam/Demosaic_ARM.cpp fcam/Demosaic_ARM.h
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-process: process.cpp curved.o fcam/Demosaic.o fcam/Demosaic_ARM.o
+process: process.cpp cam_c.cpp curved.o fcam/Demosaic.o fcam/Demosaic_ARM.o
 	$(CXX) $(CXXFLAGS) $^ -o $@ -lpthread -ldl -fopenmp $(PNGFLAGS)
 
 out.png: process
@@ -37,10 +37,10 @@ camera_pipe.avi: camera_pipe.cpp viz.sh $(HALIDE_TRACE_VIZ) ../../bin/HalideTrac
 	bash viz.sh
 
 bench: process
-	HL_NUM_THREADS=1  ./process ../images/bayer_raw.png 3700 2.0 50 5 out.png
-	HL_NUM_THREADS=2  ./process ../images/bayer_raw.png 3700 2.0 50 5 out.png
-	HL_NUM_THREADS=4  ./process ../images/bayer_raw.png 3700 2.0 50 5 out.png
-	HL_NUM_THREADS=8  ./process ../images/bayer_raw.png 3700 2.0 50 5 out.png
+	OMP_NUM_THREADS=1 HL_NUM_THREADS=1  ./process ../images/bayer_raw.png 3700 2.0 50 5 out.png
+	OMP_NUM_THREADS=2 HL_NUM_THREADS=2  ./process ../images/bayer_raw.png 3700 2.0 50 5 out.png
+	OMP_NUM_THREADS=4 HL_NUM_THREADS=4  ./process ../images/bayer_raw.png 3700 2.0 50 5 out.png
+	OMP_NUM_THREADS=8 HL_NUM_THREADS=8  ./process ../images/bayer_raw.png 3700 2.0 50 5 out.png
 	#HL_NUM_THREADS=1 numactl --physcpubind=0 ./process ../images/bayer_raw.png 3700 2.0 50 5 out.png
 	#HL_NUM_THREADS=4 numactl --physcpubind=0-3 ./process ../images/bayer_raw.png 3700 2.0 50 5 out.png
 	#HL_NUM_THREADS=8 numactl --physcpubind=0-7 ./process ../images/bayer_raw.png 3700 2.0 50 5 out.png
