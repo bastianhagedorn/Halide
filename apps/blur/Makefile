@@ -2,8 +2,8 @@ include ../support/Makefile.inc
 
 all: test
 
-CXX=icpc -march=native -ansi-alias -Wall -openmp
-#CXX=g++ -march=native -Wall -openmp
+CXX=icpc -O3 -march=native -ansi-alias -Wall -openmp
+#CXX=g++ -O3 -march=native -Wall -openmp
 
 halide_blur: halide_blur.cpp
 	$(CXX) $(CXXFLAGS) halide_blur.cpp $(LIB_HALIDE) -o halide_blur -ldl -lpthread -lz $(LDFLAGS) -ltinfo
@@ -21,7 +21,7 @@ endif
 
 # -O2 is faster than -O3 for this app (O3 unrolls too much)
 test: test.cpp halide_blur.o halide_gen_blur.cpp
-	$(CXX) $(CXXFLAGS) $(OPENMP_FLAGS) -msse2 -Wall -O2 test.cpp halide_blur.o halide_gen_blur.cpp -o test -lpthread -ldl $(PNGFLAGS)
+	$(CXX) $(CXXFLAGS) $(OPENMP_FLAGS) test.cpp halide_blur.o halide_gen_blur.cpp -o test -lpthread -ldl $(PNGFLAGS)
 
 bench: test
 	OMP_NUM_THREADS=1 HL_NUM_THREADS=1 ./test

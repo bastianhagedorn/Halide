@@ -150,6 +150,16 @@ Func demosaic(Func deinterleaved) {
     if (schedule == 0) {
         // optimized for ARM
         // Compute these in chunks over tiles, vectorized by 8
+        g_r.compute_at(processed, tx).vectorize(x);
+        g_b.compute_at(processed, tx).vectorize(x);
+        r_gr.compute_at(processed, tx).vectorize(x);
+        b_gr.compute_at(processed, tx).vectorize(x);
+        r_gb.compute_at(processed, tx).vectorize(x);
+        b_gb.compute_at(processed, tx).vectorize(x);
+        r_b.compute_at(processed, tx).vectorize(x);
+        b_r.compute_at(processed, tx).vectorize(x);
+
+        /*
         g_r.compute_at(processed, tx).vectorize(x, 8);
         g_b.compute_at(processed, tx).vectorize(x, 8);
         r_gr.compute_at(processed, tx).vectorize(x, 8);
@@ -157,10 +167,11 @@ Func demosaic(Func deinterleaved) {
         r_gb.compute_at(processed, tx).vectorize(x, 8);
         b_gb.compute_at(processed, tx).vectorize(x, 8);
         r_b.compute_at(processed, tx).vectorize(x, 8);
-        b_r.compute_at(processed, tx).vectorize(x, 8);
+        b_r.compute_at(processed, tx).vectorize(x, 8);*/
         // These interleave in y, so unrolling them in y helps
         output.compute_at(processed, tx)
-            .vectorize(x, 8)
+            //.vectorize(x, 8)
+            .vectorize(x)
             .unroll(y, 2)
             .reorder(c, x, y).bound(c, 0, 3).unroll(c);
     } else if (schedule == 1) {
@@ -263,10 +274,13 @@ Func process(Func raw, Type result_type,
     processed.bound(c, 0, 3).bound(tx, 0, 2560).bound(ty, 0, 1920); // bound color loop 0-3, properly
     if (schedule == 0) {
         // Compute in chunks over tiles, vectorized by 8
-        denoised.compute_at(processed, tx).vectorize(x, 8);
-        deinterleaved.compute_at(processed, tx).vectorize(x, 8).reorder(c, x, y).unroll(c);
-        corrected.compute_at(processed, tx).vectorize(x, 4).reorder(c, x, y).unroll(c);
-        processed.tile(tx, ty, xi, yi, 32, 32).reorder(xi, yi, c, tx, ty);
+        //denoised.compute_at(processed, tx).vectorize(x, 8);
+        denoised.compute_at(processed, tx).vectorize(x);
+        //deinterleaved.compute_at(processed, tx).vectorize(x, 8).reorder(c, x, y).unroll(c);
+        deinterleaved.compute_at(processed, tx).vectorize(x).reorder(c, x, y).unroll(c);
+        //corrected.compute_at(processed, tx).vectorize(x, 4).reorder(c, x, y).unroll(c);
+        corrected.compute_at(processed, tx).vectorize(x).reorder(c, x, y).unroll(c);
+        processed.tile(tx, ty, xi, yi, 128, 32).reorder(xi, yi, c, tx, ty);
         processed.parallel(ty);
     } else if (schedule == 1) {
         // Same as above, but don't vectorize (sse is bad at interleaved 16-bit ops)

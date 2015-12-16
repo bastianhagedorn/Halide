@@ -1211,7 +1211,7 @@ void CodeGen_C::visit(const For *op) {
         stream << "#pragma omp parallel for\n";
     } else if (op->for_type == ForType::Vectorized){
         do_indent();
-        stream << "#pragma simd\n";
+        stream << "#pragma ivdep\n";
     } else {
         internal_assert(op->for_type == ForType::Serial)
             << "Can only emit serial or parallel for loops to C\n";

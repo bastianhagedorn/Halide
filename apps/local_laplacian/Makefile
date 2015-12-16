@@ -42,4 +42,5 @@ local_laplacian.mp4: process_viz
 	bash viz.sh
 
 clean:
-	rm -f process local_laplacian.o process_viz local_laplacian_viz.o local_laplacian_gen local_laplacian.mp4
+	rm -f process local_laplacian.o process_viz local_laplacian_viz.o local_laplacian_gen \
+		local_laplacian.mp4 local_laplacian_c.cpp local_laplacian_c.h

@@ -6,7 +6,7 @@ else
   SCHEDULE=0
 endif
 
-CXX=icpc -march=native -ansi-alias -O3 -Wall -openmp -vec-report
+CXX=icpc -march=native -ansi-alias -O3 -Wall -openmp
 #CXX=g++ -march=native -O3 -Wall -fopenmp
 
 all: process
@@ -15,7 +15,7 @@ camera_pipe: ../../ camera_pipe.cpp
 	#$(MAKE) -C $(LIB_HALIDE)
 	$(CXX) $(CXXFLAGS) camera_pipe.cpp -g $(LIB_HALIDE) -o camera_pipe -ldl -lpthread -lz $(LDFLAGS) -ltinfo
 
-curved.o: camera_pipe
+cam_c.cpp curved.o: camera_pipe
 	./camera_pipe 8 0 # 8-bit output,
 
 fcam/Demosaic.o: fcam/Demosaic.cpp fcam/Demosaic.h
@@ -49,4 +49,4 @@ bench: process
 	#HL_NUM_THREADS=64 numactl --physcpubind=0-63 ./process ../images/bayer_raw.png 3700 2.0 50 5 out.png
 
 clean:
-	rm -f out.png process curved.o camera_pipe fcam/*.o
+	rm -f out.png process curved.o camera_pipe fcam/*.o cam_c.cpp cam_c.h

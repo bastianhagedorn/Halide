@@ -68,16 +68,16 @@ int main(int argc, char **argv) {
     gPyramid[0](x, y, k) = beta*(gray(x, y) - level) + level + remap(idx - 256*k);
     for (int j = 1; j < J; j++) {
         gPyramid[j](x, y, k) = downsample(gPyramid[j-1])(x, y, k);
-        gPyramid[j].bound(k, 0, 8);
+        //gPyramid[j].bound(k, 0, 8);
     }
 
     // Get its laplacian pyramid
     Func lPyramid[maxJ];
     lPyramid[J-1](x, y, k) = gPyramid[J-1](x, y, k);
-    lPyramid[J-1].bound(k, 0, 8);
+    //lPyramid[J-1].bound(k, 0, 8);
     for (int j = J-2; j >= 0; j--) {
         lPyramid[j](x, y, k) = gPyramid[j](x, y, k) - upsample(gPyramid[j+1])(x, y, k);
-        lPyramid[j].bound(k, 0, 8);
+        //lPyramid[j].bound(k, 0, 8);
     }
 
     // Make the Gaussian pyramid of the input
@@ -134,20 +134,25 @@ int main(int argc, char **argv) {
             }
             outGPyramid[j].compute_root().gpu_tile(x, y, blockw, blockh, DeviceAPI::Default_GPU);
         }
-    } else if(true) {
+    } else {
         // cpu schedule
         Var yi;
-        output.parallel(y, 32).vectorize(x, 8);
-        gray.compute_root().parallel(y, 32).vectorize(x, 8);
+        //output.parallel(y, 32).vectorize(x, 8);
+        output.parallel(y, 32).vectorize(x);
+        //gray.compute_root().parallel(y, 32).vectorize(x, 8);
+        gray.compute_root().parallel(y, 32).vectorize(x);
         for (int j = 0; j < 4; j++) {
             if (j > 0) {
                 inGPyramid[j]
-                    .compute_root().parallel(y, 32).vectorize(x, 8);
+                    //.compute_root().parallel(y, 32).vectorize(x, 8);
+                    .compute_root().parallel(y, 32).vectorize(x);
                 gPyramid[j]
                     .compute_root().reorder_storage(x, k, y)
-                    .reorder(k, y).parallel(y, 8).vectorize(x, 8);
+                    //.reorder(k, y).parallel(y, 8).vectorize(x, 8);
+                    .reorder(k, y).parallel(y, 8).vectorize(x);
             }
-            outGPyramid[j].compute_root().parallel(y, 32).vectorize(x, 8);
+            //outGPyramid[j].compute_root().parallel(y, 32).vectorize(x, 8);
+            outGPyramid[j].compute_root().parallel(y, 32).vectorize(x);
         }
         for (int j = 4; j < J; j++) {
             inGPyramid[j].compute_root();
@@ -156,7 +161,7 @@ int main(int argc, char **argv) {
         }
     }
 
-    output.compile_to_file("local_laplacian", {levels, alpha, beta, input}, target);
+    //output.compile_to_file("local_laplacian", {levels, alpha, beta, input}, target);
     output.compile_to_c("local_laplacian_c.cpp", {levels, alpha, beta, input}, "llc", target);
     output.compile_to_header("local_laplacian_c.h", {levels, alpha, beta, input}, "llc", target);
 

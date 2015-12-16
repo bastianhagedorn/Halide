@@ -50,10 +50,10 @@ int main(int argc, char **argv) {
     double best;
 
     best = benchmark(timing_iterations, 1, [&]() {
-        //curved(color_temp, gamma, contrast,
-        //       input, matrix_3200, matrix_7000, output);
-        camc(color_temp, gamma, contrast,
-               input, matrix_3200, matrix_7000, output);
+        curved(color_temp, gamma, contrast,
+                 input, matrix_3200, matrix_7000, output);
+        //camc(color_temp, gamma, contrast,
+        //     input, matrix_3200, matrix_7000, output);
     });
     fprintf(stderr, "Halide:\t%gus\n", best * 1e6);
     save_image(output, argv[6]);
