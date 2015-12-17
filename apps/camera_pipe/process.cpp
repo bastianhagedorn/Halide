@@ -3,7 +3,6 @@
 
 #include "benchmark.h"
 #include "curved.h"
-#include "cam_c.h"
 #include "halide_image.h"
 #include "halide_image_io.h"
 
@@ -55,19 +54,19 @@ int main(int argc, char **argv) {
         //camc(color_temp, gamma, contrast,
         //     input, matrix_3200, matrix_7000, output);
     });
-    fprintf(stderr, "Halide:\t%gus\n", best * 1e6);
+    fprintf(stdout, "Halide:\t%gus\n", best * 1e6);
     save_image(output, argv[6]);
 
     best = benchmark(timing_iterations, 1, [&]() {
         FCam::demosaic(input, output, color_temp, contrast, true, 25, gamma);
     });
-    fprintf(stderr, "C++:\t%gus\n", best * 1e6);
+    fprintf(stdout, "C++:\t%gus\n", best * 1e6);
     save_image(output, "fcam_c.png");
 
     best = benchmark(timing_iterations, 1, [&]() {;
         FCam::demosaic_ARM(input, output, color_temp, contrast, true, 25, gamma);
     });
-    fprintf(stderr, "ASM:\t%gus\n", best * 1e6);
+    fprintf(stdout, "ASM:\t%gus\n", best * 1e6);
     save_image(output, "fcam_arm.png");
 
     // Timings on N900 as of SIGGRAPH 2012 camera ready are (best of 10)

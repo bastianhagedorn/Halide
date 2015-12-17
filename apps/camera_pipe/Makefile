@@ -6,17 +6,19 @@ else
   SCHEDULE=0
 endif
 
-CXX=icpc -march=native -ansi-alias -O3 -Wall -openmp
-#CXX=g++ -march=native -O3 -Wall -fopenmp
-
-all: process
+#CXX=icpc -O3 -march=native -ansi-alias -Wall -openmp -g
+CXX=g++ -O3 -march=native -Wall -fopenmp -g
 
 camera_pipe: ../../ camera_pipe.cpp
 	#$(MAKE) -C $(LIB_HALIDE)
-	$(CXX) $(CXXFLAGS) camera_pipe.cpp -g $(LIB_HALIDE) -o camera_pipe -ldl -lpthread -lz $(LDFLAGS) -ltinfo
+	$(CXX) $(CXXFLAGS) camera_pipe.cpp $(LIB_HALIDE) -o camera_pipe -ldl \
+		-lpthread -lz $(LDFLAGS) -ltinfo
 
-cam_c.cpp curved.o: camera_pipe
+curved_ref: camera_pipe
 	./camera_pipe 8 0 # 8-bit output,
+
+curved_auto: camera_pipe
+	./camera_pipe 8 -1 # 8-bit output,
 
 fcam/Demosaic.o: fcam/Demosaic.cpp fcam/Demosaic.h
 	$(CXX) $(CXXFLAGS) -c $< -o $@
@@ -24,29 +26,35 @@ fcam/Demosaic.o: fcam/Demosaic.cpp fcam/Demosaic.h
 fcam/Demosaic_ARM.o: fcam/Demosaic_ARM.cpp fcam/Demosaic_ARM.h
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-process: process.cpp cam_c.cpp curved.o fcam/Demosaic.o fcam/Demosaic_ARM.o
-	$(CXX) $(CXXFLAGS) $^ -o $@ -lpthread -ldl -fopenmp $(PNGFLAGS)
+process_ref: process.cpp curved_ref fcam/Demosaic.o fcam/Demosaic_ARM.o
+	$(CXX) $(CXXFLAGS) process.cpp fcam/Demosaic.o fcam/Demosaic_ARM.o curved.o \
+		-o $@ -lpthread -ldl -fopenmp $(PNGFLAGS)
 
-out.png: process
+process_auto: process.cpp curved_auto fcam/Demosaic.o fcam/Demosaic_ARM.o
+	$(CXX) $(CXXFLAGS) process.cpp fcam/Demosaic.o fcam/Demosaic_ARM.o curved.o \
+		-o $@ -lpthread -ldl -fopenmp $(PNGFLAGS)
+
+out.png: process_ref
 	./process ../images/bayer_raw.png 3700 2.0 50 5 out.png
 
 ../../bin/HalideTraceViz:
-	$(MAKE) -C ../../ bin/HalideTraceViz
+	$(MAKE) -C ../../util/HalideTraceViz
 
-camera_pipe.avi: camera_pipe.cpp viz.sh $(HALIDE_TRACE_VIZ) ../../bin/HalideTraceViz
+camera_pipe.avi: camera_pipe.cpp viz.sh $(HALIDE_TRACE_VIZ) ../../util/HalideTraceViz
 	bash viz.sh
 
-bench: process
-	OMP_NUM_THREADS=1 HL_NUM_THREADS=1  ./process ../images/bayer_raw.png 3700 2.0 50 5 out.png
-	OMP_NUM_THREADS=2 HL_NUM_THREADS=2  ./process ../images/bayer_raw.png 3700 2.0 50 5 out.png
-	OMP_NUM_THREADS=4 HL_NUM_THREADS=4  ./process ../images/bayer_raw.png 3700 2.0 50 5 out.png
-	OMP_NUM_THREADS=8 HL_NUM_THREADS=8  ./process ../images/bayer_raw.png 3700 2.0 50 5 out.png
-	#HL_NUM_THREADS=1 numactl --physcpubind=0 ./process ../images/bayer_raw.png 3700 2.0 50 5 out.png
-	#HL_NUM_THREADS=4 numactl --physcpubind=0-3 ./process ../images/bayer_raw.png 3700 2.0 50 5 out.png
-	#HL_NUM_THREADS=8 numactl --physcpubind=0-7 ./process ../images/bayer_raw.png 3700 2.0 50 5 out.png
-	#HL_NUM_THREADS=16 numactl --physcpubind=0-15 ./process ../images/bayer_raw.png 3700 2.0 50 5 out.png
-	#HL_NUM_THREADS=32 numactl --physcpubind=0-31 ./process ../images/bayer_raw.png 3700 2.0 50 5 out.png
-	#HL_NUM_THREADS=64 numactl --physcpubind=0-63 ./process ../images/bayer_raw.png 3700 2.0 50 5 out.png
+bench_ref: process_ref
+	for t in 1 2 3 4 ; do \
+        OMP_NUM_THREADS=$$t HL_NUM_THREADS=$$t \
+		./process_ref ../images/bayer_raw.png 3700 2.0 50 5 out.png >> ref_perf.txt;\
+    done
+
+bench_auto: process_auto
+	for t in 1 2 3 4 ; do \
+        OMP_NUM_THREADS=$$t HL_NUM_THREADS=$$t \
+		./process_auto ../images/bayer_raw.png 3700 2.0 50 5 out.png >> ref_auto.txt;\
+    done
 
 clean:
-	rm -f out.png process curved.o camera_pipe fcam/*.o cam_c.cpp cam_c.h
+	rm -f out.png process_ref process_auto curved.o camera_pipe fcam/*.o \
+		ref_perf.txt ref_auto.txt curved.s curved.h
