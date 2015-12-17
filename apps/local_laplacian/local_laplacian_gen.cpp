@@ -30,7 +30,12 @@ int main(int argc, char **argv) {
 
     // Number of pyramid levels
     int J = 8;
-    if (argc > 1) J = atoi(argv[1]);
+    int schedule = 0;
+    if (argc > 1) {
+        J = atoi(argv[1]);
+        schedule = atoi(argv[2]);
+    }
+
     const int maxJ = 20;
 
     // number of intensity levels
@@ -134,36 +139,32 @@ int main(int argc, char **argv) {
             }
             outGPyramid[j].compute_root().gpu_tile(x, y, blockw, blockh, DeviceAPI::Default_GPU);
         }
-    } else {
+    } else if(schedule == 0){
         // cpu schedule
         Var yi;
-        //output.parallel(y, 32).vectorize(x, 8);
-        output.parallel(y, 32).vectorize(x);
-        //gray.compute_root().parallel(y, 32).vectorize(x, 8);
-        gray.compute_root().parallel(y, 32).vectorize(x);
+        output.parallel(y, 32).vectorize(x, 8);
+        gray.compute_root().parallel(y, 32).vectorize(x, 8);
         for (int j = 0; j < 4; j++) {
             if (j > 0) {
                 inGPyramid[j]
-                    //.compute_root().parallel(y, 32).vectorize(x, 8);
-                    .compute_root().parallel(y, 32).vectorize(x);
+                    .compute_root().parallel(y, 32).vectorize(x, 8);
                 gPyramid[j]
                     .compute_root().reorder_storage(x, k, y)
-                    //.reorder(k, y).parallel(y, 8).vectorize(x, 8);
-                    .reorder(k, y).parallel(y, 8).vectorize(x);
+                    .reorder(k, y).parallel(y, 8).vectorize(x, 8);
             }
-            //outGPyramid[j].compute_root().parallel(y, 32).vectorize(x, 8);
-            outGPyramid[j].compute_root().parallel(y, 32).vectorize(x);
+            outGPyramid[j].compute_root().parallel(y, 32).vectorize(x, 8);
         }
         for (int j = 4; j < J; j++) {
             inGPyramid[j].compute_root();
             gPyramid[j].compute_root().parallel(k);
             outGPyramid[j].compute_root();
         }
+    } else if (schedule == -1) {
+        // Do nothing for now
     }
 
-    //output.compile_to_file("local_laplacian", {levels, alpha, beta, input}, target);
-    output.compile_to_c("local_laplacian_c.cpp", {levels, alpha, beta, input}, "llc", target);
-    output.compile_to_header("local_laplacian_c.h", {levels, alpha, beta, input}, "llc", target);
-
+    output.compile_to_file("local_laplacian", {levels, alpha, beta, input}, target);
+    //output.compile_to_c("local_laplacian_c.cpp", {levels, alpha, beta, input}, "llc", target);
+    //output.compile_to_header("local_laplacian_c.h", {levels, alpha, beta, input}, "llc", target);
     return 0;
 }

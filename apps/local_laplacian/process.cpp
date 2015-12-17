@@ -3,7 +3,6 @@
 #include <iostream>
 
 #include "local_laplacian.h"
-#include "local_laplacian_c.h"
 
 #include "benchmark.h"
 #include "halide_image.h"
@@ -26,12 +25,10 @@ int main(int argc, char **argv) {
 
     // Timing code
     double best = benchmark(timing, 1, [&]() {
-        //llc(levels, alpha/(levels-1), beta, input, output);
         local_laplacian(levels, alpha/(levels-1), beta, input, output);
     });
     printf("%gus\n", best * 1e6);
 
-    //llc(levels, alpha/(levels-1), beta, input, output);
     local_laplacian(levels, alpha/(levels-1), beta, input, output);
 
     save_image(output, argv[6]);
