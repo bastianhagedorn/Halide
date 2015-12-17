@@ -1,36 +1,44 @@
 include ../support/Makefile.inc
 
-all: filter
+#CXX=icpc -O3 -march=native -ansi-alias -Wall -openmp -g
+CXX=g++ -O3 -march=native -Wall -fopenmp -g -Werror -ffast-math
 
 bilateral_grid: bilateral_grid.cpp
-	$(CXX) $(CXXFLAGS) bilateral_grid.cpp -g $(LIB_HALIDE) -o bilateral_grid -lpthread -ldl -lz $(LDFLAGS) \
-	$(LLVM_SHARED_LIBS) -ltinfo
+	$(CXX) $(CXXFLAGS) bilateral_grid.cpp $(LIB_HALIDE) -o \
+		bilateral_grid -lpthread -ldl -lz $(LDFLAGS) $(LLVM_SHARED_LIBS) -ltinfo
 
-bilateral_grid.o: bilateral_grid
-	./bilateral_grid 8
+bilateral_grid_ref: bilateral_grid
+	./bilateral_grid 8 0
 
-filter: bilateral_grid.o filter.cpp
-	$(CXX) $(CXXFLAGS) -O3 -ffast-math -Wall -Werror filter.cpp \
-        bilateral_grid.o -lpthread -ldl -o filter  $(PNGFLAGS)
+bilateral_grid_auto: bilateral_grid
+	./bilateral_grid 8 -1
 
-bilateral_grid.mp4: bilateral_grid.cpp viz.sh
+filter_auto: bilateral_grid_auto filter.cpp
+	$(CXX) $(CXXFLAGS) filter.cpp bilateral_grid.o -lpthread -ldl -o filter_auto \
+		$(PNGFLAGS)
+
+filter_ref: bilateral_grid_ref filter.cpp
+	$(CXX) $(CXXFLAGS) filter.cpp bilateral_grid.o -lpthread -ldl -o filter_ref \
+		$(PNGFLAGS)
+
+bilateral_grid.mp4: bilateral_grid.cpp viz.sh filter_ref
 	bash viz.sh
 
-out.png: filter
-	./filter ../images/gray.png out.png 0.1 10
+out.png: filter_ref
+	./filter_ref ../images/gray.png out.png 0.1 10
 
-bench: filter
-	HL_NUM_THREADS=1  ./filter ../images/gray.png out.png 0.1 10
-	HL_NUM_THREADS=2  ./filter ../images/gray.png out.png 0.1 10
-	HL_NUM_THREADS=4  ./filter ../images/gray.png out.png 0.1 10
-	HL_NUM_THREADS=8  ./filter ../images/gray.png out.png 0.1 10
+bench_ref: filter_ref
+	for t in 1 2 3 4 ; do \
+        OMP_NUM_THREADS=$$t HL_NUM_THREADS=$$t ./filter_ref ../images/gray.png \
+												out.png 0.1 10 >> ref_perf.txt;\
+    done
 
-	#HL_NUM_THREADS=1 numactl --physcpubind=0 ./filter ../images/gray.png out.png 0.1 10
-	#HL_NUM_THREADS=4 numactl --physcpubind=0-3 ./filter ../images/gray.png out.png 0.1 10
-	#HL_NUM_THREADS=8 numactl --physcpubind=0-7 ./filter ../images/gray.png out.png 0.1 10
-	#HL_NUM_THREADS=16 numactl --physcpubind=0-15 ./filter ../images/gray.png out.png 0.1 10
-	#HL_NUM_THREADS=32 numactl --physcpubind=0-31 ./filter ../images/gray.png out.png 0.1 10
-	#HL_NUM_THREADS=64 numactl --physcpubind=0-63 ./filter ../images/gray.png out.png 0.1 10
+bench_auto: filter_auto
+	for t in 1 2 3 4 ; do \
+        OMP_NUM_THREADS=$$t HL_NUM_THREADS=$$t ./filter_auto ../images/gray.png \
+												out.png 0.1 10 >> ref_auto.txt;\
+    done
 
 clean:
-	rm -f bilateral_grid bilateral_grid.mp4 bilateral_grid.o bilateral_grid.h bilateral filter
+	rm -f bilateral_grid bilateral_grid.mp4 bilateral_grid.o bilateral_grid.h\
+		filter_ref filter_auto ref_perf.txt ref_auto.txt out.png

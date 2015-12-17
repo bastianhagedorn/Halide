@@ -21,11 +21,11 @@ int main(int argc, char **argv) {
         // Repository schedule
         blur_y.split(y, y, yi, 8).parallel(y).vectorize(x, 8);
         blur_x.store_at(blur_y, y).compute_at(blur_y, yi).vectorize(x, 8);
-        blur_y.compile_to_file("halide_blur", {input});
     } else if(schedule == -1) {
-        blur_y.compile_to_file("halide_blur", {input});
+        // Do nothing for now
     }
 
+    blur_y.compile_to_file("halide_blur", {input});
     /*
     blur_y.split(y, y, yi, 4).split(x, x, xi, 64).reorder(xi, yi, x, y).
                                                 parallel(y).vectorize(xi);

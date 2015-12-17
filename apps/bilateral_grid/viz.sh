@@ -2,10 +2,10 @@
 export HL_TRACE=3
 export HL_TRACE_FILE=/dev/stdout
 export HL_NUMTHREADS=4
-rm -f bilateral_grid.avi
-make clean && make filter && \
-./filter ../images/gray_small.png out.small 0.2 0 | \
-../../bin/HalideTraceViz -t 1000 -s 1920 1080 \
+rm -f bilateral_grid.mp4
+make clean && make filter_ref && \
+./filter_ref ../images/gray_small.png out.small 0.2 0 | \
+../../utils/HalideTraceViz -t 1000 -s 1920 1080 \
 -f input      0 1      -1 0 1 1 100  300 1 0 0 1 \
 -f histogram  0 32     -1 0 3 1 550  100 1 0 0 1 40 0  \
 -f blurz      0 512    -1 0 3 1 550  300 1 0 0 1 40 0  \

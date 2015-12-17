@@ -66,6 +66,9 @@ int main(int argc, char **argv) {
     Func bilateral_grid("bilateral_grid");
     bilateral_grid(x, y) = interpolated(x, y, 0)/interpolated(x, y, 1);
 
+    // Pick a schedule
+    int schedule = atoi(argv[2]);
+
     Target target = get_target_from_environment();
     if (target.has_gpu_feature()) {
         // Schedule blurz in 8x8 tiles. This is a tile in
@@ -90,16 +93,16 @@ int main(int argc, char **argv) {
         blurx.compute_root().gpu_tile(x, y, z, 8, 8, 1);
         blury.compute_root().gpu_tile(x, y, z, 8, 8, 1);
         bilateral_grid.compute_root().gpu_tile(x, y, s_sigma, s_sigma);
-    } else {
+    } else if (schedule == 0) {
         // The CPU schedule.
-        /*
         blurz.compute_root().reorder(c, z, x, y).parallel(y).vectorize(x, 8).unroll(c);
         histogram.compute_at(blurz, y);
         histogram.update().reorder(c, r.x, r.y, x, y).unroll(c);
         blurx.compute_root().reorder(c, x, y, z).parallel(z).vectorize(x, 8).unroll(c);
         blury.compute_root().reorder(c, x, y, z).parallel(z).vectorize(x, 8).unroll(c);
         bilateral_grid.compute_root().parallel(y).vectorize(x, 8);
-        */
+    } else if (schedule == -1) {
+        // Do nothing for now
     }
 
     bilateral_grid.compile_to_file("bilateral_grid", {r_sigma, input}, target);

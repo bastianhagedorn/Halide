@@ -1,7 +1,7 @@
 include ../support/Makefile.inc
 
-#CXX=icpc -O3 -march=native -ansi-alias -Wall -openmp
-CXX=g++ -O3 -march=native -Wall -fopenmp
+#CXX=icpc -O3 -march=native -ansi-alias -Wall -openmp -g
+CXX=g++ -O3 -march=native -Wall -fopenmp -g
 
 halide_blur: halide_blur.cpp
 	$(CXX) $(CXXFLAGS) halide_blur.cpp $(LIB_HALIDE) -o halide_blur -ldl -lpthread -lz $(LDFLAGS) -ltinfo
