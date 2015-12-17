@@ -28,13 +28,13 @@ out.png: filter_ref
 	./filter_ref ../images/gray.png out.png 0.1 10
 
 bench_ref: filter_ref
-	for t in 1 2 3 4 ; do \
+	for t in 1 2 4 8 ; do \
         OMP_NUM_THREADS=$$t HL_NUM_THREADS=$$t ./filter_ref ../images/gray.png \
 												out.png 0.1 10 >> ref_perf.txt;\
     done
 
 bench_auto: filter_auto
-	for t in 1 2 3 4 ; do \
+	for t in 1 2 4 8 ; do \
         OMP_NUM_THREADS=$$t HL_NUM_THREADS=$$t ./filter_auto ../images/gray.png \
 												out.png 0.1 10 >> ref_auto.txt;\
     done

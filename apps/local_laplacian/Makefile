@@ -25,13 +25,13 @@ out.png: process_ref
 	./process_ref ../images/rgb.png 8 1 1 10 out.png
 
 bench_ref: process_ref
-	for t in 1 2 3 4 ; do \
+	for t in 1 2 4 8 ; do \
         OMP_NUM_THREADS=$$t HL_NUM_THREADS=$$t \
 		./process_ref ../images/rgb.png 8 1 1 10 out.png >> ref_perf.txt;\
     done
 
 bench_auto: process_auto
-	for t in 1 2 3 4 ; do \
+	for t in 1 2 4 8 ; do \
         OMP_NUM_THREADS=$$t HL_NUM_THREADS=$$t \
 		./process_auto ../images/rgb.png 8 1 1 10 out.png >> ref_auto.txt;\
     done

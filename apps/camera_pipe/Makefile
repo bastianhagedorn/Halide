@@ -44,13 +44,13 @@ camera_pipe.avi: camera_pipe.cpp viz.sh $(HALIDE_TRACE_VIZ) ../../util/HalideTra
 	bash viz.sh
 
 bench_ref: process_ref
-	for t in 1 2 3 4 ; do \
+	for t in 1 2 4 8 ; do \
         OMP_NUM_THREADS=$$t HL_NUM_THREADS=$$t \
 		./process_ref ../images/bayer_raw.png 3700 2.0 50 5 out.png >> ref_perf.txt;\
     done
 
 bench_auto: process_auto
-	for t in 1 2 3 4 ; do \
+	for t in 1 2 4 8 ; do \
         OMP_NUM_THREADS=$$t HL_NUM_THREADS=$$t \
 		./process_auto ../images/bayer_raw.png 3700 2.0 50 5 out.png >> ref_auto.txt;\
     done

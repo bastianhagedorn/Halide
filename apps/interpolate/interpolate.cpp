@@ -83,7 +83,10 @@ int main(int argc, char **argv) {
     if (target.has_gpu_feature()) {
         sched = 4;
     } else {
-        sched = 5;
+        if (argc == 4)
+            sched = atoi(argv[3]);
+        else
+            sched = 2;
     }
 
     switch (sched) {

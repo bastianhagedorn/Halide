@@ -19,12 +19,12 @@ test_auto: test.cpp halide_blur_auto
 	$(CXX) $(CXXFLAGS) test.cpp halide_blur.o -o test_auto -lpthread -ldl $(PNGFLAGS)
 
 bench_ref: test_ref
-	for t in 1 2 3 4 ; do \
+	for t in 1 2 4 8 ; do \
         OMP_NUM_THREADS=$$t HL_NUM_THREADS=$$t ./test_ref >> ref_perf.txt;\
     done
 
 bench_auto: test_auto
-	for t in 1 2 3 4 ; do \
+	for t in 1 2 4 8 ; do \
         OMP_NUM_THREADS=$$t HL_NUM_THREADS=$$t ./test_auto >> auto_perf.txt;\
     done
 
