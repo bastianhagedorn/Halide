@@ -76,7 +76,7 @@ int main(int argc, char **argv) {
     final(x, y, c) = normalize(x, y, c);
 
     final.bound(x, 0, 1536).bound(y, 0, 2560).bound(c, 0, 3);
-    std::cout << "Finished function setup." << std::endl;
+    //std::cout << "Finished function setup." << std::endl;
 
     int sched;
     Target target = get_target_from_environment();
@@ -86,13 +86,13 @@ int main(int argc, char **argv) {
         if (argc == 4)
             sched = atoi(argv[3]);
         else
-            sched = 2;
+            sched = 3;
     }
 
     switch (sched) {
     case 0:
     {
-        std::cout << "Flat schedule." << std::endl;
+        //std::cout << "Flat schedule." << std::endl;
         for (int l = 0; l < levels; ++l) {
             downsampled[l].compute_root();
             interpolated[l].compute_root();
@@ -102,7 +102,7 @@ int main(int argc, char **argv) {
     }
     case 1:
     {
-        std::cout << "Flat schedule with vectorization." << std::endl;
+        //std::cout << "Flat schedule with vectorization." << std::endl;
         for (int l = 0; l < levels; ++l) {
             downsampled[l].compute_root().vectorize(x,4);
             interpolated[l].compute_root().vectorize(x,4);
@@ -113,7 +113,7 @@ int main(int argc, char **argv) {
     case 2:
     {
         Var xi, yi;
-        std::cout << "Flat schedule with parallelization + vectorization." << std::endl;
+        //std::cout << "Flat schedule with parallelization + vectorization." << std::endl;
         for (int l = 1; l < levels-1; ++l) {
             downsampled[l]
                 .compute_root()
@@ -141,7 +141,7 @@ int main(int argc, char **argv) {
     }
     case 3:
     {
-        std::cout << "Flat schedule with vectorization sometimes." << std::endl;
+        //std::cout << "Flat schedule with vectorization sometimes." << std::endl;
         for (int l = 0; l < levels; ++l) {
             if (l + 4 < levels) {
                 Var yo,yi;
@@ -216,8 +216,6 @@ int main(int argc, char **argv) {
         final.bound(c, 0, 3);
         break;
     }
-    default:
-        std::cout << "Auto-Schedule" << std::endl;
     }
 
     // JIT compile the pipeline eagerly, so we don't interfere with timing
@@ -225,13 +223,14 @@ int main(int argc, char **argv) {
 
     Image<float> in_png = load_image(argv[1]);
     Image<float> out(in_png.width(), in_png.height(), 3);
-    std::cout << in_png.width() << "," << in_png.height() << std::endl;
+    //std::cout << in_png.width() << "," << in_png.height() << std::endl;
     assert(in_png.channels() == 4);
     input.set(in_png);
 
-    std::cout << "Running... " << std::endl;
+    //std::cout << "Running... " << std::endl;
     double best = benchmark(20, 1, [&]() { final.realize(out); });
-    std::cout << " took " << best * 1e3 << " msec." << std::endl;
+    //std::cout << " took " << best * 1e3 << " msec." << std::endl;
+    std::cout << best * 1e3 << std::endl;
 
     //vector<Argument> args;
     //args.push_back(input);

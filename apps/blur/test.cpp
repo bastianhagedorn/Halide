@@ -198,10 +198,10 @@ int main(int argc, char **argv) {
     }
 
     Image<uint16_t> blurry = blur(input);
-    double slow_time = t;
+    //double slow_time = t;
 
     Image<uint16_t> speedy = blur_fast(input);
-    double fast_time = t;
+    //double fast_time = t;
 
     //Image<uint16_t> speedy2 = blur_fast2(input);
     //float fast_time2 = t;
@@ -210,7 +210,8 @@ int main(int argc, char **argv) {
     double halide_time = t;
 
     // fast_time2 is always slower than fast_time, so skip printing it
-    printf("times: %f %f %f\n", slow_time, fast_time, halide_time);
+    //printf("times: %f %f %f\n", slow_time, fast_time, halide_time);
+    printf("%g\n", halide_time * 1000);
 
     for (int y = 64; y < input.height() - 64; y++) {
         for (int x = 64; x < input.width() - 64; x++) {
