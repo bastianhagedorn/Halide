@@ -1,39 +1,33 @@
 include ../support/Makefile.inc
 
-all: test
-
-CXX=icpc -O3 -march=native -ansi-alias -Wall -openmp
-#CXX=g++ -O3 -march=native -Wall -openmp
+#CXX=icpc -O3 -march=native -ansi-alias -Wall -openmp
+CXX=g++ -O3 -march=native -Wall -fopenmp
 
 halide_blur: halide_blur.cpp
 	$(CXX) $(CXXFLAGS) halide_blur.cpp $(LIB_HALIDE) -o halide_blur -ldl -lpthread -lz $(LDFLAGS) -ltinfo
 
-halide_blur.o: halide_blur
-	./halide_blur
+halide_blur_ref: halide_blur
+	./halide_blur 0
 
-# g++ on OS X might actually be system clang without openmp
-CXX_VERSION=$(shell $(CXX) --version)
-ifeq (,$(findstring clang,$(CXX_VERSION)))
-OPENMP_FLAGS=-fopenmp
-else
-OPENMP_FLAGS=
-endif
+halide_blur_auto: halide_blur
+	./halide_blur -1
 
-# -O2 is faster than -O3 for this app (O3 unrolls too much)
-test: test.cpp halide_blur.o halide_gen_blur.cpp
-	$(CXX) $(CXXFLAGS) $(OPENMP_FLAGS) test.cpp halide_blur.o halide_gen_blur.cpp -o test -lpthread -ldl $(PNGFLAGS)
+test_ref: test.cpp halide_blur_ref
+	$(CXX) $(CXXFLAGS) test.cpp halide_blur.o -o test_ref -lpthread -ldl $(PNGFLAGS)
 
-bench: test
-	OMP_NUM_THREADS=1 HL_NUM_THREADS=1 ./test
-	OMP_NUM_THREADS=2 HL_NUM_THREADS=2 ./test
-	OMP_NUM_THREADS=4 HL_NUM_THREADS=4 ./test
-	OMP_NUM_THREADS=8 HL_NUM_THREADS=8 ./test
-	#HL_NUM_THREADS=1 numactl --physcpubind=0 ./test
-	#HL_NUM_THREADS=4 numactl --physcpubind=0-3 ./test
-	#HL_NUM_THREADS=8 numactl --physcpubind=0-7 ./test
-	#HL_NUM_THREADS=16 numactl --physcpubind=0-15 ./test
-	#HL_NUM_THREADS=32 numactl --physcpubind=0-31 ./test
-	#HL_NUM_THREADS=64 numactl --physcpubind=0-63 ./test
+test_auto: test.cpp halide_blur_auto
+	$(CXX) $(CXXFLAGS) test.cpp halide_blur.o -o test_auto -lpthread -ldl $(PNGFLAGS)
+
+bench_ref: test_ref
+	for t in 1 2 3 4 ; do \
+        OMP_NUM_THREADS=$$t HL_NUM_THREADS=$$t ./test_ref >> ref_perf.txt;\
+    done
+
+bench_auto: test_auto
+	for t in 1 2 3 4 ; do \
+        OMP_NUM_THREADS=$$t HL_NUM_THREADS=$$t ./test_auto >> auto_perf.txt;\
+    done
 
 clean:
-	rm -f test halide_blur.o halide_blur
+	rm -f test halide_blur halide_blur.o ref_perf.txt auto_perf.txt test_ref \
+    test_auto

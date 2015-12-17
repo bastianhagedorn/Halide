@@ -1793,10 +1793,10 @@ void disp_box(Box &b) {
 struct Partitioner {
 
     struct Option {
-        // Option is the cost when the prod_group is merged with the child_group
+        // Option is the cost when the prod_group is merged with the cons_group
         // and computed at the granularity of the tile given by tile_sizes
         string prod_group;
-        string child_group;
+        string cons_group;
         // Tile sizes of along dimensions of the output of the child group
         // A tile size of -1 indicates no tiling along the dimension
         vector<int> tile_sizes;
@@ -1888,7 +1888,7 @@ struct Partitioner {
     }
 
     void disp_option(Option &opt) {
-        std::cout << opt.prod_group << "->" << opt.child_group << std::endl;
+        std::cout << opt.prod_group << "->" << opt.cons_group << std::endl;
         std::cout << "[";
         for (unsigned int i = 0; i < opt.tile_sizes.size(); i++) {
             std::cout << opt.tile_sizes[i] << ",";
@@ -1897,7 +1897,7 @@ struct Partitioner {
         std::cout << "benefit:" << opt.benefit << std::endl;
     }
 
-    int choose_candidate(const vector< pair<string, string> > &cand_pairs);
+    Option choose_candidate(const vector< pair<string, string> > &cand_pairs);
     map<string, vector<Function> > overlap_tile();
     void evaluate_option(Option &opt);
 };
@@ -1907,7 +1907,7 @@ map<string, vector<Function> > Partitioner::overlap_tile() {
     // Partition the pipeline by iteratively merging groups until a fixpoint
     bool fixpoint = false;
     while(!fixpoint) {
-        string cand_group, child_group;
+        string cand_group, cons_group;
         fixpoint = true;
         vector< pair<string, string> > cand_pairs;
         // Find all the groups which have a single child
@@ -1923,18 +1923,18 @@ map<string, vector<Function> > Partitioner::overlap_tile() {
         }
 
         // Pick a pair of groups to merge. This is a tricky choice.
-        int cand_index = choose_candidate(cand_pairs);
+        Option best = choose_candidate(cand_pairs);
 
-        if (cand_index != -1) {
-            cand_group = cand_pairs[cand_index].first;
-            child_group = cand_pairs[cand_index].second;
+        if (best.benefit != -1) {
+            cand_group = best.prod_group;
+            cons_group = best.cons_group;
             fixpoint = false;
         }
 
         // Do the necessary book keeping required to perform the merge if
         // there is a merge candidate
         if (!fixpoint) {
-            merge_groups(cand_group, child_group);
+            merge_groups(cand_group, cons_group);
             //std::cout << "Megre candidate" << std::endl;
             //std::cout << cand_group << std::endl;
         }
@@ -1985,21 +1985,21 @@ void Partitioner::evaluate_option(Option &opt) {
     vector<string> prod_funcs;
     for (auto &f: groups[opt.prod_group])
         prod_funcs.push_back(f.name());
-    for (auto &f: groups[opt.child_group])
-        if (f.name() != opt.child_group)
+    for (auto &f: groups[opt.cons_group])
+        if (f.name() != opt.cons_group)
             prod_funcs.push_back(f.name());
 
     vector<pair<int, int> > bounds;
     vector<bool> eval;
 
-    const vector<string> &args = analy.env[opt.child_group].args();
+    const vector<string> &args = analy.env[opt.cons_group].args();
     assert(opt.tile_sizes.size() == args.size());
 
     // TODO Cosider precomputing the dimension esitmates for all the functions
 
     vector<int> dim_estimates;
     for (unsigned int i = 0; i < args.size(); i++) {
-        int estimate = get_extent_estimate(analy.env[opt.child_group],
+        int estimate = get_extent_estimate(analy.env[opt.cons_group],
                                            pipeline_bounds, i);
         dim_estimates.push_back(estimate);
         if (estimate == -1) {
@@ -2042,8 +2042,8 @@ void Partitioner::evaluate_option(Option &opt) {
         return;
     }
 
-    conc_reg = analy.concrete_dep_regions(opt.child_group, eval, bounds);
-    conc_overlaps = analy.concrete_overlap_regions(opt.child_group, eval, bounds);
+    conc_reg = analy.concrete_dep_regions(opt.cons_group, eval, bounds);
+    conc_overlaps = analy.concrete_overlap_regions(opt.cons_group, eval, bounds);
 
     // Cost model
 
@@ -2095,7 +2095,7 @@ void Partitioner::evaluate_option(Option &opt) {
     int redundant_work = 0;
     for (unsigned int i = 0; i < args.size(); i++) {
         if (opt.tile_sizes[i] != -1) {
-            int dir_red_work = overlap_cost(opt.child_group, prods,
+            int dir_red_work = overlap_cost(opt.cons_group, prods,
                                             conc_overlaps, func_cost, i);
             if (dir_red_work != -1)
                 redundant_work += dir_red_work;
@@ -2120,10 +2120,9 @@ void Partitioner::evaluate_option(Option &opt) {
         opt.benefit *= estimate_tiles;
     }
     std::cout << "Benefit:" << opt.benefit << std::endl;
-
 }
 
-int Partitioner::choose_candidate(
+Partitioner::Option Partitioner::choose_candidate(
                     const vector< pair<string, string> > &cand_pairs) {
 
     // The choose candidate operates by considering many posssible fusion
@@ -2177,6 +2176,8 @@ int Partitioner::choose_candidate(
 
     vector<Option> options;
     vector<int> size_variants = {256, 128, 64, 32, 16};
+    Option best_opt;
+
     for (auto &p: cand_pairs) {
 
         std::cout << "(" << p.first << "," << p.second << ")" << std::endl;
@@ -2199,23 +2200,28 @@ int Partitioner::choose_candidate(
         // Get the output function of the child group
         Function output = analy.env[p.second];
         const vector<string> &args = output.args();
+
         // From the outer to the inner most argument
         for (int i = (int)args.size() - 1; i >= 0; i --) {
             for (auto s: size_variants) {
                 Option opt;
                 opt.prod_group = p.first;
-                opt.child_group = p.second;
+                opt.cons_group = p.second;
                 opt.benefit = -1;
+
                 for (int j = 0; j < i; j++)
                     opt.tile_sizes.push_back(-1);
+
                 for (unsigned int j = i; j < args.size(); j++)
                     opt.tile_sizes.push_back(s);
-                evaluate_option(opt);
-            }
 
+                evaluate_option(opt);
+                if (best_opt.benefit < opt.benefit)
+                    best_opt = opt;
+            }
         }
     }
-    return -1;
+    return best_opt;
 }
 
 void disp_function_value_bounds(const FuncValueBounds &func_val_bounds) {
