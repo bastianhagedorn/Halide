@@ -25,12 +25,14 @@ out.png: process_ref
 	./process_ref ../images/rgb.png 8 1 1 10 out.png
 
 bench_ref: process_ref
+	rm -rf ref_perf.txt
 	for t in 1 2 4 8 ; do \
         OMP_NUM_THREADS=$$t HL_NUM_THREADS=$$t \
 		./process_ref ../images/rgb.png 8 1 1 10 out.png >> ref_perf.txt;\
     done
 
 bench_auto: process_auto
+	rm -rf auto_perf.txt
 	for t in 1 2 4 8 ; do \
         OMP_NUM_THREADS=$$t HL_NUM_THREADS=$$t \
 		./process_auto ../images/rgb.png 8 1 1 10 out.png >> auto_perf.txt;\

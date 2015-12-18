@@ -13,12 +13,14 @@ out.png: interpolate
 	./interpolate ../images/rgba.png out.png
 
 bench_ref: interpolate
+	rm -rf ref_perf.txt
 	for t in 1 2 4 8 ; do \
         OMP_NUM_THREADS=$$t HL_NUM_THREADS=$$t \
 		./interpolate ../images/rgba.png out.png 2>> ref_perf.txt;\
     done
 
 bench_auto: interpolate
+	rm -rf auto_perf.txt
 	for t in 1 2 4 8 ; do \
         OMP_NUM_THREADS=$$t HL_NUM_THREADS=$$t \
 		./interpolate ../images/rgba.png out.png -1 2>> auto_perf.txt;\
