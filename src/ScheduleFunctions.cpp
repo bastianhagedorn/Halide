@@ -1800,9 +1800,18 @@ struct Partitioner {
         // Tile sizes of along dimensions of the output of the child group
         // A tile size of -1 indicates no tiling along the dimension
         vector<int> tile_sizes;
+        // The number of outer dimensions that need to be parallelized for
+        // beneficial parallelism
+        int num_par_dims;
         // A score indicating the benefit of the option
         float benefit;
     };
+
+    struct GroupSched {
+        vector<int> tile_sizes;
+        int num_par_dims;
+    };
+
 
     struct MachineParams {
         int parallelism;
@@ -1817,6 +1826,7 @@ struct Partitioner {
     map<string, vector<pair<int, int> > > &func_cost;
 
     map<string, vector<Function> > groups;
+    map<string, GroupSched> group_sched;
     map<string, set<string> > children;
 
     MachineParams arch_params;
@@ -1850,7 +1860,21 @@ struct Partitioner {
             merge_groups(in.first, dest);
         }
 
-        // Initialize
+        for (auto &g: groups) {
+            Function output = analy.env[g.first];
+            const vector<string> &args = output.args();
+
+            GroupSched sched;
+            sched.num_par_dims = 1;
+
+            // From the outer to the inner most argument
+            for (int i = (int)args.size() - 1; i >= 0; i --)
+                sched.tile_sizes.push_back(-1);
+
+            group_sched[g.first] = sched;
+        }
+
+        // Initialize machine params
         arch_params.parallelism = 4;
         arch_params.vec_len = 8;
         arch_params.balance = 5;
@@ -1860,8 +1884,8 @@ struct Partitioner {
         // L3 = 8192K
     }
 
-    void merge_groups(string cand_group, string child_group)
-    {
+    void merge_groups(string cand_group, string child_group) {
+
         assert(groups.find(child_group) != groups.end());
         vector<Function> cand_funcs = groups[cand_group];
 
@@ -1898,16 +1922,14 @@ struct Partitioner {
     }
 
     Option choose_candidate(const vector< pair<string, string> > &cand_pairs);
-    map<string, vector<Function> > overlap_tile();
+    void overlap_tile();
     void evaluate_option(Option &opt);
 };
 
-map<string, vector<Function> > Partitioner::overlap_tile() {
-
+void Partitioner::overlap_tile() {
     // Partition the pipeline by iteratively merging groups until a fixpoint
     bool fixpoint = false;
     while(!fixpoint) {
-        string cand_group, cons_group;
         fixpoint = true;
         vector< pair<string, string> > cand_pairs;
         // Find all the groups which have a single child
@@ -1926,21 +1948,16 @@ map<string, vector<Function> > Partitioner::overlap_tile() {
         Option best = choose_candidate(cand_pairs);
 
         if (best.benefit != -1) {
-            cand_group = best.prod_group;
-            cons_group = best.cons_group;
-            fixpoint = false;
-        }
-
-        // Do the necessary book keeping required to perform the merge if
-        // there is a merge candidate
-        if (!fixpoint) {
-            merge_groups(cand_group, cons_group);
+            merge_groups(best.prod_group, best.cons_group);
             //std::cout << "Megre candidate" << std::endl;
             //std::cout << cand_group << std::endl;
+            GroupSched sched;
+            sched.tile_sizes = best.tile_sizes;
+            sched.num_par_dims = best.num_par_dims;
+            group_sched[best.cons_group] = sched;
+            fixpoint = false;
         }
     }
-
-    return groups;
 }
 
 int get_extent_estimate(Function &f, map<string, Box> &bounds, int dim) {
@@ -2040,6 +2057,9 @@ void Partitioner::evaluate_option(Option &opt) {
         // Option did not satisfy the parallelism constraint
         opt.benefit = -1;
         return;
+    } else {
+        // For now just parallelize the outermost
+        opt.num_par_dims = 1;
     }
 
     conc_reg = analy.concrete_dep_regions(opt.cons_group, eval, bounds);
@@ -2270,7 +2290,7 @@ map<string, string> simple_inline(map<string, vector<const Call*>> &all_calls,
             }
         }
         if (consumers[fcalls.first].size() == 1 &&
-                all_one_to_one && num_calls == 1) {
+            all_one_to_one && num_calls == 1) {
             inlines[fcalls.first] = consumers[fcalls.first][0];
             env[fcalls.first].schedule().store_level().var = "";
             env[fcalls.first].schedule().compute_level().var = "";
@@ -2509,9 +2529,7 @@ void schedule_advisor(const vector<Function> &outputs,
     	//std::cout << std::endl;
     }
 
-    // Make obvious inline decisions early. Partitioning downstream may end up with
-    // a function that is inlined as the representative of the group. This will
-    // result in a conflicting schedule.
+    // Make obvious inline decisions early.
     map<string, string> inlines;
     if (auto_inline)
         inlines = simple_inline(all_calls, consumers, env);
@@ -2524,8 +2542,6 @@ void schedule_advisor(const vector<Function> &outputs,
     bool overlap_tile = true;
     auto_vec = true;
     auto_par = true;
-    unsigned int tile_dims = 2;
-    int tile_size = 128;
 
     if (overlap_tile) {
 
@@ -2592,30 +2608,31 @@ void schedule_advisor(const vector<Function> &outputs,
         //disp_regions(pipeline_bounds);
 
         // Grouping
-        map<string, vector<Function> > groups;
-
         Partitioner part(pipeline_bounds, inlines, analy, func_cost);
-        groups = part.overlap_tile();
+        part.overlap_tile();
 
         //disp_grouping(groups);
 
         // Schedule generation based on grouping
-        for (auto& g: groups) {
+        for (auto& g: part.groups) {
             // Create a tiled traversal for the output of the group
             Function &g_out = env[g.first];
-            // Choose which dimensions should be tiled. For now tile all
-            // dimensions
+
             assert(inlines.find(g_out.name()) == inlines.end());
+            // The dimension names that will be tiled
             vector<string> vars;
             vector<Dim> &dims = g_out.schedule().dims();
+
+            Partitioner::GroupSched sched = part.group_sched[g.first];
+
             if (dims.size() <= 0 || !g_out.is_pure())
                 continue;
+
+            map<string, int> tile_sizes;
             for(int i = 0; i < (int)dims.size() - 1; i++) {
-                // Restricting tiling to 2D
-                if (i < (int)tile_dims) {
-                    // Check if dimension is large enough to tile
-                    if (check_dim_size(g_out, i, tile_size, pipeline_bounds))
-                        vars.push_back(dims[i].var);
+                if (sched.tile_sizes[i] != -1) {
+                    vars.push_back(dims[i].var);
+                    tile_sizes[dims[i].var] = sched.tile_sizes[i];
                 }
             }
 
@@ -2655,19 +2672,7 @@ void schedule_advisor(const vector<Function> &outputs,
                 zero_reuse_var = dims[dims.size() - 1].var;
             */
 
-            // TODO use the bounds
-            /*
-            vector<Bound> &bounds = g_out.schedule().bounds();
-            for(unsigned int i = 0; i < bounds.size(); i++) {
-                std::cout << g_out.name() << " " << bounds[i].var << "("
-                          << bounds[i].min  << "," << bounds[i].extent << ")"
-                          << std::endl;
-            }
-            */
-
-            //int inner_tile_dim = 0;
             int num_tile_dims = 0;
-            //string inner_tile_var = dims[dims.size() - 1].var;
             for(auto &v: vars) {
                 int index = -1;
                 for (int i = 0; i < (int)dims.size() - 1; i++)
@@ -2676,38 +2681,26 @@ void schedule_advisor(const vector<Function> &outputs,
                         break;
                     }
                 assert(index!=-1);
-                split_dim(g_out, index, tile_size, false);
-                /*
-                if (inner_tile_dim < (int)dims.size() - 1) {
-                    swap_dim(g_out, index, inner_tile_dim);
-                    inner_tile_dim++;
-                }*/
-                move_dim_to_outermost(g_out, index + 1);
-                /*
-                move_dim_to_var(g_out, index + 1, zero_reuse_var);
-                if (num_tile_dims == 0)
-                    for (int i = 0; i < (int)dims.size(); i++)
-                        if (dims[i].var == zero_reuse_var) {
-                            inner_tile_var = dims[i - 1].var;
-                            break;
-                        }
-                */
+                if (tile_sizes[v] > 1) {
+                    split_dim(g_out, index, tile_sizes[v], false);
+                    move_dim_to_outermost(g_out, index + 1);
+                } else if (tile_sizes[v] == 1) {
+                    move_dim_to_outermost(g_out, index);
+                }
                 num_tile_dims++;
             }
+
             // int num_par_dims = std::min(2, (int)dims.size() - 1);
             int num_fused_dims = 0;
             if (g_out.is_pure()) {
-                // Fuse all the tile dims?
                 int outer_dim = dims.size() - 2;
-                //for (int i = 0; i < num_par_dims - 1; i++) {
-                /*
-                for (int i = 0; i < num_tile_dims - 1; i++) {
+                for (int i = 0; i < sched.num_par_dims - 1; i++) {
                     if (outer_dim > 0) {
                         fuse_dim(g_out, outer_dim, outer_dim - 1);
                         outer_dim = dims.size() - 2;
                         num_fused_dims++;
                     }
-                }*/
+                }
                 vector<int> levels;
                 levels.push_back(outer_dim);
                 if (auto_par)
@@ -2715,18 +2708,11 @@ void schedule_advisor(const vector<Function> &outputs,
                 if (auto_vec) {
                     if (check_dim_size(g_out, 0, vec_len, pipeline_bounds))
                         simple_vectorize(g_out, 0, vec_len);
-                    //inner_tile_dim++;
                 }
             }
+
             for (auto &m: g.second) {
                 int outer_dim = dims.size() - 2;
-                /* int inner_tile_dim = dims.size() - 1;
-                for (unsigned int i = 0; i < dims.size(); i++)
-                    if (dims[i].var == inner_tile_var) {
-                        inner_tile_dim = i;
-                        break;
-                    }
-                */
                 if (m.name() != g_out.name() &&
                    inlines.find(m.name()) == inlines.end() && num_tile_dims > 0) {
                     //int compute_level = inner_tile_dim;
@@ -2743,47 +2729,8 @@ void schedule_advisor(const vector<Function> &outputs,
                 }
             }
         }
-
-    } else {
-
-    // TODO Integrating prior analysis and code generation with the grouping
-    // algorithm to do inlining, vectorization and parallelism
-
-    // TODO Method for reordering and unrolling based on reuse across iterations
-
-        if (auto_par || auto_vec) {
-            // Parallelize and vectorize
-            // Vectorization can be quite tricky it is hard to determine when
-            // exactly it will benefit. The simple strategy is to check if the
-            // arguments to the loads have the proper stride.
-            for (auto& kv:env) {
-                // Skipping all the functions for which the choice is inline
-                if (inlines.find(kv.first) != inlines.end())
-                    continue;
-                // If a function is pure all the dimensions are parallel
-                if (kv.second.is_pure()) {
-                    // Parallelize the outer most dimension
-                    // Two options when the number of iterations are small
-                    // -- Collapse the two outer parallel loops
-                    // -- If there is only a single dimension just vectorize
-                    int outer_dim = kv.second.dimensions() - 1;
-                    vector<int> levels;
-                    levels.push_back(outer_dim);
-                    if (auto_par)
-                        parallelize_dim(kv.second, levels);
-                    // The vector width also depends on the type of the operation
-                    // and on the machine characteristics. For now just doing a
-                    // blind 8 width vectorization.
-                    if (kv.second.dimensions() > 1 && auto_vec)
-                        if (check_dim_size(kv.second, 0, vec_len, pipeline_bounds))
-                            simple_vectorize(kv.second, 0, vec_len);
-                } else {
-                    // Parallelism in reductions can be tricky
-                    std::cout << std::endl;
-                }
-            }
-        }
     }
+    // TODO Method for reordering and unrolling based on reuse across iterations
 
     if (root_default || auto_vec || auto_par || auto_inline)
         disp_schedule_and_storage_mapping(env);
