@@ -1812,7 +1812,6 @@ struct Partitioner {
         int num_par_dims;
     };
 
-
     struct MachineParams {
         int parallelism;
         int vec_len;
@@ -1828,6 +1827,8 @@ struct Partitioner {
     map<string, vector<Function> > groups;
     map<string, GroupSched> group_sched;
     map<string, set<string> > children;
+
+    map<pair<string, string>, Option> option_cache;
 
     MachineParams arch_params;
 
@@ -2196,7 +2197,7 @@ Partitioner::Option Partitioner::choose_candidate(
     // intensity of the child group in the pair.
 
     vector<Option> options;
-    vector<int> size_variants = {256, 128, 64, 32, 16};
+    vector<int> size_variants = {256, 128, 64, 32, 16, 8, 4};
     Option best_opt;
     best_opt.benefit = -1;
 
@@ -2217,7 +2218,16 @@ Partitioner::Option Partitioner::choose_candidate(
         std::cout << "Expr:" << analy.env[p.second].values()[0] << std::endl;
         std::cout << std::endl;
 
-        // For each of the pairs create an option and evaluate
+        // Check if the pair has been evaluated before
+        if (option_cache.find(p) != option_cache.end()) {
+            Option opt = option_cache[p];
+            if (best_opt.benefit < opt.benefit)
+                best_opt = opt;
+            continue;
+        }
+
+        // If the pair has not been evaluated before create all the options
+        // and evaluate them
 
         // Get the output function of the child group
         Function output = analy.env[p.second];
