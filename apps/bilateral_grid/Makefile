@@ -36,9 +36,9 @@ bench_ref: filter_ref
 bench_auto: filter_auto
 	for t in 1 2 4 8 ; do \
         OMP_NUM_THREADS=$$t HL_NUM_THREADS=$$t ./filter_auto ../images/gray.png \
-												out.png 0.1 10 >> ref_auto.txt;\
+												out.png 0.1 10 >> auto_perf.txt;\
     done
 
 clean:
 	rm -f bilateral_grid bilateral_grid.mp4 bilateral_grid.o bilateral_grid.h\
-		filter_ref filter_auto ref_perf.txt ref_auto.txt out.png
+		filter_ref filter_auto ref_perf.txt auto_perf.txt out.png

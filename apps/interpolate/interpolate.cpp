@@ -233,7 +233,7 @@ int main(int argc, char **argv) {
     //std::cout << "Running... " << std::endl;
     double best = benchmark(20, 1, [&]() { final.realize(out); });
     //std::cout << " took " << best * 1e3 << " msec." << std::endl;
-    std::cout << best * 1e3 << std::endl;
+    std::cerr << best * 1e3 << std::endl;
 
     //vector<Argument> args;
     //args.push_back(input);

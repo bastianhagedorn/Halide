@@ -1885,7 +1885,7 @@ struct Partitioner {
     }
 
     void merge_groups(string cand_group, string child_group) {
-
+        std::cout << child_group << std::endl;
         assert(groups.find(child_group) != groups.end());
         vector<Function> cand_funcs = groups[cand_group];
 
@@ -2140,6 +2140,7 @@ void Partitioner::evaluate_option(Option &opt) {
         opt.benefit *= estimate_tiles;
     }
     std::cout << "Benefit:" << opt.benefit << std::endl;
+    opt.benefit = -1;
 }
 
 Partitioner::Option Partitioner::choose_candidate(
@@ -2197,6 +2198,7 @@ Partitioner::Option Partitioner::choose_candidate(
     vector<Option> options;
     vector<int> size_variants = {256, 128, 64, 32, 16};
     Option best_opt;
+    best_opt.benefit = -1;
 
     for (auto &p: cand_pairs) {
 
@@ -2538,7 +2540,6 @@ void schedule_advisor(const vector<Function> &outputs,
     disp_inlines(inlines);
     std::cout << std::endl;
 
-    int vec_len = 8;
     bool overlap_tile = true;
     auto_vec = true;
     auto_par = true;
@@ -2611,6 +2612,7 @@ void schedule_advisor(const vector<Function> &outputs,
         Partitioner part(pipeline_bounds, inlines, analy, func_cost);
         part.overlap_tile();
 
+        int vec_len = part.arch_params.vec_len;
         //disp_grouping(groups);
 
         // Schedule generation based on grouping

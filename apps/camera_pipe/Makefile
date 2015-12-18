@@ -52,9 +52,9 @@ bench_ref: process_ref
 bench_auto: process_auto
 	for t in 1 2 4 8 ; do \
         OMP_NUM_THREADS=$$t HL_NUM_THREADS=$$t \
-		./process_auto ../images/bayer_raw.png 3700 2.0 50 5 out.png >> ref_auto.txt;\
+		./process_auto ../images/bayer_raw.png 3700 2.0 50 5 out.png >> auto_perf.txt;\
     done
 
 clean:
 	rm -f out.png process_ref process_auto curved.o camera_pipe fcam/*.o \
-		ref_perf.txt ref_auto.txt curved.s curved.h
+		ref_perf.txt auto_perf.txt curved.s curved.h

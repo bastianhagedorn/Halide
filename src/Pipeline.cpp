@@ -458,8 +458,8 @@ vector<Buffer> Pipeline::validate_arguments(const vector<Argument> &args) {
 
 Module Pipeline::compile_to_module(const vector<Argument> &args,
                                    const string &fn_name,
-                                   const Target &target, bool no_vec,
-                                   bool auto_schedule) {
+                                   const Target &target, bool auto_schedule,
+                                   bool no_vec) {
     user_assert(defined()) << "Can't compile undefined Pipeline\n";
     string new_fn_name(fn_name);
     if (new_fn_name.empty()) {

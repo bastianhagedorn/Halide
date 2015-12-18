@@ -33,7 +33,7 @@ bench_ref: process_ref
 bench_auto: process_auto
 	for t in 1 2 4 8 ; do \
         OMP_NUM_THREADS=$$t HL_NUM_THREADS=$$t \
-		./process_auto ../images/rgb.png 8 1 1 10 out.png >> ref_auto.txt;\
+		./process_auto ../images/rgb.png 8 1 1 10 out.png >> auto_perf.txt;\
     done
 
 # Build rules for generating a visualization of the pipeline using HalideTraceViz
@@ -51,4 +51,4 @@ local_laplacian.mp4: process_viz
 clean:
 	rm -f out.png process_ref process_auto local_laplacian.o process_viz \
 		local_laplacian_viz.o local_laplacian_gen \
-		local_laplacian.mp4 ref_perf.txt ref_auto.txt local_laplacian.h
+		local_laplacian.mp4 ref_perf.txt auto_perf.txt local_laplacian.h

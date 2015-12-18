@@ -29,5 +29,5 @@ bench_auto: test_auto
     done
 
 clean:
-	rm -f test halide_blur halide_blur.o ref_perf.txt auto_perf.txt test_ref \
+	rm -f test halide_blur halide_blur.h halide_blur.o ref_perf.txt auto_perf.txt test_ref \
     test_auto
