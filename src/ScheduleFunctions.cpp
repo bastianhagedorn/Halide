@@ -1876,23 +1876,24 @@ struct Partitioner {
         }
 
         // Initialize machine params
-        arch_params.parallelism = 4;
+        arch_params.parallelism = 8;
         arch_params.vec_len = 8;
-        arch_params.balance = 5;
-        arch_params.fast_mem_size = 32 * 1024;
+        arch_params.balance = 1;
+        arch_params.fast_mem_size = 32 * 1024 * 8 * 4;
         // L1 = 32K
         // L2 = 256K
         // L3 = 8192K
     }
 
     void merge_groups(string cand_group, string child_group) {
-        std::cout << child_group << std::endl;
+        std::cout << child_group << "," << cand_group << std::endl;
         assert(groups.find(child_group) != groups.end());
         vector<Function> cand_funcs = groups[cand_group];
 
         groups.erase(cand_group);
         groups[child_group].insert(groups[child_group].end(),
                 cand_funcs.begin(), cand_funcs.end());
+
         // Fix the children mapping
         children.erase(cand_group);
         for (auto &f: children) {
@@ -1902,6 +1903,16 @@ struct Partitioner {
                 children.insert(child_group);
             }
         }
+
+        // Invalidate the option cache
+        vector<pair<string, string> > invalid_keys;
+        for (auto& c: option_cache) {
+            if (c.first.second == child_group)
+                invalid_keys.push_back(c.first);
+        }
+
+        for (auto& key: invalid_keys)
+            option_cache.erase(key);
     }
 
     void disp_grouping() {
@@ -1944,7 +1955,10 @@ void Partitioner::overlap_tile() {
                 }
             }
         }
-
+        for (auto &p: cand_pairs) {
+            std::cout << "[" << p.first << "," << p.second << "]";
+        }
+        std::cout << std::endl;
         // Pick a pair of groups to merge. This is a tricky choice.
         Option best = choose_candidate(cand_pairs);
 
@@ -2053,14 +2067,26 @@ void Partitioner::evaluate_option(Option &opt) {
                                         estimate_tiles;
     }
 
-    std::cout << "num tiles:" << estimate_tiles << std::endl;
+    //std::cout << "num tiles:" << estimate_tiles << std::endl;
     if (arch_params.parallelism > estimate_tiles) {
         // Option did not satisfy the parallelism constraint
         opt.benefit = -1;
         return;
     } else {
-        // For now just parallelize the outermost
-        opt.num_par_dims = 1;
+        // Check the parallelism given by each level and mark the right
+        // number of loops as parallel
+        int curr_par = 1;
+        opt.num_par_dims = 0;
+        for (int i = (int)args.size() - 1; i >= 0; i--) {
+            if (opt.tile_sizes[i] != -1) {
+                curr_par = std::ceil((float)dim_estimates[i]/opt.tile_sizes[i]) *
+                           curr_par;
+
+                opt.num_par_dims++;
+                if (curr_par > arch_params.parallelism)
+                    break;
+            }
+        }
     }
 
     conc_reg = analy.concrete_dep_regions(opt.cons_group, eval, bounds);
@@ -2100,8 +2126,13 @@ void Partitioner::evaluate_option(Option &opt) {
 
     // disp_regions(conc_reg);
     map<string, Box> prod_reg;
-    for (auto &f: prod_funcs)
-        prod_reg[f] = conc_reg[f];
+    map<string, Box> prod_comp;
+    // Do not count inlines while accounting for intermediate storage
+    for (auto &f: prod_funcs) {
+        if (inlines.find(f) == inlines.end())
+            prod_reg[f] = conc_reg[f];
+        prod_comp[f] = conc_reg[f];
+    }
 
     int inter_s = region_size(prod_reg, analy.env);
     std::cout << "intermediate size:" << inter_s << std::endl;
@@ -2123,7 +2154,7 @@ void Partitioner::evaluate_option(Option &opt) {
         }
     }
 
-    int total_work = region_cost(prod_reg, func_cost);
+    int total_work = region_cost(prod_comp, func_cost);
     float ai = (float)total_work/inter_s;
     std::cout << "(Redundant work)/(Total work):" <<
                             (float)redundant_work/total_work << std::endl;
@@ -2140,8 +2171,8 @@ void Partitioner::evaluate_option(Option &opt) {
         opt.benefit = (hit/ai) * arch_params.balance - redundant_work;
         opt.benefit *= estimate_tiles;
     }
+
     std::cout << "Benefit:" << opt.benefit << std::endl;
-    opt.benefit = -1;
 }
 
 Partitioner::Option Partitioner::choose_candidate(
@@ -2197,32 +2228,19 @@ Partitioner::Option Partitioner::choose_candidate(
     // intensity of the child group in the pair.
 
     vector<Option> options;
-    vector<int> size_variants = {256, 128, 64, 32, 16, 8, 4};
+    vector<int> size_variants = {256, 128, 64, 32, 16, 8};
     Option best_opt;
     best_opt.benefit = -1;
 
     for (auto &p: cand_pairs) {
 
-        std::cout << "(" << p.first << "," << p.second << ")" << std::endl;
-        if (pipeline_bounds.find(p.second) != pipeline_bounds.end()) {
-            std::cout << "Child size:" << std::endl;
-            Box &b = pipeline_bounds[p.second];
-            std::cout << p.second;
-            disp_box(b);
-            std::cout << std::endl;
-        }
-
-        std::cout << "Child function characteristics:" << std::endl;
-        std::cout << "Loads:" << func_cost[p.second][0].second <<
-                     " Ops:" << func_cost[p.second][0].first  << std::endl;
-        std::cout << "Expr:" << analy.env[p.second].values()[0] << std::endl;
-        std::cout << std::endl;
-
+        Option cand_best_opt;
         // Check if the pair has been evaluated before
         if (option_cache.find(p) != option_cache.end()) {
-            Option opt = option_cache[p];
-            if (best_opt.benefit < opt.benefit)
-                best_opt = opt;
+            //std::cout << "Hit:" << p.first << "," << p.second << std::endl;
+            cand_best_opt = option_cache[p];
+            if (best_opt.benefit < cand_best_opt.benefit)
+                best_opt = cand_best_opt;
             continue;
         }
 
@@ -2233,6 +2251,7 @@ Partitioner::Option Partitioner::choose_candidate(
         Function output = analy.env[p.second];
         const vector<string> &args = output.args();
 
+        cand_best_opt.benefit = -1;
         // From the outer to the inner most argument
         for (int i = (int)args.size() - 1; i >= 0; i --) {
             for (auto s: size_variants) {
@@ -2248,10 +2267,15 @@ Partitioner::Option Partitioner::choose_candidate(
                     opt.tile_sizes.push_back(s);
 
                 evaluate_option(opt);
-                if (best_opt.benefit < opt.benefit)
-                    best_opt = opt;
+                if (cand_best_opt.benefit < opt.benefit)
+                    cand_best_opt = opt;
             }
         }
+
+        // Cache the result of the evaluation for the pair
+        option_cache[p] = cand_best_opt;
+        if (best_opt.benefit < cand_best_opt.benefit)
+            best_opt = cand_best_opt;
     }
     return best_opt;
 }
@@ -2411,7 +2435,7 @@ void vectorize_dim(Function &func, int dim, int vec_width) {
 }
 
 bool check_dim_size(Function &func, int dim, int min_size,
-        map<string, Box> &pipeline_bounds) {
+                    map<string, Box> &pipeline_bounds) {
     if (pipeline_bounds.find(func.name()) == pipeline_bounds.end()) {
         // Optimistic
         return true;
@@ -2702,7 +2726,9 @@ void schedule_advisor(const vector<Function> &outputs,
                 num_tile_dims++;
             }
 
-            // int num_par_dims = std::min(2, (int)dims.size() - 1);
+            assert(sched.num_par_dims == 1 ||
+                    sched.num_par_dims <= num_tile_dims);
+
             int num_fused_dims = 0;
             if (g_out.is_pure()) {
                 int outer_dim = dims.size() - 2;
