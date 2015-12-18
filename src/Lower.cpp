@@ -61,7 +61,8 @@ using std::pair;
 using std::make_pair;
 
 Stmt lower(const vector<Function> &outputs, const string &pipeline_name,
-           const Target &t, const vector<IRMutator *> &custom_passes, bool no_vec) {
+           const Target &t, const vector<IRMutator *> &custom_passes,
+           bool auto_schedule, bool no_vec) {
 
     // Compute an environment
     map<string, Function> env;
@@ -77,16 +78,18 @@ Stmt lower(const vector<Function> &outputs, const string &pipeline_name,
     // function. Used in later bounds inference passes.
     debug(1) << "Computing bounds of each function's value\n";
     FuncValueBounds func_bounds = compute_function_value_bounds(order, env);
-/*
-    bool root_default = true;
-    bool auto_inline = true;
-    bool auto_par = true;
-    bool auto_vec = true;
 
-    schedule_advisor(outputs, order, env, func_bounds, root_default,
-    				 auto_inline, auto_par, auto_vec);
-    std::cout << print_loop_nest(outputs) << std::endl;
-*/
+    if (auto_schedule) {
+        bool root_default = true;
+        bool auto_inline = true;
+        bool auto_par = true;
+        bool auto_vec = true;
+
+        schedule_advisor(outputs, order, env, func_bounds, root_default,
+                         auto_inline, auto_par, auto_vec);
+        std::cout << print_loop_nest(outputs) << std::endl;
+    }
+
     bool any_memoized = false;
 
     debug(1) << "Creating initial loop nests...\n";

@@ -189,9 +189,7 @@ Func demosaic(Func deinterleaved) {
         output.compute_at(processed, tx).unroll(x, 2).unroll(y, 2)
             .reorder(c, x, y).bound(c, 0, 3).unroll(c);
 
-    } else if(schedule == -1) {
-        // Do nothing for now
-    } else {
+    } else if(schedule != -1) {
         // Basic naive schedule
         g_r.compute_root();
         g_b.compute_root();
@@ -288,9 +286,7 @@ Func process(Func raw, Type result_type,
         corrected.compute_at(processed, tx);
         processed.tile(tx, ty, xi, yi, 128, 128).reorder(xi, yi, c, tx, ty);
         processed.parallel(ty);
-    } else if (schedule == -1) {
-        // Do nothing for now
-    } else {
+    } else if (schedule != -1) {
         denoised.compute_root();
         deinterleaved.compute_root();
         corrected.compute_root();
@@ -338,7 +334,11 @@ int main(int argc, char **argv) {
     //printf("%s\n", s.c_str());
 
     std::vector<Argument> args = {color_temp, gamma, contrast, input, matrix_3200, matrix_7000};
-    processed.compile_to_file("curved", args);
+    Target target = get_target_from_environment();
+    if (schedule == -1)
+        processed.compile_to_file("curved", args, target, true);
+    else
+        processed.compile_to_file("curved", args);
     //processed.compile_to_assembly("curved.s", args);
     //processed.compile_to_c("cam_c.cpp", args, "camc");
     //processed.compile_to_header("cam_c.h", args, "camc");

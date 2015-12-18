@@ -515,8 +515,10 @@ public:
      * arguments. Also names the C function to match the first
      * argument.
      */
-    EXPORT void compile_to_file(const std::string &filename_prefix, const std::vector<Argument> &args,
-                                const Target &target = get_target_from_environment());
+    EXPORT void compile_to_file(const std::string &filename_prefix,
+                                const std::vector<Argument> &args,
+                                const Target &target = get_target_from_environment(),
+                                bool auto_schedule = false);
 
     /** Store an internal representation of lowered code as a self
      * contained Module suitable for further compilation. */
@@ -540,7 +542,8 @@ public:
      * pointer to the compiled pipeline. Default is to use the Target
      * returned from Halide::get_jit_target_from_environment()
      */
-    EXPORT void *compile_jit(const Target &target = get_jit_target_from_environment());
+    EXPORT void *compile_jit(const Target &target = get_jit_target_from_environment(),
+                             bool auto_schedule = false);
 
     /** Set the error handler function that be called in the case of
      * runtime errors during halide pipelines. If you are compiling

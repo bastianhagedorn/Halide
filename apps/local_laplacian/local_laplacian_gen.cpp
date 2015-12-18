@@ -159,11 +159,14 @@ int main(int argc, char **argv) {
             gPyramid[j].compute_root().parallel(k);
             outGPyramid[j].compute_root();
         }
-    } else if (schedule == -1) {
-        // Do nothing for now
     }
 
-    output.compile_to_file("local_laplacian", {levels, alpha, beta, input}, target);
+    if (schedule == -1)
+        output.compile_to_file("local_laplacian", {levels, alpha, beta, input},
+                                target, true);
+    else
+        output.compile_to_file("local_laplacian", {levels, alpha, beta, input},
+                                target);
     //output.compile_to_c("local_laplacian_c.cpp", {levels, alpha, beta, input}, "llc", target);
     //output.compile_to_header("local_laplacian_c.h", {levels, alpha, beta, input}, "llc", target);
     return 0;

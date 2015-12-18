@@ -1637,8 +1637,8 @@ void Func::print_loop_nest() {
 
 void Func::compile_to_file(const string &filename_prefix,
                            const vector<Argument> &args,
-                           const Target &target) {
-    pipeline().compile_to_file(filename_prefix, args, target);
+                           const Target &target, bool auto_schedule) {
+    pipeline().compile_to_file(filename_prefix, args, target, auto_schedule);
 }
 
 void Func::compile_to_assembly(const string &filename, const vector<Argument> &args, const string &fn_name,
@@ -1709,8 +1709,8 @@ void Func::infer_input_bounds(Realization dst) {
     pipeline().infer_input_bounds(dst);
 }
 
-void *Func::compile_jit(const Target &target) {
-    return pipeline().compile_jit(target);
+void *Func::compile_jit(const Target &target, bool auto_schedule) {
+    return pipeline().compile_jit(target, auto_schedule);
 }
 
 EXPORT Var _("_");

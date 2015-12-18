@@ -194,13 +194,15 @@ public:
      * argument. */
     EXPORT void compile_to_file(const std::string &filename_prefix,
                                 const std::vector<Argument> &args,
-                                const Target &target = get_target_from_environment());
+                                const Target &target = get_target_from_environment(),
+                                const bool auto_schedule = false);
 
     /** Create an internal representation of lowered code as a self
      * contained Module suitable for further compilation. */
     EXPORT Module compile_to_module(const std::vector<Argument> &args,
                                     const std::string &fn_name,
                                     const Target &target = get_target_from_environment(),
+                                    bool auto_schedule = false,
                                     bool no_vec = false);
 
    /** Eagerly jit compile the function to machine code. This
@@ -211,7 +213,8 @@ public:
      * pointer to the compiled pipeline. Default is to use the Target
      * returned from Halide::get_jit_target_from_environment()
      */
-     EXPORT void *compile_jit(const Target &target = get_jit_target_from_environment());
+     EXPORT void *compile_jit(const Target &target = get_jit_target_from_environment(),
+                              bool auto_schedule = false);
 
     /** Set the error handler function that be called in the case of
      * runtime errors during halide pipelines. If you are compiling

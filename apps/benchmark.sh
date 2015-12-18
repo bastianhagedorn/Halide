@@ -4,3 +4,4 @@ for app in blur local_laplacian interpolate bilateral_grid camera_pipe; do
     make clean; make bench_ref;
     cd ../;
 done
+python benchmark.py

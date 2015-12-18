@@ -101,11 +101,13 @@ int main(int argc, char **argv) {
         blurx.compute_root().reorder(c, x, y, z).parallel(z).vectorize(x, 8).unroll(c);
         blury.compute_root().reorder(c, x, y, z).parallel(z).vectorize(x, 8).unroll(c);
         bilateral_grid.compute_root().parallel(y).vectorize(x, 8);
-    } else if (schedule == -1) {
-        // Do nothing for now
     }
-
-    bilateral_grid.compile_to_file("bilateral_grid", {r_sigma, input}, target);
+    if (schedule == -1)
+        bilateral_grid.compile_to_file("bilateral_grid", {r_sigma, input},
+                                        target, true);
+    else
+        bilateral_grid.compile_to_file("bilateral_grid", {r_sigma, input},
+                                        target);
 
     return 0;
 }

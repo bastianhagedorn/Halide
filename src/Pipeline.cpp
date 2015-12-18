@@ -199,7 +199,7 @@ void Pipeline::compile_to_header(const string &filename,
                                  const vector<Argument> &args,
                                  const string &fn_name,
                                  const Target &target) {
-    compile_module_to_c_header(compile_to_module(args, fn_name, target, true), filename);
+    compile_module_to_c_header(compile_to_module(args, fn_name, target, false, true), filename);
 }
 
 void Pipeline::compile_to_assembly(const string &filename,
@@ -214,7 +214,7 @@ void Pipeline::compile_to_c(const string &filename,
                             const vector<Argument> &args,
                             const string &fn_name,
                             const Target &target) {
-    compile_module_to_c_source(compile_to_module(args, fn_name, target, true), filename);
+    compile_module_to_c_source(compile_to_module(args, fn_name, target, false, true), filename);
 }
 
 void Pipeline::print_loop_nest() {
@@ -236,8 +236,9 @@ void Pipeline::compile_to_lowered_stmt(const string &filename,
 
 void Pipeline::compile_to_file(const string &filename_prefix,
                                const vector<Argument> &args,
-                               const Target &target) {
-    Module m = compile_to_module(args, filename_prefix, target);
+                               const Target &target, bool auto_schedule) {
+
+    Module m = compile_to_module(args, filename_prefix, target, auto_schedule);
     compile_module_to_c_header(m, filename_prefix + ".h");
 
     if (target.arch == Target::PNaCl) {
@@ -457,7 +458,8 @@ vector<Buffer> Pipeline::validate_arguments(const vector<Argument> &args) {
 
 Module Pipeline::compile_to_module(const vector<Argument> &args,
                                    const string &fn_name,
-                                   const Target &target, bool no_vec) {
+                                   const Target &target, bool no_vec,
+                                   bool auto_schedule) {
     user_assert(defined()) << "Can't compile undefined Pipeline\n";
     string new_fn_name(fn_name);
     if (new_fn_name.empty()) {
@@ -481,7 +483,7 @@ Module Pipeline::compile_to_module(const vector<Argument> &args,
 
     const Module &old_module = contents.ptr->module;
     if (!old_module.functions.empty() &&
-        old_module.target() == target && !no_vec) {
+        old_module.target() == target) {
         internal_assert(old_module.functions.size() == 2);
         // We can avoid relowering and just reuse the private body
         // from the old module. We expect two functions in the old
@@ -495,7 +497,7 @@ Module Pipeline::compile_to_module(const vector<Argument> &args,
         }
 
         private_body = lower(contents.ptr->outputs, fn_name, target,
-                             custom_passes, no_vec);
+                             custom_passes, auto_schedule, no_vec);
     }
 
     string private_name = "__" + new_fn_name;
@@ -579,7 +581,7 @@ std::string Pipeline::generate_function_name() {
     return name;
 }
 
-void *Pipeline::compile_jit(const Target &target_arg) {
+void *Pipeline::compile_jit(const Target &target_arg, bool auto_schedule) {
     user_assert(defined()) << "Pipeline is undefined\n";
 
     Target target(target_arg);
@@ -610,7 +612,7 @@ void *Pipeline::compile_jit(const Target &target_arg) {
     }
 
     // Compile to a module
-    Module module = compile_to_module(args, name, target);
+    Module module = compile_to_module(args, name, target, auto_schedule);
 
     // Make sure we're not embedding any images
     internal_assert(module.buffers.empty());
