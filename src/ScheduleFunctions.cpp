@@ -1805,6 +1805,10 @@ struct Partitioner {
         int num_par_dims;
         // A score indicating the benefit of the option
         float benefit;
+        // Amount of redundant compute relative to the work done when both
+        // prod_group and cons_group are fused
+        float redundant_work;
+
     };
 
     struct GroupSched {
@@ -1878,7 +1882,7 @@ struct Partitioner {
         // Initialize machine params
         arch_params.parallelism = 8;
         arch_params.vec_len = 8;
-        arch_params.balance = 1;
+        arch_params.balance = 5;
         arch_params.fast_mem_size = 32 * 1024 * 8 * 4;
         // L1 = 32K
         // L2 = 256K
@@ -1930,7 +1934,8 @@ struct Partitioner {
             std::cout << opt.tile_sizes[i] << ",";
         }
         std::cout << "]" << std::endl;
-        std::cout << "benefit:" << opt.benefit << std::endl;
+        std::cout << "Benefit:" << opt.benefit << std::endl;
+        std::cout << "Redundant Work:" << opt.redundant_work << std::endl;
     }
 
     Option choose_candidate(const vector< pair<string, string> > &cand_pairs);
@@ -2006,7 +2011,7 @@ void disp_regions(map<string, Box> &regions) {
 
 void Partitioner::evaluate_option(Option &opt) {
 
-    disp_option(opt);
+    //disp_option(opt);
 
     map<string, Box> conc_reg;
     vector< map<string, Box> > conc_overlaps;
@@ -2029,6 +2034,7 @@ void Partitioner::evaluate_option(Option &opt) {
 
     // TODO Cosider precomputing the dimension esitmates for all the functions
 
+    //vector<int> &dim_estimates = func_dim_estimates[opt.cons_group];
     vector<int> dim_estimates;
     for (unsigned int i = 0; i < args.size(); i++) {
         int estimate = get_extent_estimate(analy.env[opt.cons_group],
@@ -2037,6 +2043,7 @@ void Partitioner::evaluate_option(Option &opt) {
         if (estimate == -1) {
             // This option cannot be evaluated so discaring the option
             opt.benefit = -1;
+            opt.redundant_work = -1;
             return;
         }
     }
@@ -2049,8 +2056,8 @@ void Partitioner::evaluate_option(Option &opt) {
             else {
                 // If the dimension is too small do not tile it and set the
                 // extent of the bounds to that of the dimension estimate
-                opt.tile_sizes[i] = 1;
-                bounds.push_back(make_pair(0, 1));
+                opt.tile_sizes[i] = -1;
+                bounds.push_back(make_pair(0, dim_estimates[i]-1));
             }
         }
         else
@@ -2065,28 +2072,6 @@ void Partitioner::evaluate_option(Option &opt) {
         if (opt.tile_sizes[i] != -1)
             estimate_tiles = std::ceil((float)dim_estimates[i]/opt.tile_sizes[i]) *
                                         estimate_tiles;
-    }
-
-    //std::cout << "num tiles:" << estimate_tiles << std::endl;
-    if (arch_params.parallelism > estimate_tiles) {
-        // Option did not satisfy the parallelism constraint
-        opt.benefit = -1;
-        return;
-    } else {
-        // Check the parallelism given by each level and mark the right
-        // number of loops as parallel
-        int curr_par = 1;
-        opt.num_par_dims = 0;
-        for (int i = (int)args.size() - 1; i >= 0; i--) {
-            if (opt.tile_sizes[i] != -1) {
-                curr_par = std::ceil((float)dim_estimates[i]/opt.tile_sizes[i]) *
-                           curr_par;
-
-                opt.num_par_dims++;
-                if (curr_par > arch_params.parallelism)
-                    break;
-            }
-        }
     }
 
     conc_reg = analy.concrete_dep_regions(opt.cons_group, eval, bounds);
@@ -2134,8 +2119,11 @@ void Partitioner::evaluate_option(Option &opt) {
         prod_comp[f] = conc_reg[f];
     }
 
+    //std::cout << "Evaluating Benefit:" << std::endl;
+    //disp_regions(prod_reg);
+
     int inter_s = region_size(prod_reg, analy.env);
-    std::cout << "intermediate size:" << inter_s << std::endl;
+    //std::cout << "intermediate size:" << inter_s << std::endl;
 
     vector<Function> prods;
     for (auto &f: prod_funcs)
@@ -2156,10 +2144,14 @@ void Partitioner::evaluate_option(Option &opt) {
 
     int total_work = region_cost(prod_comp, func_cost);
     float ai = (float)total_work/inter_s;
+    opt.redundant_work = (float)redundant_work/total_work;
+
+    /*
     std::cout << "(Redundant work)/(Total work):" <<
                             (float)redundant_work/total_work << std::endl;
     std::cout << "Arithmetic Intensity:" <<
                             (float)total_work/inter_s << std::endl;
+                            */
 
     // Extend this to a multi level memory heirarchy
     if (inter_s <= arch_params.fast_mem_size) {
@@ -2172,7 +2164,27 @@ void Partitioner::evaluate_option(Option &opt) {
         opt.benefit *= estimate_tiles;
     }
 
-    std::cout << "Benefit:" << opt.benefit << std::endl;
+    //std::cout << "num tiles:" << estimate_tiles << std::endl;
+    if (arch_params.parallelism > estimate_tiles) {
+        // Option did not satisfy the parallelism constraint
+        opt.benefit = -1;
+    } else {
+        // Check the parallelism given by each level and mark the right
+        // number of loops as parallel
+        int curr_par = 1;
+        opt.num_par_dims = 0;
+        for (int i = (int)args.size() - 1; i >= 0; i--) {
+            if (opt.tile_sizes[i] != -1) {
+                curr_par = std::ceil((float)dim_estimates[i]/opt.tile_sizes[i]) *
+                    curr_par;
+
+                opt.num_par_dims++;
+                if (curr_par > arch_params.parallelism)
+                    break;
+            }
+        }
+    }
+    //std::cout << "Benefit:" << opt.benefit << std::endl;
 }
 
 Partitioner::Option Partitioner::choose_candidate(
@@ -2251,6 +2263,24 @@ Partitioner::Option Partitioner::choose_candidate(
         Function output = analy.env[p.second];
         const vector<string> &args = output.args();
 
+        // Order the dimensions by amount of redundant compute
+        /*std::cout << "Redundant compute by var " << p.second  << std::endl;
+        for (unsigned int i  = 0; i < args.size(); i++) {
+            Option opt;
+            opt.prod_group = p.first;
+            opt.cons_group = p.second;
+            opt.benefit = -1;
+            opt.redundant_work = -1;
+            for (unsigned int j = 0; j < args.size(); j++) {
+                if (i == j)
+                    opt.tile_sizes.push_back(1);
+                else
+                    opt.tile_sizes.push_back(-1);
+            }
+            evaluate_option(opt);
+            std::cout << args[i] << ":" << opt.redundant_work << std::endl;
+        } */
+
         cand_best_opt.benefit = -1;
         // From the outer to the inner most argument
         for (int i = (int)args.size() - 1; i >= 0; i --) {
@@ -2267,6 +2297,7 @@ Partitioner::Option Partitioner::choose_candidate(
                     opt.tile_sizes.push_back(s);
 
                 evaluate_option(opt);
+
                 if (cand_best_opt.benefit < opt.benefit)
                     cand_best_opt = opt;
             }
@@ -2430,8 +2461,12 @@ void fuse_dim(Function &func, int dim1, int dim2) {
 void vectorize_dim(Function &func, int dim, int vec_width) {
 
     vector<Dim> &dims = func.schedule().dims();
-    split_dim(func, dim, vec_width, false);
-    dims[dim].for_type = ForType::Vectorized;
+    if (vec_width != -1) {
+        split_dim(func, dim, vec_width, false);
+        dims[dim].for_type = ForType::Vectorized;
+    } else {
+        dims[dim].for_type = ForType::Vectorized;
+    }
 }
 
 bool check_dim_size(Function &func, int dim, int min_size,
@@ -2456,7 +2491,7 @@ bool check_dim_size(Function &func, int dim, int min_size,
     return true;
 }
 
-void simple_vectorize(Function &func, int inner_dim, int vec_width) {
+void simple_vectorize(Function &func, int inner_dim, int vec_width=-1) {
     // Collect all the load args
     FindCallArgs find;
     func.accept(&find);
@@ -2764,6 +2799,7 @@ void schedule_advisor(const vector<Function> &outputs,
                     if (m.is_pure() && auto_vec)
                         if (check_dim_size(m, 0, vec_len, pipeline_bounds))
                             simple_vectorize(m, 0, vec_len);
+                            //simple_vectorize(g_out, 0);
                 }
             }
         }

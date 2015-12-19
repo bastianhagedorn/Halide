@@ -2,6 +2,7 @@
 #include <set>
 #include <sstream>
 #include <algorithm>
+#include <chrono>
 
 #include "Lower.h"
 
@@ -85,9 +86,19 @@ Stmt lower(const vector<Function> &outputs, const string &pipeline_name,
         bool auto_par = true;
         bool auto_vec = true;
 
+        std::chrono::high_resolution_clock::time_point t1 =
+                                        std::chrono::high_resolution_clock::now();
+
         schedule_advisor(outputs, order, env, func_bounds, root_default,
                          auto_inline, auto_par, auto_vec);
+
+        std::chrono::high_resolution_clock::time_point t2 =
+                                        std::chrono::high_resolution_clock::now();
+
+        auto duration = std::chrono::duration_cast<std::chrono::seconds>( t2 - t1 ).count();
+
         std::cout << print_loop_nest(outputs) << std::endl;
+        std::cout << "Auto Schedule Time:" << duration << "s" << std::endl;
     }
 
     bool any_memoized = false;
