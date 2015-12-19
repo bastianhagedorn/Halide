@@ -1,0 +1,166 @@
+Pipeline: A DAG of functions which form the pipeline. The dependencies in the
+DAG represent the producer consumer relationships between the functions in the
+pipeline.
+
+Group: A set of functions which are fused together. Each group has a single
+output function. All the functions in the group are computed at various
+granularities of the output function.
+
+
+Auto Schedule
+=============
+Input: 1) A DAG of functions representing the pipeline
+       2) Outputs of the pipeline
+Output: Schedule for the pipeline
+
+// Set of functions that should be inlined
+inlines = {}
+// P = Set of functions in the pipeline
+for f in P:
+    if check_simple_inline(f):
+        inlines.append(f)
+
+check_simple_inline: Checks if the function has a single consumer fuction,
+single use in the consumer function and the use is one-to-one
+
+function_cost = {}
+for f in P:
+    function_cost[f] = analyze_ops(f)
+
+analyze_ops: Walks over the IR counts the arithmetic and the load/stores
+
+// Extent of each upstream function required to compute each function. These
+// bounds are computed in terms of symbolic extents along each dimnesion of the
+// function
+
+symbolic_bounds = {}
+for f in P:
+    symbolic_bounds[f] = get_symbolic_bounds(f)
+
+get_symbolic_bounds: This relies on interval analysis and is quite expensive if
+the functions have complex access patterns like local laplacian.
+
+// Extent of each function required to compute output given the estimates on the
+dimensions of output and parameters to the pipeline.
+
+pipeline_bounds = esitmate_pipeline_bounds(outputs)
+
+esitmate_pipeline_bounds: Substitutes the estimate values in the symbolic bounds
+for each of the outputs and computes the region of each function required to
+compute all the outptus
+
+symbolic_overlaps = {}
+for f in P:
+    symbolic_overlaps[f] = compute_overlaps(f)
+
+compute_overlaps: Computes the overlaps along each dimensions by assuming a
+symbolic chunk of the function that needs to be evaluated. This is also quite
+expensive.
+
+groups = grouping(P, {pipeline_bounds, symbolic_bounds, symbolic_overlaps},
+                  inlines, function_costs)
+
+for g in group:
+    synthesize_schedule(g)
+
+synthesize_schedule: Translates the group structure into a schedule. While doing
+so check if the inner most dimension of each function is amenable to
+vectorization and vectorizes the dimension.
+
+Grouping algorithm
+==================
+
+Input: 1) DAG of functions representing the pipeline
+       2) { pipeline_bounds, symbolic_bounds, symbolic_overlaps }
+       3) inlines
+       4) function_costs
+Outputs: 1) A Decomposition of pipeline into groups
+         2) { Granularity at which group output should be computed,
+              Number of dimensions to parallelize }
+
+// Initialize each function into its own group
+groups = {}
+for f in P:
+    groups[f] = [f]
+    // Give an initial
+
+bool fixpoint = false;
+while(!fixpoint) {
+    fixpoint = true
+    // Pairs of groups that are potential candidates for merging
+    // Find all the groups which have a single child
+    cand_pairs = get_pairs_of_groups()
+
+    // Pick a pair of groups to merge. This is a tricky choice.
+    best = choose_candidate(cand_pairs);
+
+    if (best.benefit != -1) {
+        merge_groups(best);
+        fixpoint = false;
+    }
+}
+
+Choose candidate
+================
+
+Input: Candidate pairs
+Output: Best candidate pair
+
+// The tile sizes that will be explored
+size_variants = {512, 256, 128, 64, 32, 16, 8}
+best_option = {}
+
+for cand in cand_pairs:
+    if (option_cache.find(cand))
+        if (cached_option > best_option)
+            best_option = cached_option
+        continue
+
+    // Get the output of the group
+    output = get_output_function(cand)
+    for d in dimensions(output) [outer to inner]:
+        for s in size_variants:
+            tile_sizes[0-d] = -1
+            tile_Sizes[d-max_dim] = s
+            evaluate_option(cand, tile_Sizes)
+            if (evaluate_option > best_option)
+                best_option = evaluated_option
+
+// number of variants evaluated = func_dims * |size_variants|
+                                = 3 * 7 = 21 in the typical case
+
+Evaluate Option
+===============
+Input: 1) Candidate pair (cand)
+       2) Granularity (tile_sizes)
+
+Output: Benefit, Number of dimensions to parallelize
+
+// Using a simple two level memory model
+
+// Both these steps are quite expesinve since they evalauate the
+// symbolic bounds to get the concrete bounds for tile_sizes
+inter_storage = compute_inter_storage(cand, tile_sizes)
+redundant_work = compute_redudant_work(cand, tile_sizes)
+
+if (inter_storage <= fast_mem_size) {
+    benefit = (inter_storage/ai) * balance - redundant_work;
+    benefit *= estimate_tiles;
+}
+else if (inter_storage <= 2 * fast_mem_size) {
+    int hit = max(2 * fast_mem_size - inter_storage, 0);
+    benefit = (hit/ai) * balance - redundant_work;
+    benefit *= estimate_tiles;
+}
+
+if (parallelism > estimate_tiles) {
+    // Option did not satisfy the parallelism constraint
+    benefit = -1;
+} else {
+    // Check the parallelism given by each level and mark the right
+    // number of loops as parallel
+}
+
+Placing each function at a different level in the group
+f(x, y, c) = g(x [-1 0 1], y) + h(x [-1 0 1], y, c)
+
