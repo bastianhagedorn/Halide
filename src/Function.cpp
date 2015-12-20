@@ -40,7 +40,11 @@ struct FunctionContents {
 
     bool frozen;
 
-    FunctionContents() : trace_loads(false), trace_stores(false), trace_realizations(false), frozen(false) {}
+    bool lambda, boundary;
+
+    FunctionContents() : trace_loads(false), trace_stores(false),
+                         trace_realizations(false), frozen(false),
+                         lambda(false), boundary(false){}
 
     void accept(IRVisitor *visitor) const {
         for (Expr i : values) {
@@ -637,6 +641,22 @@ void Function::freeze() {
 
 bool Function::frozen() const {
     return contents.ptr->frozen;
+}
+
+void Function::set_boundary() {
+    contents.ptr->boundary = true;
+}
+
+void Function::set_lambda() {
+    contents.ptr->lambda = true;
+}
+
+bool Function::is_boundary() {
+    return contents.ptr->boundary;
+}
+
+bool Function::is_lambda() {
+    return contents.ptr->lambda;
 }
 
 }

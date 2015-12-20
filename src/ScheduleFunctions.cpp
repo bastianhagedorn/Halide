@@ -2246,6 +2246,8 @@ Partitioner::Option Partitioner::choose_candidate(
 
     for (auto &p: cand_pairs) {
 
+        std::cout << p.first << std::endl;
+        std::cout << analy.env[p.first].values()[0] << std::endl;
         Option cand_best_opt;
         // Check if the pair has been evaluated before
         if (option_cache.find(p) != option_cache.end()) {
@@ -2358,6 +2360,12 @@ map<string, string> simple_inline(map<string, vector<const Call*>> &all_calls,
         }
         if (consumers[fcalls.first].size() == 1 &&
             all_one_to_one && num_calls == 1) {
+            inlines[fcalls.first] = consumers[fcalls.first][0];
+            env[fcalls.first].schedule().store_level().var = "";
+            env[fcalls.first].schedule().compute_level().var = "";
+        }
+        if (env[fcalls.first].is_boundary() || env[fcalls.first].is_lambda()) {
+            assert(consumers[fcalls.first].size() == 1);
             inlines[fcalls.first] = consumers[fcalls.first][0];
             env[fcalls.first].schedule().store_level().var = "";
             env[fcalls.first].schedule().compute_level().var = "";
@@ -2600,7 +2608,7 @@ void schedule_advisor(const vector<Function> &outputs,
     	//std::cout << std::endl;
     }
 
-    // Make obvious inline decisions early.
+    // Make obvious inline decisions early
     map<string, string> inlines;
     if (auto_inline)
         inlines = simple_inline(all_calls, consumers, env);

@@ -129,6 +129,12 @@ public:
                 !has_extern_definition());
     }
 
+    void set_boundary();
+    void set_lambda();
+
+    bool is_boundary();
+    bool is_lambda();
+
     /** Get a handle to the schedule for the purpose of modifying
      * it */
     EXPORT Schedule &schedule();

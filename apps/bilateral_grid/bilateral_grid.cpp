@@ -65,7 +65,7 @@ int main(int argc, char **argv) {
     // Normalize
     Func bilateral_grid("bilateral_grid");
     bilateral_grid(x, y) = interpolated(x, y, 0)/interpolated(x, y, 1);
-
+    //bilateral_grid.bound(x, 0, 1536).bound(y, 0, 2560);
     // Pick a schedule
     int schedule = atoi(argv[2]);
 

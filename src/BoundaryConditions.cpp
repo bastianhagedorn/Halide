@@ -33,7 +33,7 @@ Func repeat_edge(const Func &source,
 
     Func bounded("repeat_edge");
     bounded(args) = source(actuals);
-
+    bounded.set_boundary();
     return bounded;
 }
 
@@ -71,7 +71,7 @@ Func constant_exterior(const Func &source, Tuple value,
     } else {
         bounded(args) = select(out_of_bounds, value[0], repeat_edge(source, bounds)(args));
     }
-
+    bounded.set_boundary();
     return bounded;
 }
 
@@ -119,6 +119,7 @@ Func repeat_image(const Func &source,
     Func bounded("repeat_image");
     bounded(args) = source(actuals);
 
+    bounded.set_boundary();
     return bounded;
 }
 
@@ -160,6 +161,7 @@ Func mirror_image(const Func &source,
     Func bounded("mirror_image");
     bounded(args) = source(actuals);
 
+    bounded.set_boundary();
     return bounded;
 }
 
@@ -206,6 +208,7 @@ Func mirror_interior(const Func &source,
     Func bounded("mirror_interior");
     bounded(args) = source(actuals);
 
+    bounded.set_boundary();
     return bounded;
 }
 

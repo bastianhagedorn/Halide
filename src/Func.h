@@ -1553,6 +1553,8 @@ public:
      */
     EXPORT std::vector<Argument> infer_arguments() const;
 
+    void set_boundary() {func.set_boundary(); };
+    void set_lambda() {func.set_lambda(); };
 };
 
  /** JIT-Compile and run enough code to evaluate a Halide

@@ -16,6 +16,7 @@ namespace Halide {
  * contains implicit arguments. */
 inline Func lambda(Expr e) {
     Func f("lambda" + Internal::unique_name('_'));
+    f.set_lambda();
     f(_) = e;
     return f;
 }
@@ -26,6 +27,7 @@ inline Func lambda(Expr e) {
  * arguments contains a placeholder ("_"). */
 inline Func lambda(Var x, Expr e) {
     Func f("lambda" + Internal::unique_name('_'));
+    f.set_lambda();
     f(x) = e;
     return f;
 }
@@ -36,6 +38,7 @@ inline Func lambda(Var x, Expr e) {
  * arguments contains a placeholder ("_"). */
 inline Func lambda(Var x, Var y, Expr e) {
     Func f("lambda" + Internal::unique_name('_'));
+    f.set_lambda();
     f(x, y) = e;
     return f;
 }
@@ -46,6 +49,7 @@ inline Func lambda(Var x, Var y, Expr e) {
  * arguments contains a placeholder ("_"). */
 inline Func lambda(Var x, Var y, Var z, Expr e) {
     Func f("lambda" + Internal::unique_name('_'));
+    f.set_lambda();
     f(x, y, z) = e;
     return f;
 }
@@ -56,6 +60,7 @@ inline Func lambda(Var x, Var y, Var z, Expr e) {
  * arguments contains a placeholder ("_"). */
 inline Func lambda(Var x, Var y, Var z, Var w, Expr e) {
     Func f("lambda" + Internal::unique_name('_'));
+    f.set_lambda();
     f(x, y, z, w) = e;
     return f;
 }
@@ -66,6 +71,7 @@ inline Func lambda(Var x, Var y, Var z, Var w, Expr e) {
  * arguments contains a placeholder ("_"). */
 inline Func lambda(Var x, Var y, Var z, Var w, Var v, Expr e) {
     Func f("lambda" + Internal::unique_name('_'));
+    f.set_lambda();
     f(x, y, z, w, v) = e;
     return f;
 }
