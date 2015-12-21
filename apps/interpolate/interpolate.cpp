@@ -86,7 +86,7 @@ int main(int argc, char **argv) {
         if (argc == 4)
             sched = atoi(argv[3]);
         else
-            sched = 3;
+            sched = 5;
     }
 
     switch (sched) {

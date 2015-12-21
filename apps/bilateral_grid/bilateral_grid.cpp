@@ -46,6 +46,10 @@ int main(int argc, char **argv) {
                          blurx(x, y+1, z, c)*4 +
                          blurx(x, y+2, z, c));
 
+    blurz.bound(z, 0, 32);
+    blurx.bound(z, 0, 32);
+    blury.bound(z, 0, 32);
+
     // Take trilinear samples to compute the output
     val = clamp(input(x, y), 0.0f, 1.0f);
     Expr zv = val * (1.0f/r_sigma);
@@ -65,7 +69,8 @@ int main(int argc, char **argv) {
     // Normalize
     Func bilateral_grid("bilateral_grid");
     bilateral_grid(x, y) = interpolated(x, y, 0)/interpolated(x, y, 1);
-    //bilateral_grid.bound(x, 0, 1536).bound(y, 0, 2560);
+    bilateral_grid.bound(x, 0, 1536).bound(y, 0, 2560);
+
     // Pick a schedule
     int schedule = atoi(argv[2]);
 
@@ -96,8 +101,10 @@ int main(int argc, char **argv) {
     } else if (schedule == 0) {
         // The CPU schedule.
         blurz.compute_root().reorder(c, z, x, y).parallel(y).vectorize(x, 8).unroll(c);
-        histogram.compute_at(blurz, y);
-        histogram.update().reorder(c, r.x, r.y, x, y).unroll(c);
+        //histogram.compute_at(blurz, y);
+        //histogram.update().reorder(c, r.x, r.y, x, y).unroll(c);
+        histogram.compute_root().reorder(c, y).parallel(y);
+        histogram.update().reorder(c, y).parallel(y);
         blurx.compute_root().reorder(c, x, y, z).parallel(z).vectorize(x, 8).unroll(c);
         blury.compute_root().reorder(c, x, y, z).parallel(z).vectorize(x, 8).unroll(c);
         bilateral_grid.compute_root().parallel(y).vectorize(x, 8);

@@ -145,7 +145,7 @@ int main(int argc, char **argv) {
         Var yi;
         output.parallel(y, 32).vectorize(x, 8);
         gray.compute_root().parallel(y, 32).vectorize(x, 8);
-        for (int j = 0; j < 4; j++) {
+        for (int j = 0; j < J; j++) {
             if (j > 0) {
                 inGPyramid[j]
                     .compute_root().parallel(y, 32).vectorize(x, 8);

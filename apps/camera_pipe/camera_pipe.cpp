@@ -170,10 +170,9 @@ Func demosaic(Func deinterleaved) {
         b_r.compute_at(processed, tx).vectorize(x, 8);*/
         // These interleave in y, so unrolling them in y helps
         output.compute_at(processed, tx)
-            //.vectorize(x, 8)
-            .vectorize(x)
-            .unroll(y, 2)
-            .reorder(c, x, y).bound(c, 0, 3).unroll(c);
+            .vectorize(x, 8);
+            /*.unroll(y, 2)
+            .reorder(c, x, y).bound(c, 0, 3).unroll(c)*/;
     } else if (schedule == 1) {
         // optimized for X86
         // Don't vectorize, because sse is bad at 16-bit interleaving
@@ -275,8 +274,10 @@ Func process(Func raw, Type result_type,
     if (schedule == 0) {
         // Compute in chunks over tiles, vectorized by 8
         denoised.compute_at(processed, tx).vectorize(x, 8);
-        deinterleaved.compute_at(processed, tx).vectorize(x, 8).reorder(c, x, y).unroll(c);
-        corrected.compute_at(processed, tx).vectorize(x, 4).reorder(c, x, y).unroll(c);
+        deinterleaved.compute_at(processed, tx).vectorize(x, 8)/*.reorder(c, x,
+                y).unroll(c)*/;
+        corrected.compute_at(processed, tx).vectorize(x, 4)/*.reorder(c, x,
+                y).unroll(c)*/;
         processed.tile(tx, ty, xi, yi, 128, 32).reorder(xi, yi, c, tx, ty);
         processed.parallel(ty);
     } else if (schedule == 1) {
@@ -284,7 +285,7 @@ Func process(Func raw, Type result_type,
         denoised.compute_at(processed, tx);
         deinterleaved.compute_at(processed, tx);
         corrected.compute_at(processed, tx);
-        processed.tile(tx, ty, xi, yi, 128, 128).reorder(xi, yi, c, tx, ty);
+        processed.tile(tx, ty, xi, yi, 64, 64).reorder(xi, yi, c, tx, ty);
         processed.parallel(ty);
     } else if (schedule != -1) {
         denoised.compute_root();
