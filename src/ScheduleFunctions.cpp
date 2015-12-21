@@ -1790,6 +1790,27 @@ void disp_box(Box &b) {
         std::cout << "(" << b[dim].min << "," << b[dim].max << ")";
 }
 
+int get_extent_estimate(Function &f, map<string, Box> &bounds, int dim) {
+
+    vector<string> vars = f.args();
+    int estimate = -1;
+    for (auto &b: f.schedule().bounds())
+        if (b.var == vars[dim]) {
+            const IntImm * bmin = b.min.as<IntImm>();
+            const IntImm * bextent = b.extent.as<IntImm>();
+            estimate = bmin->value + bextent->value - 1;
+        }
+
+    if (bounds.find(f.name()) != bounds.end()) {
+        Interval &I = bounds[f.name()][dim];
+        int extent = get_extent(I);
+        if (extent > 0)
+            estimate = std::max(estimate, extent);
+    }
+
+    return estimate;
+}
+
 struct Partitioner {
 
     struct Option {
@@ -1800,9 +1821,6 @@ struct Partitioner {
         // Tile sizes of along dimensions of the output of the child group
         // A tile size of -1 indicates no tiling along the dimension
         vector<int> tile_sizes;
-        // The number of outer dimensions that need to be parallelized for
-        // beneficial parallelism
-        int num_par_dims;
         // A score indicating the benefit of the option
         float benefit;
         // Amount of redundant compute relative to the work done when both
@@ -1811,16 +1829,20 @@ struct Partitioner {
 
     };
 
+    // Levels that are targetted by the grouping algorithm
+    enum Level {INLINE, FAST_MEM};
+
     struct GroupSched {
         vector<int> tile_sizes;
-        int num_par_dims;
     };
 
     struct MachineParams {
         int parallelism;
         int vec_len;
         int fast_mem_size;
-        int balance;
+        int inline_size;
+        int balance_fast_mem;
+        int balance_inline;
     };
 
     map<string, Box> &pipeline_bounds;
@@ -1831,6 +1853,8 @@ struct Partitioner {
     map<string, vector<Function> > groups;
     map<string, GroupSched> group_sched;
     map<string, set<string> > children;
+
+    map<string, vector<int> > func_dim_estimates;
 
     map<pair<string, string>, Option> option_cache;
 
@@ -1870,7 +1894,6 @@ struct Partitioner {
             const vector<string> &args = output.args();
 
             GroupSched sched;
-            sched.num_par_dims = 1;
 
             // From the outer to the inner most argument
             for (int i = (int)args.size() - 1; i >= 0; i --)
@@ -1879,10 +1902,23 @@ struct Partitioner {
             group_sched[g.first] = sched;
         }
 
+        for (auto &f: analy.env) {
+            const vector<string> &args = f.second.args();
+            vector<int> dim_estimates;
+            for (unsigned int i = 0; i < args.size(); i++) {
+                int estimate = get_extent_estimate(f.second,
+                                                   pipeline_bounds, i);
+                dim_estimates.push_back(estimate);
+            }
+            func_dim_estimates[f.first] = dim_estimates;
+        }
+
         // Initialize machine params
         arch_params.parallelism = 8;
         arch_params.vec_len = 8;
-        arch_params.balance = 10;
+        arch_params.balance_fast_mem = 10;
+        arch_params.balance_inline = 100;
+        arch_params.inline_size = 32;
         arch_params.fast_mem_size = 32 * 1024 * 8;
         // L1 = 32K
         // L2 = 256K
@@ -1939,11 +1975,13 @@ struct Partitioner {
     }
 
     Option choose_candidate(const vector< pair<string, string> > &cand_pairs);
-    void overlap_tile();
+    Option choose_candidate_inline(const vector< pair<string, string> > &cand_pairs);
+    void group(Partitioner::Level level);
     void evaluate_option(Option &opt);
+    void evaluate_option_inline(Option &opt);
 };
 
-void Partitioner::overlap_tile() {
+void Partitioner::group(Partitioner::Level level) {
     // Partition the pipeline by iteratively merging groups until a fixpoint
     bool fixpoint = false;
     while(!fixpoint) {
@@ -1965,40 +2003,36 @@ void Partitioner::overlap_tile() {
         }
         std::cout << std::endl;
         // Pick a pair of groups to merge. This is a tricky choice.
-        Option best = choose_candidate(cand_pairs);
+        Option best;
+        if (level == Partitioner::INLINE)
+            best = choose_candidate_inline(cand_pairs);
+        else
+            best = choose_candidate(cand_pairs);
 
         if (best.benefit != -1) {
+            if (level == Partitioner::INLINE) {
+                // Verify that all the functions in producer group are
+                // scheduled inline
+
+                // TODO a cleaner way would be to move all this manipulating
+                // schedules to later including the ones done in the inline
+                // phase
+
+                // Inline the producer group into the consumer group i.e.,
+                // add the producer group to the set of inlines
+                inlines[best.prod_group] = best.cons_group;
+                analy.env[best.prod_group].schedule().store_level().var = "";
+                analy.env[best.prod_group].schedule().compute_level().var = "";
+            }
             merge_groups(best.prod_group, best.cons_group);
             //std::cout << "Megre candidate" << std::endl;
             //std::cout << cand_group << std::endl;
             GroupSched sched;
             sched.tile_sizes = best.tile_sizes;
-            sched.num_par_dims = best.num_par_dims;
             group_sched[best.cons_group] = sched;
             fixpoint = false;
         }
     }
-}
-
-int get_extent_estimate(Function &f, map<string, Box> &bounds, int dim) {
-
-    vector<string> vars = f.args();
-    int estimate = -1;
-    for (auto &b: f.schedule().bounds())
-        if (b.var == vars[dim]) {
-            const IntImm * bmin = b.min.as<IntImm>();
-            const IntImm * bextent = b.extent.as<IntImm>();
-            estimate = bmin->value + bextent->value - 1;
-        }
-
-    if (bounds.find(f.name()) != bounds.end()) {
-        Interval &I = bounds[f.name()][dim];
-        int extent = get_extent(I);
-        if (extent > 0)
-            estimate = std::max(estimate, extent);
-    }
-
-    return estimate;
 }
 
 void disp_regions(map<string, Box> &regions) {
@@ -2018,6 +2052,126 @@ map<string, int> get_dim_estimates(string f, map<string, Box> &pipeline_bounds,
         dim_estimates[args[i]] = estimate;
     }
     return dim_estimates;
+}
+
+void Partitioner::evaluate_option_inline(Option &opt) {
+
+    //disp_option(opt);
+
+    map<string, Box> conc_reg;
+    vector< map<string, Box> > conc_overlaps;
+
+    // For each function in the prod and child group that is not the
+    // output figure out the concrete bounds
+
+    vector<string> prod_funcs;
+    for (auto &f: groups[opt.prod_group])
+        prod_funcs.push_back(f.name());
+    for (auto &f: groups[opt.cons_group])
+        if (f.name() != opt.cons_group)
+            prod_funcs.push_back(f.name());
+
+    vector<pair<int, int> > bounds;
+    vector<bool> eval;
+
+    const vector<string> &args = analy.env[opt.cons_group].args();
+    assert(opt.tile_sizes.size() == args.size());
+
+    vector<int> &dim_estimates = func_dim_estimates[opt.cons_group];
+    for (unsigned int i = 0; i < args.size(); i++) {
+        if (dim_estimates[i] == -1) {
+            // This option cannot be evaluated so discaring the option
+            opt.benefit = -1;
+            opt.redundant_work = -1;
+            return;
+        }
+    }
+
+    int estimate_tiles = 1;
+    for (unsigned int i = 0; i < args.size(); i++) {
+        if (opt.tile_sizes[i] != -1)
+            estimate_tiles = std::ceil((float)dim_estimates[i]/opt.tile_sizes[i]) *
+                                        estimate_tiles;
+    }
+
+    for (unsigned int i = 0; i < args.size(); i++) {
+        if (opt.tile_sizes[i] != -1) {
+            // Check if the bounds allow for tiling with the given tile size
+            if (dim_estimates[i] >= opt.tile_sizes[i])
+                bounds.push_back(make_pair(0, opt.tile_sizes[i] - 1));
+            else {
+                // If the dimension is too small do not tile it and set the
+                // extent of the bounds to that of the dimension estimate
+                opt.tile_sizes[i] = -1;
+                bounds.push_back(make_pair(0, dim_estimates[i]-1));
+            }
+        }
+        else
+             bounds.push_back(make_pair(0, dim_estimates[i]));
+
+        eval.push_back(true);
+    }
+
+    conc_reg = analy.concrete_dep_regions(opt.cons_group, eval, bounds);
+    conc_overlaps = analy.concrete_overlap_regions(opt.cons_group, eval, bounds);
+
+    // disp_regions(conc_reg);
+    // Determine size of intermediates
+
+    // disp_regions(conc_reg);
+    map<string, Box> prod_reg;
+    map<string, Box> prod_comp;
+
+    for (auto &f: prod_funcs) {
+        assert(inlines.find(f) != inlines.end() || f == opt.prod_group);
+        prod_comp[f] = conc_reg[f];
+    }
+
+    //std::cout << "Evaluating Benefit:" << std::endl;
+    //disp_regions(prod_reg);
+
+    int inter_s = region_size(prod_reg, analy.env);
+    //std::cout << "intermediate size:" << inter_s << std::endl;
+
+    vector<Function> prods;
+    for (auto &f: prod_funcs)
+        prods.push_back(analy.env[f]);
+
+    //for (auto &o: conc_overlaps)
+    //    disp_regions(o);
+
+    int redundant_work = 0;
+    for (unsigned int i = 0; i < args.size(); i++) {
+        if (opt.tile_sizes[i] != -1) {
+            int dir_red_work = overlap_cost(opt.cons_group, prods,
+                                            conc_overlaps, func_cost, i);
+            if (dir_red_work != -1)
+                redundant_work += dir_red_work;
+        }
+    }
+
+    int total_work = region_cost(prod_comp, func_cost);
+    float ai = (float)total_work/inter_s;
+    opt.redundant_work = (float)redundant_work/total_work;
+
+    /*
+    std::cout << "(Redundant work)/(Total work):" <<
+                            (float)redundant_work/total_work << std::endl;
+    std::cout << "Arithmetic Intensity:" <<
+                            (float)total_work/inter_s << std::endl;
+                            */
+
+    if (inter_s <= arch_params.inline_size) {
+        opt.benefit = (inter_s/ai) * arch_params.balance_inline - redundant_work;
+        opt.benefit *= estimate_tiles;
+    }
+    else if (inter_s <= 2 * arch_params.fast_mem_size) {
+        int hit = std::max(2 * arch_params.inline_size - inter_s, 0);
+        opt.benefit = (hit/ai) * arch_params.balance_inline - redundant_work;
+        opt.benefit *= estimate_tiles;
+    }
+
+    //std::cout << "Benefit:" << opt.benefit << std::endl;
 }
 
 void Partitioner::evaluate_option(Option &opt) {
@@ -2043,15 +2197,9 @@ void Partitioner::evaluate_option(Option &opt) {
     const vector<string> &args = analy.env[opt.cons_group].args();
     assert(opt.tile_sizes.size() == args.size());
 
-    // TODO Cosider precomputing the dimension esitmates for all the functions
-
-    //vector<int> &dim_estimates = func_dim_estimates[opt.cons_group];
-    vector<int> dim_estimates;
+    vector<int> &dim_estimates = func_dim_estimates[opt.cons_group];
     for (unsigned int i = 0; i < args.size(); i++) {
-        int estimate = get_extent_estimate(analy.env[opt.cons_group],
-                                           pipeline_bounds, i);
-        dim_estimates.push_back(estimate);
-        if (estimate == -1) {
+        if (dim_estimates[i] == -1) {
             // This option cannot be evaluated so discaring the option
             opt.benefit = -1;
             opt.redundant_work = -1;
@@ -2077,7 +2225,7 @@ void Partitioner::evaluate_option(Option &opt) {
         eval.push_back(true);
     }
 
-    // Check parallelism i.e. count the number of tiles
+    // Count the number of tiles
     int estimate_tiles = 1;
     for (unsigned int i = 0; i < args.size(); i++) {
         if (opt.tile_sizes[i] != -1)
@@ -2162,17 +2310,15 @@ void Partitioner::evaluate_option(Option &opt) {
     std::cout << "(Redundant work)/(Total work):" <<
                             (float)redundant_work/total_work << std::endl;
     std::cout << "Arithmetic Intensity:" <<
-                            (float)total_work/inter_s << std::endl;
-                            */
+                            (float)total_work/inter_s << std::endl; */
 
-    // Extend this to a multi level memory heirarchy
     if (inter_s <= arch_params.fast_mem_size) {
-        opt.benefit = (inter_s/ai) * arch_params.balance - redundant_work;
+        opt.benefit = (inter_s/ai) * arch_params.balance_fast_mem - redundant_work;
         opt.benefit *= estimate_tiles;
     }
     else if (inter_s <= 2 * arch_params.fast_mem_size) {
         int hit = std::max(2 * arch_params.fast_mem_size - inter_s, 0);
-        opt.benefit = (hit/ai) * arch_params.balance - redundant_work;
+        opt.benefit = (hit/ai) * arch_params.balance_fast_mem - redundant_work;
         opt.benefit *= estimate_tiles;
     }
 
@@ -2180,23 +2326,70 @@ void Partitioner::evaluate_option(Option &opt) {
     if (arch_params.parallelism > estimate_tiles) {
         // Option did not satisfy the parallelism constraint
         opt.benefit = -1;
-    } else {
-        // Check the parallelism given by each level and mark the right
-        // number of loops as parallel
-        int curr_par = 1;
-        opt.num_par_dims = 0;
-        for (int i = (int)args.size() - 1; i >= 0; i--) {
-            if (opt.tile_sizes[i] != -1) {
-                curr_par = std::ceil((float)dim_estimates[i]/opt.tile_sizes[i]) *
-                    curr_par;
-
-                opt.num_par_dims++;
-                if (curr_par > arch_params.parallelism)
-                    break;
-            }
-        }
     }
     //std::cout << "Benefit:" << opt.benefit << std::endl;
+}
+
+Partitioner::Option Partitioner::choose_candidate_inline(
+                    const vector< pair<string, string> > &cand_pairs) {
+
+    vector<Option> options;
+    vector<int> size_variants = {1};
+    Option best_opt;
+    best_opt.benefit = -1;
+
+    for (auto &p: cand_pairs) {
+        Option cand_opt;
+        // Check if the pair has been evaluated before
+        if (option_cache.find(p) != option_cache.end()) {
+            //std::cout << "Hit:" << p.first << "," << p.second << std::endl;
+            cand_opt = option_cache[p];
+            if (best_opt.benefit < cand_opt.benefit)
+                best_opt = cand_opt;
+            continue;
+        }
+
+        // If the pair has not been evaluated before create an the option
+        // with tile size 1 in all dimensions
+
+        // Get the output function of the child group
+        Function output = analy.env[p.second];
+        const vector<string> &args = output.args();
+
+        // Order the dimensions by amount of redundant compute
+        /*std::cout << "Redundant compute by var " << p.second  << std::endl;
+        for (unsigned int i  = 0; i < args.size(); i++) {
+            Option opt;
+            opt.prod_group = p.first;
+            opt.cons_group = p.second;
+            opt.benefit = -1;
+            opt.redundant_work = -1;
+            for (unsigned int j = 0; j < args.size(); j++) {
+                if (i == j)
+                    opt.tile_sizes.push_back(1);
+                else
+                    opt.tile_sizes.push_back(-1);
+            }
+            evaluate_option(opt);
+            std::cout << args[i] << ":" << opt.redundant_work << std::endl;
+        } */
+
+        cand_opt.prod_group = p.first;
+        cand_opt.cons_group = p.second;
+        cand_opt.benefit = -1;
+
+        for (unsigned int i = 0; i < args.size(); i++)
+            cand_opt.tile_sizes.push_back(1);
+
+        evaluate_option(cand_opt);
+
+        if (best_opt.benefit < cand_opt.benefit)
+            best_opt = cand_opt;
+
+        // Cache the result of the evaluation for the pair
+        option_cache[p] = cand_opt;
+    }
+    return best_opt;
 }
 
 Partitioner::Option Partitioner::choose_candidate(
@@ -2538,12 +2731,12 @@ void pick_dim_to_parallelize(Function &f, map<string, int> &dim_estimates,
                              int& num_fused_dims) {
     // TODO Check which is better fusing the dimensions or moving
     // the right dimension out and parallelizing it
-    std::cout << "Parallel Dim Choice " << f.name() << std::endl;
+    // std::cout << "Parallel Dim Choice " << f.name() << std::endl;
     vector<Dim> &dims = f.schedule().dims();
     outer_dim = dims.size() - 2;
     for (int i = outer_dim; i > 0; i--) {
-        std::cout << dims[i].var << " Num Iter "
-                  << dim_estimates[dims[i].var] << std::endl;
+        //std::cout << dims[i].var << " Num Iter "
+        //          << dim_estimates[dims[i].var] << std::endl;
         if (dim_estimates[dims[i].var] > parallelism) {
             move_dim_to_outermost(f.schedule().dims(), i);
             break;
@@ -2666,11 +2859,11 @@ void schedule_advisor(const vector<Function> &outputs,
     disp_inlines(inlines);
     std::cout << std::endl;
 
-    bool overlap_tile = true;
+    bool group = true;
     auto_vec = true;
     auto_par = true;
 
-    if (overlap_tile) {
+    if (group) {
 
         // Dependence analysis
 
@@ -2736,7 +2929,7 @@ void schedule_advisor(const vector<Function> &outputs,
 
         // Grouping
         Partitioner part(pipeline_bounds, inlines, analy, func_cost);
-        part.overlap_tile();
+        part.group(Partitioner::INLINE);
 
         int vec_len = part.arch_params.vec_len;
         //disp_grouping(groups);
@@ -2822,9 +3015,6 @@ void schedule_advisor(const vector<Function> &outputs,
                 }
                 num_tile_dims++;
             }
-
-            assert(sched.num_par_dims == 1 ||
-                    sched.num_par_dims <= num_tile_dims);
 
             int num_fused_dims = 0;
             int parallelism = part.arch_params.parallelism;
