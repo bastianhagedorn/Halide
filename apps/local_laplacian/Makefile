@@ -1,7 +1,7 @@
 include ../support/Makefile.inc
 
 #CXX=icpc -O3 -march=native -ansi-alias -Wall -openmp -g
-CXX=g++ -O3 -march=native -Wall -fopenmp -g
+CXX=g++ -O2 -march=native -Wall -fopenmp -g
 
 local_laplacian_gen: local_laplacian_gen.cpp
 	$(CXX) $(CXXFLAGS) local_laplacian_gen.cpp $(LIB_HALIDE) -o local_laplacian_gen -lpthread -ldl -lz \

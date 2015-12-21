@@ -1642,6 +1642,13 @@ int get_extent(const Interval &i) {
         else
             return 0;
     }
+    /* TODO Check if this is necessary at some point
+    else {
+        Expr diff = simplify(i.max - i.min);
+        std::cout << diff << std::endl;
+        if (diff.as<IntImm>())
+            return diff.as<IntImm>()->value;
+    } */
     return -1;
 }
 
@@ -1650,16 +1657,13 @@ int box_area(Box &b) {
     for(unsigned int i = 0; i < b.size(); i++) {
         // Maybe should check for unsigned integers and floats too
         int extent = get_extent(b[i]);
-        if (extent > 0)
+        if (extent > 0 && box_area > 0)
             box_area = box_area * extent;
         else if (extent == 0) {
             box_area = 0;
             break;
         } else {
-            // std::cout << "Box area computation failed" << std::endl;
-            // std::cout << "min:" << b[i].min << " max:" << b[i].max << std::endl;
             box_area = -1;
-            break;
         }
     }
     return box_area;
@@ -1917,7 +1921,7 @@ struct Partitioner {
         arch_params.parallelism = 8;
         arch_params.vec_len = 8;
         arch_params.balance_fast_mem = 10;
-        arch_params.balance_inline = 100;
+        arch_params.balance_inline = 10;
         arch_params.inline_size = 32;
         arch_params.fast_mem_size = 32 * 1024 * 8;
         // L1 = 32K
@@ -2115,19 +2119,19 @@ void Partitioner::evaluate_option_inline(Option &opt) {
     conc_reg = analy.concrete_dep_regions(opt.cons_group, eval, bounds);
     conc_overlaps = analy.concrete_overlap_regions(opt.cons_group, eval, bounds);
 
-    // disp_regions(conc_reg);
-    // Determine size of intermediates
+    //disp_regions(conc_reg);
 
-    // disp_regions(conc_reg);
+    // Determine size of intermediates
     map<string, Box> prod_reg;
-    map<string, Box> prod_comp;
 
     for (auto &f: prod_funcs) {
         assert(inlines.find(f) != inlines.end() || f == opt.prod_group);
-        prod_comp[f] = conc_reg[f];
+        prod_reg[f] = conc_reg[f];
     }
 
-    //std::cout << "Evaluating Benefit:" << std::endl;
+    //std::cout << std::endl;
+    //std::cout << "Evaluating Benefit " << opt.prod_group << "->"
+    //                                << opt.cons_group << ":" << std::endl;
     //disp_regions(prod_reg);
 
     int inter_s = region_size(prod_reg, analy.env);
@@ -2147,25 +2151,35 @@ void Partitioner::evaluate_option_inline(Option &opt) {
                                             conc_overlaps, func_cost, i);
             if (dir_red_work != -1)
                 redundant_work += dir_red_work;
+            else {
+                redundant_work = -1;
+                break;
+            }
         }
     }
 
-    int total_work = region_cost(prod_comp, func_cost);
+    int total_work = region_cost(prod_reg, func_cost);
+    //if(redundant_work >= 0 && total_work < 0)
+    //    assert(0);
+    if (total_work < 0 || redundant_work < 0) {
+        opt.benefit = -1;
+        opt.redundant_work = -1;
+        return;
+    }
+
     float ai = (float)total_work/inter_s;
     opt.redundant_work = (float)redundant_work/total_work;
 
-    /*
-    std::cout << "(Redundant work)/(Total work):" <<
-                            (float)redundant_work/total_work << std::endl;
-    std::cout << "Arithmetic Intensity:" <<
-                            (float)total_work/inter_s << std::endl;
-                            */
+    //std::cout << "(Redundant work)/(Total work):" <<
+    //                        (float)redundant_work/total_work << std::endl;
+    //std::cout << "Arithmetic Intensity:" <<
+    //                        (float)total_work/inter_s << std::endl;
 
     if (inter_s <= arch_params.inline_size) {
         opt.benefit = (inter_s/ai) * arch_params.balance_inline - redundant_work;
         opt.benefit *= estimate_tiles;
     }
-    else if (inter_s <= 2 * arch_params.fast_mem_size) {
+    else if (inter_s <= 2 * arch_params.inline_size) {
         int hit = std::max(2 * arch_params.inline_size - inter_s, 0);
         opt.benefit = (hit/ai) * arch_params.balance_inline - redundant_work;
         opt.benefit *= estimate_tiles;
@@ -2356,24 +2370,6 @@ Partitioner::Option Partitioner::choose_candidate_inline(
         Function output = analy.env[p.second];
         const vector<string> &args = output.args();
 
-        // Order the dimensions by amount of redundant compute
-        /*std::cout << "Redundant compute by var " << p.second  << std::endl;
-        for (unsigned int i  = 0; i < args.size(); i++) {
-            Option opt;
-            opt.prod_group = p.first;
-            opt.cons_group = p.second;
-            opt.benefit = -1;
-            opt.redundant_work = -1;
-            for (unsigned int j = 0; j < args.size(); j++) {
-                if (i == j)
-                    opt.tile_sizes.push_back(1);
-                else
-                    opt.tile_sizes.push_back(-1);
-            }
-            evaluate_option(opt);
-            std::cout << args[i] << ":" << opt.redundant_work << std::endl;
-        } */
-
         cand_opt.prod_group = p.first;
         cand_opt.cons_group = p.second;
         cand_opt.benefit = -1;
@@ -2381,7 +2377,7 @@ Partitioner::Option Partitioner::choose_candidate_inline(
         for (unsigned int i = 0; i < args.size(); i++)
             cand_opt.tile_sizes.push_back(1);
 
-        evaluate_option(cand_opt);
+        evaluate_option_inline(cand_opt);
 
         if (best_opt.benefit < cand_opt.benefit)
             best_opt = cand_opt;
@@ -2743,7 +2739,6 @@ void pick_dim_to_parallelize(Function &f, map<string, int> &dim_estimates,
         }
     }
     num_fused_dims = 0;
-
     /*
     int outer_dim = dims.size() - 2;
     for (int i = outer_dim; i < sched.num_par_dims - 1; i++) {
