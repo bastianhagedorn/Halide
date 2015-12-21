@@ -3,7 +3,7 @@ times_ref = {}
 times_auto = {}
 speed_up = {}
 p = 1
-for app in ["blur/", "local_laplacian/", "bilateral_grid/", \
+for app in ["blur/", "local_laplacian/", "interpolate/", "bilateral_grid/", \
             "camera_pipe/"] :
         f = open(app+ "ref_perf.txt")
         times_ref[app] = [ float(l) for l in f ]

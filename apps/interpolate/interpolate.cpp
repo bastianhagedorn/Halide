@@ -75,7 +75,6 @@ int main(int argc, char **argv) {
     Func final("final");
     final(x, y, c) = normalize(x, y, c);
 
-    final.bound(x, 0, 1536).bound(y, 0, 2560).bound(c, 0, 3);
     //std::cout << "Finished function setup." << std::endl;
 
     int sched;
@@ -86,7 +85,7 @@ int main(int argc, char **argv) {
         if (argc == 4)
             sched = atoi(argv[3]);
         else
-            sched = 5;
+            sched = 2;
     }
 
     switch (sched) {
@@ -215,6 +214,10 @@ int main(int argc, char **argv) {
         final.bound(y, 0, input.height());
         final.bound(c, 0, 3);
         break;
+    }
+    case -1:
+    {
+        final.bound(x, 0, 1536).bound(y, 0, 2560).bound(c, 0, 3);
     }
     }
 
