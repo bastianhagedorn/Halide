@@ -5,21 +5,29 @@ Var x, y;
 
 // Downsample with a 1 3 3 1 filter
 Func downsample(Func f) {
-    Func downx, downy;
+    Func downx("downx"), downy("downy");
 
     downx(x, y, _) = (f(2*x-1, y, _) + 3.0f * (f(2*x, y, _) + f(2*x+1, y, _)) + f(2*x+2, y, _)) / 8.0f;
     downy(x, y, _) = (downx(x, 2*y-1, _) + 3.0f * (downx(x, 2*y, _) + downx(x, 2*y+1, _)) + downx(x, 2*y+2, _)) / 8.0f;
 
+    if (downx.args().size() > 2) {
+        downx.bound(downx.args()[2], 0, 8);
+        downy.bound(downy.args()[2], 0, 8);
+    }
     return downy;
 }
 
 // Upsample using bilinear interpolation
 Func upsample(Func f) {
-    Func upx, upy;
+    Func upx("upx"), upy("upy");
 
     upx(x, y, _) = 0.25f * f((x/2) - 1 + 2*(x % 2), y, _) + 0.75f * f(x/2, y, _);
     upy(x, y, _) = 0.25f * upx(x, (y/2) - 1 + 2*(y % 2), _) + 0.75f * upx(x, y/2, _);
 
+    if (upx.args().size() > 2) {
+        upx.bound(upx.args()[2], 0, 8);
+        upy.bound(upy.args()[2], 0, 8);
+    }
     return upy;
 
 }
@@ -49,7 +57,7 @@ int main(int argc, char **argv) {
     Var c, k;
 
     // Make the remapping function as a lookup table.
-    Func remap;
+    Func remap("remap");
     Expr fx = cast<float>(x) / 256.0f;
     remap(x) = alpha*fx*exp(-fx*fx/2.0f);
 
@@ -57,15 +65,19 @@ int main(int argc, char **argv) {
     Func clamped = BoundaryConditions::repeat_edge(input);
 
     // Convert to floating point
-    Func floating;
+    Func floating("floating");
     floating(x, y, c) = clamped(x, y, c) / 65535.0f;
 
     // Get the luminance channel
-    Func gray;
+    Func gray("gray");
     gray(x, y) = 0.299f * floating(x, y, 0) + 0.587f * floating(x, y, 1) + 0.114f * floating(x, y, 2);
 
     // Make the processed Gaussian pyramid.
-    Func gPyramid[maxJ];
+    std::vector<Func> gPyramid;
+    for (int i = 0; i < maxJ; i++) {
+        Func gP("gPyramid_" + std::to_string(i));
+        gPyramid.push_back(gP);
+    }
     // Do a lookup into a lut with 256 entires per intensity level
     Expr level = k * (1.0f / (levels - 1));
     Expr idx = gray(x, y)*cast<float>(levels-1)*256.0f;
@@ -73,28 +85,42 @@ int main(int argc, char **argv) {
     gPyramid[0](x, y, k) = beta*(gray(x, y) - level) + level + remap(idx - 256*k);
     gPyramid[0].bound(k, 0, 8);
     for (int j = 1; j < J; j++) {
-        gPyramid[j](x, y, k) = downsample(gPyramid[j-1])(x, y, k);
+        Func down = downsample(gPyramid[j-1]);
+        gPyramid[j](x, y, k) = down(x, y, k);
         gPyramid[j].bound(k, 0, 8);
     }
 
     // Get its laplacian pyramid
-    Func lPyramid[maxJ];
+    std::vector<Func> lPyramid;
+    for (int i = 0; i < maxJ; i++) {
+        Func lP("lPyramid_" + std::to_string(i));
+        lPyramid.push_back(lP);
+    }
     lPyramid[J-1](x, y, k) = gPyramid[J-1](x, y, k);
     lPyramid[J-1].bound(k, 0, 8);
     for (int j = J-2; j >= 0; j--) {
-        lPyramid[j](x, y, k) = gPyramid[j](x, y, k) - upsample(gPyramid[j+1])(x, y, k);
+        Func up = upsample(gPyramid[j+1]);
+        lPyramid[j](x, y, k) = gPyramid[j](x, y, k) - up(x, y, k);
         lPyramid[j].bound(k, 0, 8);
     }
 
     // Make the Gaussian pyramid of the input
-    Func inGPyramid[maxJ];
+    std::vector<Func> inGPyramid;
+    for (int i = 0; i < maxJ; i++) {
+        Func inGP("inGPyramid_" + std::to_string(i));
+        inGPyramid.push_back(inGP);
+    }
     inGPyramid[0](x, y) = gray(x, y);
     for (int j = 1; j < J; j++) {
         inGPyramid[j](x, y) = downsample(inGPyramid[j-1])(x, y);
     }
 
     // Make the laplacian pyramid of the output
-    Func outLPyramid[maxJ];
+    std::vector<Func> outLPyramid;
+    for (int i = 0; i < maxJ; i++) {
+        Func outLP("outLPyramid_" + std::to_string(i));
+        outLPyramid.push_back(outLP);
+    }
     for (int j = 0; j < J; j++) {
         // Split input pyramid value into integer and floating parts
         Expr level = inGPyramid[j](x, y) * cast<float>(levels-1);
@@ -105,14 +131,18 @@ int main(int argc, char **argv) {
     }
 
     // Make the Gaussian pyramid of the output
-    Func outGPyramid[maxJ];
+    std::vector<Func> outGPyramid;
+    for (int i = 0; i < maxJ; i++) {
+        Func outGP("outGPyramid_" + std::to_string(i));
+        outGPyramid.push_back(outGP);
+    }
     outGPyramid[J-1](x, y) = outLPyramid[J-1](x, y);
     for (int j = J-2; j >= 0; j--) {
         outGPyramid[j](x, y) = upsample(outGPyramid[j+1])(x, y) + outLPyramid[j](x, y);
     }
 
     // Reintroduce color (Connelly: use eps to avoid scaling up noise w/ apollo3.png input)
-    Func color;
+    Func color("color");
     float eps = 0.01f;
     color(x, y, c) = outGPyramid[0](x, y) * (floating(x, y, c)+eps) / (gray(x, y)+eps);
 

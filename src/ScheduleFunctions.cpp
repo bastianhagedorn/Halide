@@ -1535,7 +1535,8 @@ public:
 map<string, Box> sym_to_concrete_bounds(vector< pair<Var, Var> > &sym,
                                         vector< pair<int, int> > &bounds,
                                         vector<bool> &eval,
-                                        map<string, Box> &sym_regions) {
+                                        map<string, Box> &sym_regions,
+                                        map<string, Function> &env) {
 
     map<string, Expr> replacements;
     for (unsigned int i = 0; i < sym.size(); i++) {
@@ -1552,6 +1553,25 @@ map<string, Box> sym_to_concrete_bounds(vector< pair<Var, Var> > &sym,
             //ExprClone cmax(r.second[i].max);
             Expr lower = simplify(substitute(replacements, r.second[i].min));
             Expr upper = simplify(substitute(replacements, r.second[i].max));
+
+            // Use the bounds if the lower and upper bounds cannot be
+            // determined
+            if (!lower.as<IntImm>()) {
+                for (auto &b: env[r.first].schedule().bounds())
+                    if (b.var == env[r.first].args()[i])
+                        lower = Expr(b.min.as<IntImm>()->value);
+
+            }
+
+            if (!upper.as<IntImm>()) {
+                for (auto &b: env[r.first].schedule().bounds())
+                    if (b.var == env[r.first].args()[i]) {
+                        const IntImm * bmin = b.min.as<IntImm>();
+                        const IntImm * bextent = b.extent.as<IntImm>();
+                        upper = Expr(bmin->value + bextent->value - 1);
+                    }
+            }
+
             Interval concrete_bounds = Interval(lower, upper);
             concrete_box.push_back(concrete_bounds);
         }
@@ -1614,7 +1634,7 @@ struct DependenceAnalysis {
     map<string, Box> concrete_dep_regions(string name, vector<bool> &eval,
                                           vector<pair<int, int> > &bounds) {
         return sym_to_concrete_bounds(func_sym[name], bounds, eval,
-                                      func_dep_regions[name]);
+                                      func_dep_regions[name], env);
     }
 
     vector< map<string, Box> > concrete_overlap_regions(
@@ -1623,7 +1643,8 @@ struct DependenceAnalysis {
         vector< map<string, Box> > conc_overlaps;
         for (auto & dir: func_overlaps[name]) {
             map<string, Box> conc_reg =
-                sym_to_concrete_bounds(func_sym[name], bounds, eval, dir);
+                sym_to_concrete_bounds(func_sym[name], bounds, eval,
+                                       dir, env);
             conc_overlaps.push_back(conc_reg);
         }
         return conc_overlaps;
@@ -1921,7 +1942,7 @@ struct Partitioner {
         arch_params.parallelism = 8;
         arch_params.vec_len = 8;
         arch_params.balance_fast_mem = 10;
-        arch_params.balance_inline = 10;
+        arch_params.balance_inline = 20;
         arch_params.inline_size = 32;
         arch_params.fast_mem_size = 32 * 1024 * 8;
         // L1 = 32K
@@ -1930,7 +1951,7 @@ struct Partitioner {
     }
 
     void merge_groups(string cand_group, string child_group) {
-        std::cout << child_group << "," << cand_group << std::endl;
+        std::cout << cand_group << "->" << child_group << std::endl;
         assert(groups.find(child_group) != groups.end());
         vector<Function> cand_funcs = groups[cand_group];
 
@@ -2119,7 +2140,6 @@ void Partitioner::evaluate_option_inline(Option &opt) {
     conc_reg = analy.concrete_dep_regions(opt.cons_group, eval, bounds);
     conc_overlaps = analy.concrete_overlap_regions(opt.cons_group, eval, bounds);
 
-    //disp_regions(conc_reg);
 
     // Determine size of intermediates
     map<string, Box> prod_reg;
@@ -2129,13 +2149,14 @@ void Partitioner::evaluate_option_inline(Option &opt) {
         prod_reg[f] = conc_reg[f];
     }
 
-    //std::cout << std::endl;
-    //std::cout << "Evaluating Benefit " << opt.prod_group << "->"
-    //                                << opt.cons_group << ":" << std::endl;
-    //disp_regions(prod_reg);
+    std::cout << std::endl;
+    std::cout << "Evaluating Benefit " << opt.prod_group << "->"
+                                    << opt.cons_group << ":" << std::endl;
+    disp_regions(prod_reg);
+    //disp_regions(conc_reg);
 
     int inter_s = region_size(prod_reg, analy.env);
-    //std::cout << "intermediate size:" << inter_s << std::endl;
+    std::cout << "intermediate size:" << inter_s << std::endl;
 
     vector<Function> prods;
     for (auto &f: prod_funcs)
@@ -2159,9 +2180,7 @@ void Partitioner::evaluate_option_inline(Option &opt) {
     }
 
     int total_work = region_cost(prod_reg, func_cost);
-    //if(redundant_work >= 0 && total_work < 0)
-    //    assert(0);
-    if (total_work < 0 || redundant_work < 0) {
+    if (redundant_work < 0 || total_work < 0) {
         opt.benefit = -1;
         opt.redundant_work = -1;
         return;
@@ -2170,8 +2189,8 @@ void Partitioner::evaluate_option_inline(Option &opt) {
     float ai = (float)total_work/inter_s;
     opt.redundant_work = (float)redundant_work/total_work;
 
-    //std::cout << "(Redundant work)/(Total work):" <<
-    //                        (float)redundant_work/total_work << std::endl;
+    std::cout << "(Redundant work)/(Total work):" <<
+                            (float)opt.redundant_work << std::endl;
     //std::cout << "Arithmetic Intensity:" <<
     //                        (float)total_work/inter_s << std::endl;
 
@@ -2185,7 +2204,8 @@ void Partitioner::evaluate_option_inline(Option &opt) {
         opt.benefit *= estimate_tiles;
     }
 
-    //std::cout << "Benefit:" << opt.benefit << std::endl;
+    std::cout << "Benefit:" << opt.benefit << std::endl;
+    std::cout << std::endl;
 }
 
 void Partitioner::evaluate_option(Option &opt) {
@@ -2727,13 +2747,16 @@ void pick_dim_to_parallelize(Function &f, map<string, int> &dim_estimates,
                              int& num_fused_dims) {
     // TODO Check which is better fusing the dimensions or moving
     // the right dimension out and parallelizing it
-    // std::cout << "Parallel Dim Choice " << f.name() << std::endl;
+    //std::cout << "Parallel Dim Choice " << f.name() << std::endl;
     vector<Dim> &dims = f.schedule().dims();
+    //for (auto &d: dims)
+    //    std::cout << d.var << ",";
+    //std::cout << std::endl;
     outer_dim = dims.size() - 2;
     for (int i = outer_dim; i > 0; i--) {
         //std::cout << dims[i].var << " Num Iter "
         //          << dim_estimates[dims[i].var] << std::endl;
-        if (dim_estimates[dims[i].var] > parallelism) {
+        if (dim_estimates[dims[i].var] > 2* parallelism) {
             move_dim_to_outermost(f.schedule().dims(), i);
             break;
         }
@@ -2925,6 +2948,9 @@ void schedule_advisor(const vector<Function> &outputs,
         // Grouping
         Partitioner part(pipeline_bounds, inlines, analy, func_cost);
         part.group(Partitioner::INLINE);
+        // Clear the option cache
+        part.option_cache.clear();
+        part.group(Partitioner::FAST_MEM);
 
         int vec_len = part.arch_params.vec_len;
         //disp_grouping(groups);
@@ -3026,7 +3052,7 @@ void schedule_advisor(const vector<Function> &outputs,
                 pick_dim_to_parallelize(g_out, dim_estimates, parallelism,
                                         outer_dim, num_fused_dims);
 
-                if (auto_par)
+                if (auto_par && outer_dim !=-1)
                     parallelize_dim(g_out.schedule().dims(), outer_dim);
 
             } else {
@@ -3034,7 +3060,7 @@ void schedule_advisor(const vector<Function> &outputs,
                 int outer_dim = -1;
                 pick_dim_to_parallelize(g_out, dim_estimates, parallelism,
                                         outer_dim, num_fused_dims);
-                if (auto_par)
+                if (auto_par && outer_dim!=-1)
                     parallelize_dim(g_out.schedule().dims(), outer_dim);
 
                 int num_updates = g_out.updates().size();

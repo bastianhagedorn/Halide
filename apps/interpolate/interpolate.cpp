@@ -25,11 +25,25 @@ int main(int argc, char **argv) {
 
     const int levels = 10;
 
-    Func downsampled[levels];
-    Func downx[levels];
-    Func interpolated[levels];
-    Func upsampled[levels];
-    Func upsampledx[levels];
+    std::vector<Func> downsampled;
+    std::vector<Func> downx;
+    std::vector<Func> interpolated;
+    std::vector<Func> upsampled;
+    std::vector<Func> upsampledx;
+    for (int i = 0; i < levels; i++) {
+        Func down("downsampled_" + std::to_string(i));
+        downsampled.push_back(down);
+        Func dx("downx_" + std::to_string(i));
+        downx.push_back(dx);
+        Func interp("interpolated_" + std::to_string(i));
+        interpolated.push_back(interp);
+        Func up("upsampled_" + std::to_string(i));
+        upsampled.push_back(up);
+        Func upx("upsampledx_" + std::to_string(i));
+        upsampledx.push_back(upx);
+
+    }
+
     Var x("x"), y("y"), c("c");
 
     Func clamped = BoundaryConditions::repeat_edge(input);
@@ -136,6 +150,7 @@ int main(int argc, char **argv) {
             .vectorize(x, 8)
             .bound(x, 0, input.width())
             .bound(y, 0, input.height());
+        //final.print_loop_nest();
         break;
     }
     case 3:
@@ -178,41 +193,6 @@ int main(int argc, char **argv) {
             downsampled[l].gpu_tile(x, y, c, tile_size, tile_size, 4, DeviceAPI::Default_GPU);
             interpolated[l].compute_at(final, xo).gpu_tile(x, y, c, tile_size, tile_size, 4, DeviceAPI::Default_GPU);
         }
-        break;
-    }
-    case 5:
-    {
-        Var x_outer, y_outer, x_inner, y_inner;
-        /* first 3 downsamples */
-        for(int l = 1; l <=3; l++){
-            downx[l].compute_at(downsampled[l], x).parallel(y).vectorize(x, 8);
-            downsampled[l].compute_root().parallel(y).vectorize(x, 8);
-        }
-        /* remaining downsamples */
-        for(int l = 4; l < levels-1; l++){
-            downsampled[l].compute_root().vectorize(x, 8).parallel(y);
-        }
-
-        /* first L-3 upsamples */
-        for(int l = levels-2; l > 3; l--){
-            upsampled[l].compute_root().vectorize(x, 8).parallel(y);
-            interpolated[l].compute_root().vectorize(x, 8).parallel(y);
-            interpolated[l].unroll(x, 2).unroll(y, 2);
-        }
-        upsampled[3].compute_at(final, x_outer).vectorize(x, 8);
-        interpolated[3].compute_at(final, x_outer).vectorize(x, 8);
-        /* last upsamples */
-        for(int l = 2; l >= 0; l--){
-            upsampledx[l].compute_at(final, x_outer).vectorize(x, 8);
-            upsampled[l].compute_at(final, x_outer).vectorize(x, 8);
-            interpolated[l].compute_at(final, x_outer).vectorize(x, 8);
-            interpolated[l].unroll(x, 2).unroll(y, 2);
-        }
-        final.tile(x, y, x_outer, y_outer, x_inner, y_inner, 128, 16);
-        final.parallel(y_outer).vectorize(x_inner, 8);
-        final.bound(x, 0, input.width());
-        final.bound(y, 0, input.height());
-        final.bound(c, 0, 3);
         break;
     }
     case -1:
