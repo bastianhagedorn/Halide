@@ -1933,6 +1933,7 @@ struct Partitioner {
             for (unsigned int i = 0; i < args.size(); i++) {
                 int estimate = get_extent_estimate(f.second,
                                                    pipeline_bounds, i);
+                std::cout << f.first << "," << args[i] << std::endl;
                 dim_estimates.push_back(estimate);
             }
             func_dim_estimates[f.first] = dim_estimates;
@@ -1942,8 +1943,8 @@ struct Partitioner {
         arch_params.parallelism = 8;
         arch_params.vec_len = 8;
         arch_params.balance_fast_mem = 10;
-        arch_params.balance_inline = 20;
-        arch_params.inline_size = 32;
+        arch_params.balance_inline = 10;
+        arch_params.inline_size = 8 * 3;
         arch_params.fast_mem_size = 32 * 1024 * 8;
         // L1 = 32K
         // L2 = 256K
@@ -2125,10 +2126,8 @@ void Partitioner::evaluate_option_inline(Option &opt) {
             if (dim_estimates[i] >= opt.tile_sizes[i])
                 bounds.push_back(make_pair(0, opt.tile_sizes[i] - 1));
             else {
-                // If the dimension is too small do not tile it and set the
-                // extent of the bounds to that of the dimension estimate
-                opt.tile_sizes[i] = -1;
-                bounds.push_back(make_pair(0, dim_estimates[i]-1));
+                opt.tile_sizes[i] = 1;
+                bounds.push_back(make_pair(0, 1));
             }
         }
         else
@@ -2150,7 +2149,7 @@ void Partitioner::evaluate_option_inline(Option &opt) {
     }
 
     std::cout << std::endl;
-    std::cout << "Evaluating Benefit " << opt.prod_group << "->"
+    std::cout << "Evaluating Inline Benefit " << opt.prod_group << "->"
                                     << opt.cons_group << ":" << std::endl;
     disp_regions(prod_reg);
     //disp_regions(conc_reg);
@@ -2231,9 +2230,10 @@ void Partitioner::evaluate_option(Option &opt) {
     const vector<string> &args = analy.env[opt.cons_group].args();
     assert(opt.tile_sizes.size() == args.size());
 
-    vector<int> &dim_estimates = func_dim_estimates[opt.cons_group];
+    vector<int> &dim_estimates_cons = func_dim_estimates[opt.cons_group];
+
     for (unsigned int i = 0; i < args.size(); i++) {
-        if (dim_estimates[i] == -1) {
+        if (dim_estimates_cons[i] == -1) {
             // This option cannot be evaluated so discaring the option
             opt.benefit = -1;
             opt.redundant_work = -1;
@@ -2244,17 +2244,17 @@ void Partitioner::evaluate_option(Option &opt) {
     for (unsigned int i = 0; i < args.size(); i++) {
         if (opt.tile_sizes[i] != -1) {
             // Check if the bounds allow for tiling with the given tile size
-            if (dim_estimates[i] >= opt.tile_sizes[i])
+            if (dim_estimates_cons[i] >= opt.tile_sizes[i])
                 bounds.push_back(make_pair(0, opt.tile_sizes[i] - 1));
             else {
                 // If the dimension is too small do not tile it and set the
                 // extent of the bounds to that of the dimension estimate
                 opt.tile_sizes[i] = -1;
-                bounds.push_back(make_pair(0, dim_estimates[i]-1));
+                bounds.push_back(make_pair(0, dim_estimates_cons[i]-1));
             }
         }
         else
-             bounds.push_back(make_pair(0, dim_estimates[i]));
+             bounds.push_back(make_pair(0, dim_estimates_cons[i]));
 
         eval.push_back(true);
     }
@@ -2263,7 +2263,7 @@ void Partitioner::evaluate_option(Option &opt) {
     int estimate_tiles = 1;
     for (unsigned int i = 0; i < args.size(); i++) {
         if (opt.tile_sizes[i] != -1)
-            estimate_tiles = std::ceil((float)dim_estimates[i]/opt.tile_sizes[i]) *
+            estimate_tiles = std::ceil((float)dim_estimates_cons[i]/opt.tile_sizes[i]) *
                                         estimate_tiles;
     }
 
@@ -2307,6 +2307,7 @@ void Partitioner::evaluate_option(Option &opt) {
     map<string, Box> prod_reg;
     map<string, Box> prod_comp;
     // Do not count inlines while accounting for intermediate storage
+    // TODO revisit this assumption
     for (auto &f: prod_funcs) {
         if (inlines.find(f) == inlines.end())
             prod_reg[f] = conc_reg[f];
@@ -2314,10 +2315,8 @@ void Partitioner::evaluate_option(Option &opt) {
     }
 
     //std::cout << "Evaluating Benefit:" << std::endl;
-    //disp_regions(prod_reg);
 
     int inter_s = region_size(prod_reg, analy.env);
-    //std::cout << "intermediate size:" << inter_s << std::endl;
 
     vector<Function> prods;
     for (auto &f: prod_funcs)
@@ -2336,6 +2335,12 @@ void Partitioner::evaluate_option(Option &opt) {
         }
     }
 
+    std::cout << std::endl;
+    std::cout << "Evaluating Benefit " << opt.prod_group << "->"
+                                    << opt.cons_group << ":" << std::endl;
+
+    disp_regions(prod_reg);
+    std::cout << "intermediate size:" << inter_s << std::endl;
     int total_work = region_cost(prod_comp, func_cost);
     float ai = (float)total_work/inter_s;
     opt.redundant_work = (float)redundant_work/total_work;
@@ -2361,7 +2366,7 @@ void Partitioner::evaluate_option(Option &opt) {
         // Option did not satisfy the parallelism constraint
         opt.benefit = -1;
     }
-    //std::cout << "Benefit:" << opt.benefit << std::endl;
+    std::cout << "Benefit:" << opt.benefit << std::endl;
 }
 
 Partitioner::Option Partitioner::choose_candidate_inline(
@@ -2394,10 +2399,17 @@ Partitioner::Option Partitioner::choose_candidate_inline(
         cand_opt.cons_group = p.second;
         cand_opt.benefit = -1;
 
+        // Evaluating on a larger tile size to get an accurate estimate
         for (unsigned int i = 0; i < args.size(); i++)
             cand_opt.tile_sizes.push_back(1);
 
         evaluate_option_inline(cand_opt);
+
+        // Clearing the tile sizes for low level code generation
+        cand_opt.tile_sizes.clear();
+
+        for (unsigned int i = 0; i < args.size(); i++)
+            cand_opt.tile_sizes.push_back(1);
 
         if (best_opt.benefit < cand_opt.benefit)
             best_opt = cand_opt;
@@ -2502,27 +2514,52 @@ Partitioner::Option Partitioner::choose_candidate(
             std::cout << args[i] << ":" << opt.redundant_work << std::endl;
         } */
 
+        bool invalid = false;
+        long long prod_out_size = 0;
+        vector<int> &dim_estimates_prod = func_dim_estimates[p.first];
+        const vector<Type> &types = analy.env[p.first].output_types();
+        for(unsigned int i = 0; i < types.size(); i++)
+            prod_out_size += types[i].bytes();
+
+        const vector<string> &args_prod = analy.env[p.first].args();
+        for (unsigned int i = 0; i < args_prod.size(); i++) {
+            if (dim_estimates_prod[i] == -1) {
+                // This option cannot be evaluated so discaring the option
+                invalid = true;
+            } else {
+                prod_out_size = prod_out_size * dim_estimates_prod[i];
+            }
+        }
+
+        if (prod_out_size < arch_params.fast_mem_size)
+            invalid = true;
+
+
+        cand_best_opt.prod_group = p.first;
+        cand_best_opt.cons_group = p.second;
         cand_best_opt.benefit = -1;
-        // From the outer to the inner most argument
-        for (int i = (int)args.size() - 1; i >= 0; i--) {
-        // Do not tile the inner dim
-        //for (int i = (int)args.size() - 1; i >= 1; i--) {
-            for (auto s: size_variants) {
-                Option opt;
-                opt.prod_group = p.first;
-                opt.cons_group = p.second;
-                opt.benefit = -1;
+        if (!invalid) {
+            // From the outer to the inner most argument
+            for (int i = (int)args.size() - 1; i >= 0; i--) {
+                // Do not tile the inner dim
+                //for (int i = (int)args.size() - 1; i >= 1; i--) {
+                for (auto s: size_variants) {
+                    Option opt;
+                    opt.prod_group = p.first;
+                    opt.cons_group = p.second;
+                    opt.benefit = -1;
 
-                for (int j = 0; j < i; j++)
-                    opt.tile_sizes.push_back(-1);
+                    for (int j = 0; j < i; j++)
+                        opt.tile_sizes.push_back(-1);
 
-                for (unsigned int j = i; j < args.size(); j++)
-                    opt.tile_sizes.push_back(s);
+                    for (unsigned int j = i; j < args.size(); j++)
+                        opt.tile_sizes.push_back(s);
 
-                evaluate_option(opt);
+                    evaluate_option(opt);
 
-                if (cand_best_opt.benefit < opt.benefit)
-                    cand_best_opt = opt;
+                    if (cand_best_opt.benefit < opt.benefit)
+                        cand_best_opt = opt;
+                }
             }
         }
 
@@ -2756,7 +2793,7 @@ void pick_dim_to_parallelize(Function &f, map<string, int> &dim_estimates,
     for (int i = outer_dim; i > 0; i--) {
         //std::cout << dims[i].var << " Num Iter "
         //          << dim_estimates[dims[i].var] << std::endl;
-        if (dim_estimates[dims[i].var] > 2* parallelism) {
+        if (dim_estimates[dims[i].var] > parallelism) {
             move_dim_to_outermost(f.schedule().dims(), i);
             break;
         }

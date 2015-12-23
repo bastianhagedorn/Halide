@@ -8,10 +8,10 @@ local_laplacian_gen: local_laplacian_gen.cpp
 	$(LDFLAGS) $(LLVM_SHARED_LIBS) -ltinfo
 
 local_laplacian_ref: local_laplacian_gen
-	./local_laplacian_gen 2 0
+	./local_laplacian_gen 8 0
 
 local_laplacian_auto: local_laplacian_gen
-	./local_laplacian_gen 2 -1
+	./local_laplacian_gen 8 -1
 
 process_ref: process.cpp local_laplacian_ref
 	$(CXX) $(CXXFLAGS) process.cpp local_laplacian.o \
