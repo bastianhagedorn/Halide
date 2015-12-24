@@ -1859,6 +1859,7 @@ struct Partitioner {
 
     struct GroupSched {
         vector<int> tile_sizes;
+        int benefit;
     };
 
     struct MachineParams {
@@ -1919,7 +1920,7 @@ struct Partitioner {
             const vector<string> &args = output.args();
 
             GroupSched sched;
-
+            sched.benefit = -1;
             // From the outer to the inner most argument
             for (int i = (int)args.size() - 1; i >= 0; i --)
                 sched.tile_sizes.push_back(-1);
@@ -1942,9 +1943,10 @@ struct Partitioner {
         // Initialize machine params
         arch_params.parallelism = 8;
         arch_params.vec_len = 8;
-        arch_params.balance_fast_mem = 10;
+        arch_params.balance_fast_mem = 5;
         arch_params.balance_inline = 10;
         arch_params.inline_size = 8 * 3;
+        //arch_params.fast_mem_size = 32 * 1024 * 8;
         arch_params.fast_mem_size = 32 * 1024 * 8;
         // L1 = 32K
         // L2 = 256K
@@ -2055,6 +2057,7 @@ void Partitioner::group(Partitioner::Level level) {
             //std::cout << cand_group << std::endl;
             GroupSched sched;
             sched.tile_sizes = best.tile_sizes;
+            sched.benefit = best.benefit;
             group_sched[best.cons_group] = sched;
             fixpoint = false;
         }
@@ -2232,6 +2235,7 @@ void Partitioner::evaluate_option(Option &opt) {
 
     vector<int> &dim_estimates_cons = func_dim_estimates[opt.cons_group];
 
+    int out_size = 1;
     for (unsigned int i = 0; i < args.size(); i++) {
         if (dim_estimates_cons[i] == -1) {
             // This option cannot be evaluated so discaring the option
@@ -2239,22 +2243,31 @@ void Partitioner::evaluate_option(Option &opt) {
             opt.redundant_work = -1;
             return;
         }
+        else {
+            out_size *= dim_estimates_cons[i];
+        }
     }
 
+    int tile_size = 1;
     for (unsigned int i = 0; i < args.size(); i++) {
         if (opt.tile_sizes[i] != -1) {
             // Check if the bounds allow for tiling with the given tile size
-            if (dim_estimates_cons[i] >= opt.tile_sizes[i])
+            if (dim_estimates_cons[i] >= opt.tile_sizes[i]) {
                 bounds.push_back(make_pair(0, opt.tile_sizes[i] - 1));
+                tile_size = tile_size * (opt.tile_sizes[i] - 1);
+            }
             else {
                 // If the dimension is too small do not tile it and set the
                 // extent of the bounds to that of the dimension estimate
                 opt.tile_sizes[i] = -1;
                 bounds.push_back(make_pair(0, dim_estimates_cons[i]-1));
+                tile_size = tile_size * (dim_estimates_cons[i]);
             }
         }
-        else
-             bounds.push_back(make_pair(0, dim_estimates_cons[i]));
+        else {
+            bounds.push_back(make_pair(0, dim_estimates_cons[i]-1));
+            tile_size = tile_size * (dim_estimates_cons[i]);
+        }
 
         eval.push_back(true);
     }
@@ -2335,30 +2348,30 @@ void Partitioner::evaluate_option(Option &opt) {
         }
     }
 
+    int total_work = region_cost(prod_comp, func_cost);
+
     std::cout << std::endl;
-    std::cout << "Evaluating Benefit " << opt.prod_group << "->"
+    std::cout << "Evaluating benefit " << opt.prod_group << "->"
                                     << opt.cons_group << ":" << std::endl;
 
     disp_regions(prod_reg);
     std::cout << "intermediate size:" << inter_s << std::endl;
-    int total_work = region_cost(prod_comp, func_cost);
-    float ai = (float)total_work/inter_s;
-    opt.redundant_work = (float)redundant_work/total_work;
+    opt.redundant_work = (float)redundant_work/tile_size;
 
-    /*
-    std::cout << "(Redundant work)/(Total work):" <<
-                            (float)redundant_work/total_work << std::endl;
-    std::cout << "Arithmetic Intensity:" <<
-                            (float)total_work/inter_s << std::endl; */
+    std::cout << "Redundant work per output:" << opt.redundant_work << std::endl;
+
+    float ai = (float)total_work/inter_s;
+    std::cout << "Arithmetic intensity:" << ai << std::endl;
 
     if (inter_s <= arch_params.fast_mem_size) {
-        opt.benefit = (inter_s/ai) * arch_params.balance_fast_mem - redundant_work;
-        opt.benefit *= estimate_tiles;
+        opt.benefit = (arch_params.balance_fast_mem)/ai - opt.redundant_work;
+        opt.benefit *= out_size;
     }
     else if (inter_s <= 2 * arch_params.fast_mem_size) {
         int hit = std::max(2 * arch_params.fast_mem_size - inter_s, 0);
-        opt.benefit = (hit/ai) * arch_params.balance_fast_mem - redundant_work;
-        opt.benefit *= estimate_tiles;
+        opt.benefit = ((float)hit/inter_s) * (arch_params.balance_fast_mem/ai) -
+                                                           opt.redundant_work;
+        opt.benefit *= out_size;
     }
 
     //std::cout << "num tiles:" << estimate_tiles << std::endl;
@@ -2984,7 +2997,7 @@ void schedule_advisor(const vector<Function> &outputs,
 
         // Grouping
         Partitioner part(pipeline_bounds, inlines, analy, func_cost);
-        part.group(Partitioner::INLINE);
+        // part.group(Partitioner::INLINE);
         // Clear the option cache
         part.option_cache.clear();
         part.group(Partitioner::FAST_MEM);
