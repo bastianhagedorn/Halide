@@ -1717,6 +1717,14 @@ int region_size(map<string, Box> &funcs, map<string, Function> &env) {
     return total_size;
 }
 
+int get_func_cost(vector<pair<int, int> > &costs) {
+    // Going over each of the outputs of the function
+    int op_cost = 1;
+    for (unsigned int t = 0; t < costs.size(); t++)
+        op_cost += costs[t].first;
+    return op_cost;
+}
+
 int region_cost(string func, Box &region,
                 map<string, vector<pair<int, int> > > &func_cost) {
     int area = box_area(region);
@@ -1724,11 +1732,9 @@ int region_cost(string func, Box &region,
         // Area could not be determined
         return -1;
     auto &costs = func_cost[func];
-    // Going over each of the outputs of the function
-    int op_cost = 0;
-    for (unsigned int t = 0; t < costs.size(); t++)
-        op_cost += costs[t].first;
-    int cost = area * (op_cost + 1);
+    int op_cost = get_func_cost(costs);
+
+    int cost = area * (op_cost);
     return cost;
 }
 
@@ -1762,11 +1768,8 @@ int overlap_cost(string cons, Function prod, vector<map<string, Box> > &overlaps
         }
     }
     auto &costs = func_cost[prod.name()];
-    // Going over each of the outputs of the function
-    int op_cost = 0;
-    for (unsigned int t = 0; t < costs.size(); t++)
-        op_cost += costs[t].first;
-    int overlap_cost = total_area * (op_cost + 1);
+    int op_cost = get_func_cost(costs);
+    int overlap_cost = total_area * (op_cost);
     return overlap_cost;
 }
 
@@ -1881,6 +1884,7 @@ struct Partitioner {
     map<string, set<string> > children;
 
     map<string, vector<int> > func_dim_estimates;
+    map<string, int > func_work;
 
     map<pair<string, string>, Option> option_cache;
 
@@ -1931,13 +1935,21 @@ struct Partitioner {
         for (auto &f: analy.env) {
             const vector<string> &args = f.second.args();
             vector<int> dim_estimates;
+            int work = 1;
             for (unsigned int i = 0; i < args.size(); i++) {
                 int estimate = get_extent_estimate(f.second,
                                                    pipeline_bounds, i);
-                std::cout << f.first << "," << args[i] << std::endl;
                 dim_estimates.push_back(estimate);
+                if (estimate != -1 && work != -1)
+                    work *= estimate;
+                else
+                    work = -1;
             }
+            if(work != -1)
+                work = get_func_cost(func_cost[f.first]) * work;
+            func_work[f.first] = work;
             func_dim_estimates[f.first] = dim_estimates;
+
         }
 
         // Initialize machine params
@@ -2274,10 +2286,15 @@ void Partitioner::evaluate_option(Option &opt) {
 
     // Count the number of tiles
     int estimate_tiles = 1;
+    float partial_tiles = 1;
     for (unsigned int i = 0; i < args.size(); i++) {
-        if (opt.tile_sizes[i] != -1)
+        if (opt.tile_sizes[i] != -1) {
             estimate_tiles = std::ceil((float)dim_estimates_cons[i]/opt.tile_sizes[i]) *
                                         estimate_tiles;
+            partial_tiles = ((float)dim_estimates_cons[i]/opt.tile_sizes[i]) *
+                                        partial_tiles;
+        }
+
     }
 
     conc_reg = analy.concrete_dep_regions(opt.cons_group, eval, bounds);
@@ -2343,24 +2360,49 @@ void Partitioner::evaluate_option(Option &opt) {
         if (opt.tile_sizes[i] != -1) {
             int dir_red_work = overlap_cost(opt.cons_group, prods,
                                             conc_overlaps, func_cost, i);
-            if (dir_red_work != -1)
+            if (dir_red_work != -1) {
                 redundant_work += dir_red_work;
+            } else {
+                redundant_work = -1;
+                break;
+            }
         }
     }
 
-    int total_work = region_cost(prod_comp, func_cost);
+    int work_per_tile = region_cost(prod_comp, func_cost);
+    float total_work = work_per_tile * partial_tiles;
+
+    int original_work = 0;
+    for (auto &f: prod_funcs) {
+        if (func_work[f] != -1) {
+            original_work += func_work[f];
+        } else {
+            original_work = -1;
+            break;
+        }
+    }
 
     std::cout << std::endl;
     std::cout << "Evaluating benefit " << opt.prod_group << "->"
                                     << opt.cons_group << ":" << std::endl;
 
     disp_regions(prod_reg);
-    std::cout << "intermediate size:" << inter_s << std::endl;
+
+    std::cout << "Work per tile:" << work_per_tile << std::endl;
+    std::cout << "Num tiles:" << partial_tiles << std::endl;
+    std::cout << "Total work:" << total_work << std::endl;
+    std::cout << "Original work:" << original_work << std::endl;
+
+    std::cout << "Intermediate size:" << inter_s << std::endl;
     opt.redundant_work = (float)redundant_work/tile_size;
 
     std::cout << "Redundant work per output:" << opt.redundant_work << std::endl;
-
-    float ai = (float)total_work/inter_s;
+    std::cout << "Redundant work overall using tiles:" << redundant_work * estimate_tiles << std::endl;
+    std::cout << "Redundant work overall:" <<
+                (float) (total_work - original_work) << std::endl;
+    std::cout << "Ratio of different measures:"
+        << (float) (total_work - original_work)/ (redundant_work * estimate_tiles) << std::endl;
+    float ai = (float)work_per_tile/inter_s;
     std::cout << "Arithmetic intensity:" << ai << std::endl;
 
     if (inter_s <= arch_params.fast_mem_size) {
