@@ -2993,7 +2993,7 @@ void schedule_advisor(const vector<Function> &outputs,
             }
         }
 
-        //disp_regions(pipeline_bounds);
+        disp_regions(pipeline_bounds);
 
         // Grouping
         Partitioner part(pipeline_bounds, inlines, analy, func_cost);

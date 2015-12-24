@@ -6,7 +6,17 @@ int main(int argc, char **argv) {
     ImageParam input(UInt(16), 2);
     Var x("x"), y("y"), xi("xi"), yi("yi");
 
+    // Simple test scenario
     int num_stencils = 5;
+
+    // TODO
+    // 1) Create a very long pipeline and check the effectiveness of the
+    //    cost function
+    //    - The auto-scheduler should split the grouping at right points in
+    //      the pipeline
+    //    - Fusion should happen in the right order
+    //    - When inlining is enabled the combination of both inling and tiling
+    //      should yield better performance
 
     std::vector<Func> stencils;
     for(int i = 0; i < num_stencils; i ++) {
