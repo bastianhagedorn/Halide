@@ -7,7 +7,7 @@ int main(int argc, char **argv) {
     Var x("x"), y("y"), xi("xi"), yi("yi");
 
     // Simple test scenario
-    int num_stencils = 5;
+    int num_stencils = 15;
 
     // TODO
     // 1) Create a very long pipeline and check the effectiveness of the

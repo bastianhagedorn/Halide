@@ -14,6 +14,7 @@
 #include "ParallelRVar.h"
 #include "Derivative.h"
 #include "CodeGen_GPU_Dev.h"
+#include "RealizationOrder.h"
 
 #include <algorithm>
 
@@ -1673,8 +1674,8 @@ int get_extent(const Interval &i) {
     return -1;
 }
 
-int box_area(Box &b) {
-    int box_area = 1;
+long long box_area(Box &b) {
+    long long box_area = 1;
     for(unsigned int i = 0; i < b.size(); i++) {
         // Maybe should check for unsigned integers and floats too
         int extent = get_extent(b[i]);
@@ -1690,22 +1691,72 @@ int box_area(Box &b) {
     return box_area;
 }
 
-int region_size(string func, Box &region, map<string, Function> &env) {
-
+long long region_size(string func, Box &region, map<string, Function> &env) {
     Function &f = env[func];
-    int area = box_area(region);
+    long long area = box_area(region);
     if (area < 0)
         // Area could not be determined
         return -1;
-    int size = 0;
+    long long size = 0;
     const vector<Type> &types = f.output_types();
     for(unsigned int i = 0; i < types.size(); i++)
         size += types[i].bytes();
     return area * size;
 }
 
-int region_size(map<string, Box> &funcs, map<string, Function> &env) {
+long long region_size(map<string, Box> &regions, map<string, Function> &env,
+                      map<string, map<string, Box> > &func_dep_regions) {
 
+    map<string, int> num_consumers;
+    for(auto &f: regions)
+        num_consumers[f.first] = 0;
+
+    for(auto &f: regions) {
+        map<string, Box> &prods = func_dep_regions[f.first];
+        for(auto &p: prods) {
+            if (regions.find(p.first) != regions.end())
+                num_consumers[p.first] += 1;
+        }
+    }
+
+    vector<Function> outs;
+    for(auto &f: num_consumers)
+        if (f.second  == 0)
+            outs.push_back(env[f.first]);
+
+    // This assumption should hold for now
+    assert(outs.size() == 1);
+
+    // Realization order
+    vector<string> order = realization_order(outs, env);
+
+    long long working_set_size = 0;
+    long long curr_size = 0;
+
+    map<string, long long> func_sizes;
+    for(auto &f: regions) {
+        long long size = region_size(f.first, f.second, env);
+        if (size < 0)
+            return -1;
+        else
+            func_sizes[f.first] = size;
+    }
+
+    for(auto &f: order) {
+        curr_size += func_sizes[f];
+        working_set_size = std::max(curr_size, working_set_size);
+        map<string, Box> &prods = func_dep_regions[f];
+        for(auto &p: prods) {
+            if (num_consumers.find(p.first) != num_consumers.end())
+                num_consumers[p.first] -= 1;
+            if (num_consumers[p.first] == 0)
+                curr_size -= func_sizes[p.first];
+        }
+    }
+
+    return working_set_size;
+    // Computing total size
+    /*
     int total_size = 0;
     for(auto &f: funcs) {
         int size = region_size(f.first, f.second, env);
@@ -1715,9 +1766,10 @@ int region_size(map<string, Box> &funcs, map<string, Function> &env) {
             total_size += size;
     }
     return total_size;
+    */
 }
 
-int get_func_cost(vector<pair<int, int> > &costs) {
+int get_func_op_cost(vector<pair<int, int> > &costs) {
     // Going over each of the outputs of the function
     int op_cost = 1;
     for (unsigned int t = 0; t < costs.size(); t++)
@@ -1725,22 +1777,31 @@ int get_func_cost(vector<pair<int, int> > &costs) {
     return op_cost;
 }
 
-int region_cost(string func, Box &region,
-                map<string, vector<pair<int, int> > > &func_cost) {
-    int area = box_area(region);
+int get_func_mem(vector<pair<int, int> > &costs) {
+    // Going over each of the outputs of the function
+    int mem_cost = 0;
+    for (unsigned int t = 0; t < costs.size(); t++)
+        mem_cost += costs[t].second;
+    return mem_cost;
+}
+
+long long region_cost(string func, Box &region,
+                      map<string, vector<pair<int, int> > > &func_cost) {
+    long long area = box_area(region);
     if (area < 0)
         // Area could not be determined
         return -1;
     auto &costs = func_cost[func];
-    int op_cost = get_func_cost(costs);
+    int op_cost = get_func_op_cost(costs);
 
-    int cost = area * (op_cost);
+    long long cost = area * (op_cost);
     return cost;
 }
 
-int region_cost(map<string, Box> &regions,
-                map<string, vector<pair<int, int> > > &func_cost) {
-    int total_cost = 0;
+long long region_cost(map<string, Box> &regions,
+                      map<string, vector<pair<int, int> > > &func_cost) {
+
+    long long total_cost = 0;
     for(auto &f: regions) {
         int cost = region_cost(f.first, f.second, func_cost);
         if (cost < 0)
@@ -1751,15 +1812,15 @@ int region_cost(map<string, Box> &regions,
     return total_cost;
 }
 
-int overlap_cost(string cons, Function prod, vector<map<string, Box> > &overlaps,
-                 map<string, vector<pair<int, int> > > &func_cost, int dim=-1) {
-    int total_area = 0;
+long long overlap_cost(string cons, Function prod, vector<map<string, Box> > &overlaps,
+                       map<string, vector<pair<int, int> > > &func_cost, int dim=-1) {
+    long long total_area = 0;
     assert((int)overlaps.size() > dim);
     for (unsigned int d = 0; d < overlaps.size(); d++) {
         // Overlap area
         if (overlaps[d].find(prod.name()) != overlaps[d].end()
                 && (dim==-1 || dim == (int)d) ) {
-            int area = box_area(overlaps[d][prod.name()]);
+            long long area = box_area(overlaps[d][prod.name()]);
             if (area >= 0)
                 total_area += area;
             else
@@ -1768,16 +1829,17 @@ int overlap_cost(string cons, Function prod, vector<map<string, Box> > &overlaps
         }
     }
     auto &costs = func_cost[prod.name()];
-    int op_cost = get_func_cost(costs);
-    int overlap_cost = total_area * (op_cost);
+    int op_cost = get_func_op_cost(costs);
+    long long overlap_cost = total_area * (op_cost);
     return overlap_cost;
 }
 
-int overlap_cost(string cons, vector<Function> &prods,
-                 vector<map<string, Box> > &overlaps,
-                 map<string, vector<pair<int, int> > > &func_cost, int dim=-1) {
+long long overlap_cost(string cons, vector<Function> &prods,
+                       vector<map<string, Box> > &overlaps,
+                       map<string, vector<pair<int, int> > > &func_cost,
+                       int dim=-1) {
 
-    int total_cost = 0;
+    long long total_cost = 0;
     for(auto& p: prods) {
         if (p.name()!=cons) {
             int cost = overlap_cost(cons, p, overlaps, func_cost, dim);
@@ -1868,8 +1930,8 @@ struct Partitioner {
     struct MachineParams {
         int parallelism;
         int vec_len;
-        int fast_mem_size;
-        int inline_size;
+        long long fast_mem_size;
+        long long inline_size;
         int balance_fast_mem;
         int balance_inline;
     };
@@ -1884,7 +1946,8 @@ struct Partitioner {
     map<string, set<string> > children;
 
     map<string, vector<int> > func_dim_estimates;
-    map<string, int > func_work;
+    map<string, long long > func_op;
+    map<string, long long > func_mem;
 
     map<pair<string, string>, Option> option_cache;
 
@@ -1935,19 +1998,24 @@ struct Partitioner {
         for (auto &f: analy.env) {
             const vector<string> &args = f.second.args();
             vector<int> dim_estimates;
-            int work = 1;
+            long long size = 1;
             for (unsigned int i = 0; i < args.size(); i++) {
                 int estimate = get_extent_estimate(f.second,
                                                    pipeline_bounds, i);
                 dim_estimates.push_back(estimate);
-                if (estimate != -1 && work != -1)
-                    work *= estimate;
+                if (estimate != -1 && size != -1)
+                    size *= estimate;
                 else
-                    work = -1;
+                    size = -1;
             }
-            if(work != -1)
-                work = get_func_cost(func_cost[f.first]) * work;
-            func_work[f.first] = work;
+            long long mem = size;
+            long long work = size;
+            if(size != -1) {
+                work = get_func_op_cost(func_cost[f.first]) * work;
+                mem = get_func_mem(func_cost[f.first]) * mem;
+            }
+            func_op[f.first] = work;
+            func_mem[f.first] = mem;
             func_dim_estimates[f.first] = dim_estimates;
 
         }
@@ -1974,7 +2042,7 @@ struct Partitioner {
         groups[child_group].insert(groups[child_group].end(),
                 cand_funcs.begin(), cand_funcs.end());
 
-        // Fix the children mapping
+        // Update the children mapping
         children.erase(cand_group);
         for (auto &f: children) {
             set<string> &children = f.second;
@@ -1987,7 +2055,8 @@ struct Partitioner {
         // Invalidate the option cache
         vector<pair<string, string> > invalid_keys;
         for (auto& c: option_cache) {
-            if (c.first.second == child_group)
+            if (c.first.second == child_group
+                    || c.first.first == child_group)
                 invalid_keys.push_back(c.first);
         }
 
@@ -2119,7 +2188,7 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
 
     vector<int> &dim_estimates_cons = func_dim_estimates[opt.cons_group];
 
-    int out_size = 1;
+    long long out_size = 1;
     for (unsigned int i = 0; i < args.size(); i++) {
         if (dim_estimates_cons[i] == -1) {
             // This option cannot be evaluated so discaring the option
@@ -2132,32 +2201,36 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
         }
     }
 
-    int tile_size = 1;
+    Box cons_box;
+    long long tile_size = 1;
     for (unsigned int i = 0; i < args.size(); i++) {
         if (opt.tile_sizes[i] != -1) {
             // Check if the bounds allow for tiling with the given tile size
             if (dim_estimates_cons[i] >= opt.tile_sizes[i]) {
                 bounds.push_back(make_pair(0, opt.tile_sizes[i] - 1));
-                tile_size = tile_size * (opt.tile_sizes[i] - 1);
+                tile_size = tile_size * (opt.tile_sizes[i]);
+                cons_box.push_back(Interval(0, opt.tile_sizes[i] -1));
             }
             else {
                 // If the dimension is too small do not tile it and set the
                 // extent of the bounds to that of the dimension estimate
                 opt.tile_sizes[i] = -1;
-                bounds.push_back(make_pair(0, dim_estimates_cons[i]-1));
+                bounds.push_back(make_pair(0, dim_estimates_cons[i] - 1));
                 tile_size = tile_size * (dim_estimates_cons[i]);
+                cons_box.push_back(Interval(0, dim_estimates_cons[i] - 1));
             }
         }
         else {
-            bounds.push_back(make_pair(0, dim_estimates_cons[i]-1));
+            bounds.push_back(make_pair(0, dim_estimates_cons[i] - 1));
             tile_size = tile_size * (dim_estimates_cons[i]);
+            cons_box.push_back(Interval(0, dim_estimates_cons[i] - 1));
         }
 
         eval.push_back(true);
     }
 
     // Count the number of tiles
-    int estimate_tiles = 1;
+    long long estimate_tiles = 1;
     float partial_tiles = 1;
     for (unsigned int i = 0; i < args.size(); i++) {
         if (opt.tile_sizes[i] != -1) {
@@ -2204,16 +2277,17 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
     // Determine size of intermediates
 
     // disp_regions(conc_reg);
-    map<string, Box> prod_reg;
+    map<string, Box> mem_reg;
     map<string, Box> prod_comp;
     // Do not count inlines while accounting for intermediate storage
     for (auto &f: prod_funcs) {
         if (inlines.find(f) == inlines.end() && l == Partitioner::FAST_MEM)
-            prod_reg[f] = conc_reg[f];
+            mem_reg[f] = conc_reg[f];
         prod_comp[f] = conc_reg[f];
     }
 
-    int inter_s = region_size(prod_reg, analy.env);
+    mem_reg[opt.cons_group] = cons_box;
+    long long inter_s = region_size(mem_reg, analy.env, analy.func_dep_regions);
 
     vector<Function> prods;
     for (auto &f: prod_funcs)
@@ -2222,68 +2296,95 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
     //for (auto &o: conc_overlaps)
     //    disp_regions(o);
 
-    int redundant_work = 0;
+    long long red_work_tile = 0;
     for (unsigned int i = 0; i < args.size(); i++) {
         if (opt.tile_sizes[i] != -1) {
-            int dir_red_work = overlap_cost(opt.cons_group, prods,
-                                            conc_overlaps, func_cost, i);
+            long long dir_red_work = overlap_cost(opt.cons_group, prods,
+                                                  conc_overlaps, func_cost, i);
             if (dir_red_work != -1) {
-                redundant_work += dir_red_work;
+                red_work_tile += dir_red_work;
             } else {
-                redundant_work = -1;
+                red_work_tile = -1;
                 break;
             }
         }
     }
 
-    int work_per_tile = region_cost(prod_comp, func_cost);
+    long long work_per_tile = region_cost(prod_comp, func_cost);
     float total_work = work_per_tile * partial_tiles;
 
-    int original_work = 0;
+    long long original_work = 0;
+    long long total_mem = 0;
     for (auto &f: prod_funcs) {
-        if (func_work[f] != -1) {
-            original_work += func_work[f];
+        if (func_op[f] != -1) {
+            original_work += func_op[f];
+            total_mem += func_mem[f];
         } else {
             original_work = -1;
+            total_mem = -1;
+            // Should be detected earilier or have to add bail out
+            // code here
+            assert(0);
             break;
         }
     }
+    if (total_mem != -1)
+        total_mem += func_mem[opt.cons_group];
+
 
     std::cout << std::endl;
     std::cout << "Evaluating benefit " << opt.prod_group << "->"
                                     << opt.cons_group << ":" << std::endl;
 
-    disp_regions(prod_reg);
+    disp_regions(mem_reg);
 
     std::cout << "Work per tile:" << work_per_tile << std::endl;
     std::cout << "Num tiles:" << estimate_tiles << std::endl;
     std::cout << "Partial tiles:" << partial_tiles << std::endl;
     std::cout << "Total work:" << total_work << std::endl;
+    std::cout << "Total mem:" << total_mem << std::endl;
     std::cout << "Original work:" << original_work << std::endl;
 
     std::cout << "Intermediate size:" << inter_s << std::endl;
-    opt.redundant_work = (float)redundant_work/tile_size;
 
-    std::cout << "Redundant work per output:" << opt.redundant_work << std::endl;
-    std::cout << "Redundant work overall using tiles:" << redundant_work * estimate_tiles << std::endl;
+    std::cout << "Redundant work per tile:" << red_work_tile << std::endl;
+    std::cout << "Redundant work overall using tiles:"
+                    << red_work_tile * estimate_tiles << std::endl;
     std::cout << "Redundant work overall:" <<
-                (float) (total_work - original_work) << std::endl;
+                    (total_work - original_work) << std::endl;
     std::cout << "Ratio of different measures:"
-        << (float) (total_work - original_work)/(redundant_work * estimate_tiles) << std::endl;
+              << (float) (total_work - original_work)/
+                         (red_work_tile * estimate_tiles) << std::endl;
 
+    opt.redundant_work = (total_work - original_work);
 
     float ai = (float)work_per_tile/inter_s;
     std::cout << "Arithmetic intensity:" << ai << std::endl;
 
-    if (inter_s <= arch_params.fast_mem_size) {
-        opt.benefit = (arch_params.balance_fast_mem)/ai - opt.redundant_work;
-        opt.benefit *= out_size;
-    }
-    else if (inter_s <= 2 * arch_params.fast_mem_size) {
-        int hit = std::max(2 * arch_params.fast_mem_size - inter_s, 0);
-        opt.benefit = ((float)hit/inter_s) * (arch_params.balance_fast_mem/ai) -
-                                                           opt.redundant_work;
-        opt.benefit *= out_size;
+    assert(total_mem > 0 && total_work > 0 && opt.redundant_work >= 0);
+
+    if (l == Partitioner::INLINE) {
+        if (inter_s <= arch_params.inline_size) {
+            opt.benefit = (total_mem) * (arch_params.balance_inline/ai)
+                           - opt.redundant_work;
+        }
+        else if (inter_s <= 2 * arch_params.inline_size) {
+            float hit = (float)std::max(2 * arch_params.inline_size - inter_s, 0LL)/inter_s;
+            float loads_saved = hit * total_mem;
+            opt.benefit = loads_saved * (arch_params.balance_inline/ai)
+                          - opt.redundant_work;
+        }
+    } else {
+        if (inter_s <= arch_params.fast_mem_size) {
+            opt.benefit = (total_mem) * (arch_params.balance_fast_mem/ai)
+                           - opt.redundant_work;
+        }
+        else if (inter_s <= 2 * arch_params.fast_mem_size) {
+            float hit = (float)std::max(2 * arch_params.fast_mem_size - inter_s, 0LL)/inter_s;
+            float loads_saved = hit * total_mem;
+            opt.benefit = loads_saved * (arch_params.balance_fast_mem/ai)
+                          - opt.redundant_work;
+        }
     }
 
     if (arch_params.parallelism > estimate_tiles) {
@@ -2356,7 +2457,7 @@ Partitioner::Option Partitioner::choose_candidate(
     // the machine constraints. This means the following things:
     //
     // 1) Do all the intermediate buffers fit in the fast level of memory. One
-    // needs to account for eary frees and the high watermark of intermediate
+    // needs to account for early frees and the high watermark of intermediate
     // storage. There might be performance gains by doing the buffer
     // allocation statically as opposed to dynamic allocation. It might be
     // useful to investigate this both on CPU and GPU architectures.
