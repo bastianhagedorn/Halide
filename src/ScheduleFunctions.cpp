@@ -2023,9 +2023,9 @@ struct Partitioner {
         // Initialize machine params
         arch_params.parallelism = 8;
         arch_params.vec_len = 8;
-        arch_params.balance_fast_mem = 5;
-        arch_params.balance_inline = 10;
-        arch_params.inline_size = 8 * 3;
+        arch_params.balance_fast_mem = 10;
+        arch_params.balance_inline = 5;
+        arch_params.inline_size = 32 * 4;
         //arch_params.fast_mem_size = 32 * 1024 * 8;
         arch_params.fast_mem_size = 32 * 1024 * 8;
         // L1 = 32K
@@ -2279,9 +2279,10 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
     // disp_regions(conc_reg);
     map<string, Box> mem_reg;
     map<string, Box> prod_comp;
-    // Do not count inlines while accounting for intermediate storage
+    // Do not count inlines while accounting for intermediate storage when
+    // grouping for fast mem
     for (auto &f: prod_funcs) {
-        if (inlines.find(f) == inlines.end() && l == Partitioner::FAST_MEM)
+        if (inlines.find(f) == inlines.end() || l == Partitioner::INLINE)
             mem_reg[f] = conc_reg[f];
         prod_comp[f] = conc_reg[f];
     }
@@ -2320,12 +2321,10 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
             original_work += func_op[f];
             total_mem += func_mem[f];
         } else {
-            original_work = -1;
-            total_mem = -1;
-            // Should be detected earilier or have to add bail out
-            // code here
-            assert(0);
-            break;
+            // This option cannot be evaluated
+            opt.benefit = -1;
+            opt.redundant_work = -1;
+            return;
         }
     }
     if (total_mem != -1)
@@ -2336,7 +2335,7 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
     std::cout << "Evaluating benefit " << opt.prod_group << "->"
                                     << opt.cons_group << ":" << std::endl;
 
-    disp_regions(mem_reg);
+    disp_regions(prod_comp);
 
     std::cout << "Work per tile:" << work_per_tile << std::endl;
     std::cout << "Num tiles:" << estimate_tiles << std::endl;
@@ -2356,33 +2355,31 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
               << (float) (total_work - original_work)/
                          (red_work_tile * estimate_tiles) << std::endl;
 
-    opt.redundant_work = (total_work - original_work);
+    // TODO check why total_work can be less than original_work
+    opt.redundant_work = std::max(total_work - original_work, 0.0f);
 
-    float ai = (float)work_per_tile/inter_s;
-    std::cout << "Arithmetic intensity:" << ai << std::endl;
-
-    assert(total_mem > 0 && total_work > 0 && opt.redundant_work >= 0);
+    assert(total_mem > 0 && total_work > 0 );
 
     if (l == Partitioner::INLINE) {
         if (inter_s <= arch_params.inline_size) {
-            opt.benefit = (total_mem) * (arch_params.balance_inline/ai)
+            opt.benefit = (total_mem) * (arch_params.balance_inline)
                            - opt.redundant_work;
         }
         else if (inter_s <= 2 * arch_params.inline_size) {
             float hit = (float)std::max(2 * arch_params.inline_size - inter_s, 0LL)/inter_s;
             float loads_saved = hit * total_mem;
-            opt.benefit = loads_saved * (arch_params.balance_inline/ai)
+            opt.benefit = loads_saved * (arch_params.balance_inline)
                           - opt.redundant_work;
         }
     } else {
         if (inter_s <= arch_params.fast_mem_size) {
-            opt.benefit = (total_mem) * (arch_params.balance_fast_mem/ai)
+            opt.benefit = (total_mem) * (arch_params.balance_fast_mem)
                            - opt.redundant_work;
         }
         else if (inter_s <= 2 * arch_params.fast_mem_size) {
             float hit = (float)std::max(2 * arch_params.fast_mem_size - inter_s, 0LL)/inter_s;
             float loads_saved = hit * total_mem;
-            opt.benefit = loads_saved * (arch_params.balance_fast_mem/ai)
+            opt.benefit = loads_saved * (arch_params.balance_fast_mem)
                           - opt.redundant_work;
         }
     }
@@ -2710,7 +2707,7 @@ void split_dim(Function &func, int dim, int split_size,
 
     old_name = dims[dim].var;
     inner_name = old_name + "." + prefix + "." + "in";
-    outer_name = old_name + "." +prefix + "." + "out";
+    outer_name = old_name + "." + prefix + "." + "out";
     dims.insert(dims.begin() + dim, dims[dim]);
     dims[dim].var = inner_name;
     dims[dim+1].var = outer_name;
@@ -2733,7 +2730,8 @@ void split_dim(Function &func, int dim, int split_size,
     dim_estimates.erase(old_name);
 }
 
-string fuse_dim(Function &func, int dim1, int dim2) {
+string fuse_dim(Function &func, int dim1, int dim2,
+                map<string, int> &dim_estimates) {
     // Add the fuse to the splits list
     string inner_name, outer_name, fused_name;
     vector<Dim> &dims = func.schedule().dims();
@@ -2746,6 +2744,17 @@ string fuse_dim(Function &func, int dim1, int dim2) {
     fused_name = inner_name + "." + outer_name;
     dims[dim2].var = fused_name;
     dims[dim2].pure &= outer_pure;
+
+    int out_estimate = dim_estimates[outer_name];
+    int in_estimate = dim_estimates[inner_name];
+
+    if (in_estimate > 0 && out_estimate > 0)
+        dim_estimates[fused_name] = out_estimate * in_estimate;
+    else
+        dim_estimates[fused_name] = -1;
+
+    dim_estimates.erase(outer_name);
+    dim_estimates.erase(inner_name);
 
     Split split = {fused_name, outer_name, inner_name, Expr(),
                    true, false, Split::FuseVars};
@@ -2815,25 +2824,29 @@ void pick_dim_to_parallelize(Function &f, map<string, int> &dim_estimates,
     //    std::cout << d.var << ",";
     //std::cout << std::endl;
     outer_dim = dims.size() - 2;
-    for (int i = outer_dim; i > 0; i--) {
-        //std::cout << dims[i].var << " Num Iter "
-        //          << dim_estimates[dims[i].var] << std::endl;
-        if (dim_estimates[dims[i].var] > parallelism) {
-            move_dim_to_outermost(f.schedule().dims(), i);
-            break;
-        }
+    int num_tile_dims = 0;
+    for (auto &d: sched.tile_sizes) {
+       if (d > 0)
+           num_tile_dims++;
     }
-    num_fused_dims = 0;
-    /*
-    int outer_dim = dims.size() - 2;
-    for (int i = outer_dim; i < sched.num_par_dims - 1; i++) {
-        if (outer_dim > 0) {
-            fuse_dim(g_out, outer_dim, outer_dim - 1);
+
+    if (sched.num_tile_dims > 0) {
+        int curr_par = 1;
+        for (int i = 0; i < num_tile_dims; i++) {
+            fuse_dim(g_out, outer_dim, outer_dim - 1, dim_estimates);
             outer_dim = dims.size() - 2;
             num_fused_dims++;
         }
+    } else {
+        for (int i = outer_dim; i > 0; i--) {
+            //std::cout << dims[i].var << " Num Iter "
+            //          << dim_estimates[dims[i].var] << std::endl;
+            if (dim_estimates[dims[i].var] > parallelism) {
+                move_dim_to_outermost(f.schedule().dims(), i);
+                break;
+            }
+        }
     }
-    */
 }
 
 bool check_bounds_on_outputs(const vector<Function> &outputs) {
