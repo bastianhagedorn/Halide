@@ -62,8 +62,10 @@ int main(int argc, char **argv) {
             // to prevent the footprint of the downsamplings to extend
             // too far off the base image. Otherwise we look 512
             // pixels off each edge.
-            Expr w = input.width()/(1 << l);
-            Expr h = input.height()/(1 << l);
+            //Expr w = input.width()/(1 << l);
+            //Expr h = input.height()/(1 << l);
+            Expr w = 1536/(1 << l);
+            Expr h = 2560/(1 << l);
             prev = lambda(x, y, c, prev(clamp(x, 0, w), clamp(y, 0, h), c));
         }
 

@@ -2024,7 +2024,7 @@ struct Partitioner {
         arch_params.parallelism = 8;
         arch_params.vec_len = 8;
         arch_params.balance_fast_mem = 10;
-        arch_params.balance_inline = 5;
+        arch_params.balance_inline = 4;
         arch_params.inline_size = 32 * 4;
         //arch_params.fast_mem_size = 32 * 1024 * 8;
         arch_params.fast_mem_size = 32 * 1024 * 8;
@@ -2814,8 +2814,8 @@ void simple_vectorize(Function &func, map<string, int> &dim_estimates,
 }
 
 void pick_dim_to_parallelize(Function &f, map<string, int> &dim_estimates,
-                             int parallelism, int &outer_dim,
-                             int& num_fused_dims) {
+                             int parallelism, Partitioner::GroupSched &sched,
+                             int &outer_dim, int& num_fused_dims) {
     // TODO Check which is better fusing the dimensions or moving
     // the right dimension out and parallelizing it
     //std::cout << "Parallel Dim Choice " << f.name() << std::endl;
@@ -2826,16 +2826,19 @@ void pick_dim_to_parallelize(Function &f, map<string, int> &dim_estimates,
     outer_dim = dims.size() - 2;
     int num_tile_dims = 0;
     for (auto &d: sched.tile_sizes) {
-       if (d > 0)
+       if (d > 1)
            num_tile_dims++;
     }
 
-    if (sched.num_tile_dims > 0) {
-        int curr_par = 1;
+    if (num_tile_dims > 0) {
         for (int i = 0; i < num_tile_dims; i++) {
-            fuse_dim(g_out, outer_dim, outer_dim - 1, dim_estimates);
-            outer_dim = dims.size() - 2;
-            num_fused_dims++;
+            if (dim_estimates[dims[outer_dim].var] > parallelism)
+                break;
+            else {
+                fuse_dim(f, outer_dim, outer_dim - 1, dim_estimates);
+                outer_dim = dims.size() - 2;
+                num_fused_dims++;
+            }
         }
     } else {
         for (int i = outer_dim; i > 0; i--) {
@@ -3125,16 +3128,16 @@ void schedule_advisor(const vector<Function> &outputs,
                 }
                 int outer_dim = -1;
                 pick_dim_to_parallelize(g_out, dim_estimates, parallelism,
-                                        outer_dim, num_fused_dims);
+                                        sched, outer_dim, num_fused_dims);
 
                 if (auto_par && outer_dim !=-1)
                     parallelize_dim(g_out.schedule().dims(), outer_dim);
 
             } else {
-                // Consider vectorization of RDoms
+                // TODO Consider vectorization of RDoms
                 int outer_dim = -1;
                 pick_dim_to_parallelize(g_out, dim_estimates, parallelism,
-                                        outer_dim, num_fused_dims);
+                                        sched, outer_dim, num_fused_dims);
                 if (auto_par && outer_dim!=-1)
                     parallelize_dim(g_out.schedule().dims(), outer_dim);
 
