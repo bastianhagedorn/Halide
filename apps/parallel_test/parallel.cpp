@@ -23,7 +23,7 @@ int main(int argc, char **argv) {
     int sched = atoi(argv[1]);
     Target target = get_target_from_environment();
     if (sched == 0) {
-        f.parallel(c).vectorize(x, 8);
+        f.parallel(y).vectorize(x, 8);
     }
 
     f.bound(x, 0, 1536).bound(y, 0, 2560).bound(c, 0, 3);
