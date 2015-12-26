@@ -28,11 +28,11 @@ int main(int argc, char **argv) {
 
     int sched = atoi(argv[1]);
     Target target = get_target_from_environment();
-    if (sched == 0) {
+    if (sched == 1) {
         // Testing when there is no inlining
         g.split(y, y, yi, 64).reorder(yi, c, y).parallel(y).vectorize(x, 8);
         f.compute_at(g, c).vectorize(x, 8);
-    } else if (sched == 1) {
+    } else if (sched == 0) {
         // Testing when there is inlining
         g.reorder(c, y).parallel(y).vectorize(x, 8);
     }

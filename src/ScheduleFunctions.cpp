@@ -1785,6 +1785,41 @@ int get_func_mem(vector<pair<int, int> > &costs) {
     return mem_cost;
 }
 
+long long region_cost_inline(string func, vector<string> &inline_reg,
+                             map<string, map<string, int> > &func_calls,
+                             map<string, vector<pair<int, int> > > &func_cost) {
+
+    map<string, int> calls;
+    for (auto&c: func_calls[func])
+        calls[c.first] = c.second;
+
+    // Find the total number of calls to functions outside the inline region
+    bool fixpoint = false;
+    long long total_cost = 0;
+    while(!fixpoint) {
+        fixpoint = true;
+        for (auto& p: inline_reg) {
+            if (calls.find(p) != calls.end()) {
+                int num_calls = calls[p];
+                assert(num_calls > 0);
+                auto &costs = func_cost[p];
+                int op_cost = get_func_op_cost(costs);
+                total_cost += num_calls * op_cost;
+                for (auto &c: func_calls[p]) {
+                    if (calls.find(c.first) != calls.end())
+                        calls[c.first] += num_calls * c.second;
+                    else
+                        calls[c.first] = num_calls * c.second;
+                }
+                calls.erase(p);
+                fixpoint = false;
+            }
+        }
+    }
+
+    return total_cost;
+}
+
 long long region_cost(string func, Box &region,
                       map<string, vector<pair<int, int> > > &func_cost) {
     long long area = box_area(region);
@@ -1901,6 +1936,14 @@ int get_extent_estimate(Function &f, map<string, Box> &bounds, int dim) {
     return estimate;
 }
 
+void disp_func_calls(map<string, map<string, int> > &func_calls) {
+    for (auto &f: func_calls) {
+        std::cout << "Calls in function " << f.first << std::endl;
+        for (auto &c: f.second)
+            std::cout << c.first << " " << c.second << std::endl;
+    }
+}
+
 struct Partitioner {
 
     struct Option {
@@ -1948,6 +1991,7 @@ struct Partitioner {
     map<string, vector<int> > func_dim_estimates;
     map<string, long long > func_op;
     map<string, long long > func_mem;
+    map<string, map<string, int> > func_calls;
 
     map<pair<string, string>, Option> option_cache;
 
@@ -1994,6 +2038,22 @@ struct Partitioner {
 
             group_sched[g.first] = sched;
         }
+
+        // Compute the amount of work done when inlining
+
+        // Build a table of num_calls to each internal Halide function when
+        // each function
+        for (auto &f: analy.env) {
+            map<string, int> num_calls;
+            FindCallArgs find;
+            f.second.accept(&find);
+            for(auto &c: find.calls) {
+                num_calls[c.first] = c.second.size();
+            }
+            func_calls[f.first] = num_calls;
+        }
+
+        disp_func_calls(func_calls);
 
         for (auto &f: analy.env) {
             const vector<string> &args = f.second.args();
@@ -2288,7 +2348,6 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
     }
 
     mem_reg[opt.cons_group] = cons_box;
-    long long inter_s = region_size(mem_reg, analy.env, analy.func_dep_regions);
 
     vector<Function> prods;
     for (auto &f: prod_funcs)
@@ -2311,7 +2370,21 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
         }
     }
 
-    long long work_per_tile = region_cost(prod_comp, func_cost);
+    long long work_per_tile = 0;
+    long long inter_s = 0; region_size(mem_reg, analy.env, analy.func_dep_regions);
+    // TODO the redundant compute introduced by inlines has to account for
+    // separately when doing grouping for fast memory
+    if (l == Partitioner::INLINE) {
+        work_per_tile = region_cost_inline(opt.cons_group, prod_funcs,
+                                           func_calls, func_cost);
+        // This is just a proxy has to be replaced with a better metric
+        inter_s = work_per_tile;
+    }
+    else {
+        work_per_tile = region_cost(prod_comp, func_cost);
+        inter_s = region_size(mem_reg, analy.env, analy.func_dep_regions);
+    }
+
     float total_work = work_per_tile * partial_tiles;
 
     long long original_work = 0;
@@ -2356,9 +2429,10 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
                          (red_work_tile * estimate_tiles) << std::endl;
 
     // TODO check why total_work can be less than original_work
-    opt.redundant_work = std::max(total_work - original_work, 0.0f);
+    // It can be and it is super interesting
+    opt.redundant_work = total_work - original_work;
 
-    assert(total_mem > 0 && total_work > 0 );
+    assert(total_mem > 0 && total_work > 0);
 
     if (l == Partitioner::INLINE) {
         if (inter_s <= arch_params.inline_size) {
@@ -3025,10 +3099,10 @@ void schedule_advisor(const vector<Function> &outputs,
 
         // Grouping
         Partitioner part(pipeline_bounds, inlines, analy, func_cost);
-        // part.group(Partitioner::INLINE);
+        part.group(Partitioner::INLINE);
         // Clear the option cache
-        part.option_cache.clear();
-        part.group(Partitioner::FAST_MEM);
+        //part.option_cache.clear();
+        //part.group(Partitioner::FAST_MEM);
 
         int vec_len = part.arch_params.vec_len;
         //disp_grouping(groups);

@@ -190,6 +190,7 @@ int main(int argc, char **argv) {
             gPyramid[j].compute_root().parallel(k);
             outGPyramid[j].compute_root();
         }
+        output.print_loop_nest();
     }
 
     if (schedule == -1)
