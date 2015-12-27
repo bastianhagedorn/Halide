@@ -1,11 +1,8 @@
-1) Fix the bounds inference to use the provided bounds more effectively
-2) Integrate inlining phase with existing overlap tiling phase
-3) Implement a proper inlining pass (should fix local laplacian)
-4) Explaing why the single child fusion is a restriction when doing inlining
-   and is a general problem with Halide scheduling overall. Inlining effects
-   all children and compute_at only works when there is a single child.
+1) Splitting (should fix local laplacian and multi-scale interpolate)
+2) Splitting test
+3) Add Harris corner detection
+4) Add Unsharp mask
+5) Fix conv layer
+6) Add histogram normalization
 
-   Add an example of this to the test suite.
-5) Check cost function sanity by implementing a large series of stencils
-6) Check bounds inference by adding test cases where there are data dependent
-   accesses
+How general should we make the splitting

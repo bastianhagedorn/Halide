@@ -1897,7 +1897,7 @@ long long overlap_cost(string cons, vector<Function> &prods,
 
 void add_children(map<string, set<string> > &children,
                   map<string, Function> &calls,
-                  map<string, string> &inlines, string func) {
+                  map<string, vector<string> > &inlines, string func) {
     for (auto &c: calls) {
         if (inlines.find(c.first) == inlines.end())
             children[c.first].insert(func);
@@ -1987,7 +1987,7 @@ struct Partitioner {
     };
 
     map<string, Box> &pipeline_bounds;
-    map<string, string> &inlines;
+    map<string, vector<string> > &inlines;
     DependenceAnalysis &analy;
     map<string, vector<pair<int, int> > > &func_cost;
 
@@ -2005,7 +2005,7 @@ struct Partitioner {
     MachineParams arch_params;
 
     Partitioner(map<string, Box> &_pipeline_bounds,
-                map<string, string> &_inlines, DependenceAnalysis &_analy,
+                map<string, vector<string> > &_inlines, DependenceAnalysis &_analy,
                 map<string, vector<pair<int, int> > > &_func_cost):
                 pipeline_bounds(_pipeline_bounds), inlines(_inlines),
                 analy(_analy), func_cost(_func_cost) {
@@ -2098,7 +2098,7 @@ struct Partitioner {
         arch_params.vec_len = 8;
         arch_params.balance_fast_mem = 10;
         arch_params.balance_inline = 10;
-        arch_params.inline_size = 32 * 4;
+        arch_params.inline_size = 32 * 4 * 8;
         //arch_params.fast_mem_size = 32 * 1024 * 8;
         arch_params.fast_mem_size = 32 * 1024 * 8;
         // L1 = 32K
@@ -2167,28 +2167,33 @@ void Partitioner::group(Partitioner::Level level) {
     bool fixpoint = false;
     while(!fixpoint) {
         fixpoint = true;
-        vector< pair<string, string> > cand_pairs;
-        // Find all the groups which have a single child
+        vector< pair<string, string> > cand;
         for (auto &g: groups) {
             if (children.find(g.first) != children.end()) {
                 // TODO be careful about inputs and outputs to the pipeline
                 int num_children = children[g.first].size();
-                if (num_children == 1) {
-                    auto cand = make_pair(g.first, *children[g.first].begin());
-                    cand_pairs.push_back(cand);
+                // Find all the groups which have a single child
+                if (level == Partitioner::INLINE) {
+                    if (num_children == 1) {
+                        auto cand = make_pair(g.first, children[g.first]);
+                        cand.push_back(cand);
+                    }
+                } else {
+                    auto cand = make_pair(g.first, children[g.first]);
+                    cand.push_back(cand);
                 }
             }
         }
-        for (auto &p: cand_pairs) {
+        for (auto &p: cand) {
             std::cout << "[" << p.first << "," << p.second << "]";
         }
         std::cout << std::endl;
         // Pick a pair of groups to merge. This is a tricky choice.
         Option best;
         if (level == Partitioner::INLINE)
-            best = choose_candidate_inline(cand_pairs);
+            best = choose_candidate_inline(cand);
         else
-            best = choose_candidate(cand_pairs);
+            best = choose_candidate(cand);
 
         if (best.benefit != -1) {
             if (level == Partitioner::INLINE) {
@@ -2698,15 +2703,19 @@ void disp_schedule_and_storage_mapping(map<string, Function> &env) {
     std::cout << std::endl;
 }
 
-void disp_inlines(map<string, string> &inlines) {
-    for (auto& in: inlines)
-        std::cout << in.first << "->" << in.second << std::endl;
+void disp_inlines(map<string, vector<string> > &inlines) {
+    for (auto& in: inlines) {
+        std::cout << in.first << "-> [";
+        for (auto& c: in.second)
+            std::cout << c << " ";
+        std::cout << "]" << std::endl;
+    }
 }
 
 map<string, string> simple_inline(map<string, vector<const Call*>> &all_calls,
                                   map<string, vector<string> > &consumers,
                                   map<string, Function> &env) {
-    map<string, string> inlines;
+    map<string, vector<string> > inlines;
     for (auto& fcalls: all_calls) {
         // Check if all arguments to the function call over all the calls are
         // one-to-one. If this holds and the number of calls == 1 it is a good
@@ -2725,13 +2734,13 @@ map<string, string> simple_inline(map<string, vector<const Call*>> &all_calls,
         }
         if (consumers[fcalls.first].size() == 1 &&
             all_one_to_one && num_calls == 1) {
-            inlines[fcalls.first] = consumers[fcalls.first][0];
+            inlines[fcalls.first].push_back(consumers[fcalls.first][0]);
             env[fcalls.first].schedule().store_level().var = "";
             env[fcalls.first].schedule().compute_level().var = "";
         }
         if (env[fcalls.first].is_boundary() || env[fcalls.first].is_lambda()) {
             assert(consumers[fcalls.first].size() == 1);
-            inlines[fcalls.first] = consumers[fcalls.first][0];
+            inlines[fcalls.first].push_back(consumers[fcalls.first][0]);
             env[fcalls.first].schedule().store_level().var = "";
             env[fcalls.first].schedule().compute_level().var = "";
         }
@@ -3033,14 +3042,21 @@ void schedule_advisor(const vector<Function> &outputs,
     }
 
     // Make obvious inline decisions early
-    map<string, string> inlines;
+    map<string, vector<string> > inlines;
     // No longer needed grouping for inlining will take care of this
     /*
     if (auto_inline)
         inlines = simple_inline(all_calls, consumers, env);
     */
-
     std::cout << "Inlining:" << std::endl;
+    for (auto &f: env) {
+    if (env[f.first].is_boundary() || env[f.first].is_lambda()) {
+            assert(consumers[f.first].size() == 1);
+            inlines[f.first].push_back(consumers[f.first][0]);
+            env[f.first].schedule().store_level().var = "";
+            env[f.first].schedule().compute_level().var = "";
+        }
+    }
     disp_inlines(inlines);
     std::cout << std::endl;
 

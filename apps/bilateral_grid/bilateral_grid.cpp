@@ -46,9 +46,9 @@ int main(int argc, char **argv) {
                          blurx(x, y+1, z, c)*4 +
                          blurx(x, y+2, z, c));
 
-    blurz.bound(z, 0, 32);
-    blurx.bound(z, 0, 32);
-    blury.bound(z, 0, 32);
+    blurz.bound(z, 0, 12);
+    blurx.bound(z, 0, 12);
+    blury.bound(z, 0, 12);
 
     // Take trilinear samples to compute the output
     val = clamp(input(x, y), 0.0f, 1.0f);
