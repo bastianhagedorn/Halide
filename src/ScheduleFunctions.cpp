@@ -2023,14 +2023,15 @@ struct Partitioner {
         // disp_children(children);
         // Add inlined functions to their child group
         for (auto &in: inlines) {
-            string dest = in.second;
-            if (groups.find(dest) == groups.end()) {
-                for (auto &g: groups)
-                    for (auto &m: g.second)
-                        if (m.name() == dest)
-                            dest = g.first;
+            for (auto &dest: in.second) {
+                if (groups.find(dest) == groups.end()) {
+                    for (auto &g: groups)
+                        for (auto &m: g.second)
+                            if (m.name() == dest)
+                                dest = g.first;
+                }
+                merge_groups(in.first, dest);
             }
-            merge_groups(in.first, dest);
         }
 
         for (auto &g: groups) {
@@ -2156,8 +2157,8 @@ struct Partitioner {
         std::cout << "Redundant Work:" << opt.redundant_work << std::endl;
     }
 
-    Option choose_candidate(const vector< pair<string, string> > &cand_pairs);
-    Option choose_candidate_inline(const vector< pair<string, string> > &cand_pairs);
+    Option choose_candidate(const vector< pair<string, vector<string> > > &cand_pairs);
+    Option choose_candidate_inline(const vector< pair<string, vector<string> > > &cand_pairs);
     void group(Partitioner::Level level);
     void evaluate_option(Option &opt, Partitioner::Level level);
 };
@@ -2167,25 +2168,25 @@ void Partitioner::group(Partitioner::Level level) {
     bool fixpoint = false;
     while(!fixpoint) {
         fixpoint = true;
-        vector< pair<string, string> > cand;
+        vector< pair<string, vector<string> > > cand;
         for (auto &g: groups) {
             if (children.find(g.first) != children.end()) {
                 // TODO be careful about inputs and outputs to the pipeline
                 int num_children = children[g.first].size();
                 // Find all the groups which have a single child
-                if (level == Partitioner::INLINE) {
-                    if (num_children == 1) {
-                        auto cand = make_pair(g.first, children[g.first]);
-                        cand.push_back(cand);
-                    }
-                } else {
-                    auto cand = make_pair(g.first, children[g.first]);
-                    cand.push_back(cand);
+                if (num_children == 1 || level == Partitioner::INLINE) {
+                    vector<string> cons(children[g.first].size());
+                    std::copy(children[g.first].begin(),
+                            children[g.first].end(), cons.begin());
+                    cand.push_back(make_pair(g.first, cons));
                 }
             }
         }
         for (auto &p: cand) {
-            std::cout << "[" << p.first << "," << p.second << "]";
+            std::cout << "[" << p.first << "," << "[";
+            for (auto &c: p.second)
+                std::cout << c << " ";
+            std::cout << "]";
         }
         std::cout << std::endl;
         // Pick a pair of groups to merge. This is a tricky choice.
@@ -2206,7 +2207,7 @@ void Partitioner::group(Partitioner::Level level) {
 
                 // Inline the producer group into the consumer group i.e.,
                 // add the producer group to the set of inlines
-                inlines[best.prod_group] = best.cons_group;
+                inlines[best.prod_group].push_back(best.cons_group);
                 analy.env[best.prod_group].schedule().store_level().var = "";
                 analy.env[best.prod_group].schedule().compute_level().var = "";
             }
@@ -2489,7 +2490,7 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
 }
 
 Partitioner::Option Partitioner::choose_candidate_inline(
-                    const vector< pair<string, string> > &cand_pairs) {
+                    const vector< pair<string, vector<string> > > &cand_pairs) {
 
     vector<Option> options;
     vector<int> size_variants = {1};
@@ -2498,10 +2499,11 @@ Partitioner::Option Partitioner::choose_candidate_inline(
 
     for (auto &p: cand_pairs) {
         Option cand_opt;
+        pair<string, string> key = make_pair(p.first, p.second[0]);
         // Check if the pair has been evaluated before
-        if (option_cache.find(p) != option_cache.end()) {
+        if (option_cache.find(key) != option_cache.end()) {
             //std::cout << "Hit:" << p.first << "," << p.second << std::endl;
-            cand_opt = option_cache[p];
+            cand_opt = option_cache[key];
             if (best_opt.benefit < cand_opt.benefit)
                 best_opt = cand_opt;
             continue;
@@ -2511,11 +2513,11 @@ Partitioner::Option Partitioner::choose_candidate_inline(
         // with tile size 1 in all dimensions
 
         // Get the output function of the child group
-        Function output = analy.env[p.second];
+        Function output = analy.env[p.second[0]];
         const vector<string> &args = output.args();
 
         cand_opt.prod_group = p.first;
-        cand_opt.cons_group = p.second;
+        cand_opt.cons_group = p.second[0];
         cand_opt.benefit = -1;
 
         for (unsigned int i = 0; i < args.size(); i++)
@@ -2527,13 +2529,13 @@ Partitioner::Option Partitioner::choose_candidate_inline(
             best_opt = cand_opt;
 
         // Cache the result of the evaluation for the pair
-        option_cache[p] = cand_opt;
+        option_cache[key] = cand_opt;
     }
     return best_opt;
 }
 
 Partitioner::Option Partitioner::choose_candidate(
-                    const vector< pair<string, string> > &cand_pairs) {
+                    const vector< pair<string, vector<string> > > &cand_pairs) {
 
     // The choose candidate operates by considering many posssible fusion
     // structures between each pair of candidates. The options considered are
@@ -2590,12 +2592,13 @@ Partitioner::Option Partitioner::choose_candidate(
     best_opt.benefit = -1;
 
     for (auto &p: cand_pairs) {
-
+        assert(p.second.size() == 1);
+        pair<string, string> key = make_pair(p.first, p.second[0]);
         Option cand_best_opt;
         // Check if the pair has been evaluated before
-        if (option_cache.find(p) != option_cache.end()) {
+        if (option_cache.find(key) != option_cache.end()) {
             //std::cout << "Hit:" << p.first << "," << p.second << std::endl;
-            cand_best_opt = option_cache[p];
+            cand_best_opt = option_cache[key];
             if (best_opt.benefit < cand_best_opt.benefit)
                 best_opt = cand_best_opt;
             continue;
@@ -2605,7 +2608,7 @@ Partitioner::Option Partitioner::choose_candidate(
         // and evaluate them
 
         // Get the output function of the child group
-        Function output = analy.env[p.second];
+        Function output = analy.env[p.second[0]];
         const vector<string> &args = output.args();
 
         // Order the dimensions by amount of redundant compute
@@ -2627,29 +2630,20 @@ Partitioner::Option Partitioner::choose_candidate(
         } */
 
         bool invalid = false;
-        long long prod_out_size = 0;
         vector<int> &dim_estimates_prod = func_dim_estimates[p.first];
-        const vector<Type> &types = analy.env[p.first].output_types();
-        for(unsigned int i = 0; i < types.size(); i++)
-            prod_out_size += types[i].bytes();
 
         const vector<string> &args_prod = analy.env[p.first].args();
         for (unsigned int i = 0; i < args_prod.size(); i++) {
             if (dim_estimates_prod[i] == -1) {
                 // This option cannot be evaluated so discaring the option
                 invalid = true;
-            } else {
-                prod_out_size = prod_out_size * dim_estimates_prod[i];
             }
         }
 
-        if (prod_out_size < arch_params.fast_mem_size)
-            invalid = true;
-
-
         cand_best_opt.prod_group = p.first;
-        cand_best_opt.cons_group = p.second;
+        cand_best_opt.cons_group = p.second[0];
         cand_best_opt.benefit = -1;
+
         if (!invalid) {
             // From the outer to the inner most argument
             for (int i = (int)args.size() - 1; i >= 0; i--) {
@@ -2658,7 +2652,7 @@ Partitioner::Option Partitioner::choose_candidate(
                 for (auto s: size_variants) {
                     Option opt;
                     opt.prod_group = p.first;
-                    opt.cons_group = p.second;
+                    opt.cons_group = p.second[0];
                     opt.benefit = -1;
 
                     for (int j = 0; j < i; j++)
@@ -2676,7 +2670,7 @@ Partitioner::Option Partitioner::choose_candidate(
         }
 
         // Cache the result of the evaluation for the pair
-        option_cache[p] = cand_best_opt;
+        option_cache[key] = cand_best_opt;
         if (best_opt.benefit < cand_best_opt.benefit)
             best_opt = cand_best_opt;
     }
@@ -2712,9 +2706,10 @@ void disp_inlines(map<string, vector<string> > &inlines) {
     }
 }
 
-map<string, string> simple_inline(map<string, vector<const Call*>> &all_calls,
-                                  map<string, vector<string> > &consumers,
-                                  map<string, Function> &env) {
+map<string, vector<string>>
+simple_inline(map<string, vector<const Call*>> &all_calls,
+              map<string, vector<string> > &consumers,
+              map<string, Function> &env) {
     map<string, vector<string> > inlines;
     for (auto& fcalls: all_calls) {
         // Check if all arguments to the function call over all the calls are
