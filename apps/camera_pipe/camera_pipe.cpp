@@ -20,27 +20,27 @@ Func hot_pixel_suppression(Func input) {
     Expr b = min(min(input(x-2, y), input(x+2, y)),
                  min(input(x, y-2), input(x, y+2)));
 
-    Func denoised;
+    Func denoised("denoised");
     denoised(x, y) = clamp(input(x, y), b, a);
 
     return denoised;
 }
 
 Func interleave_x(Func a, Func b) {
-    Func out;
+    Func out("inter_x");
     out(x, y) = select((x%2)==0, a(x/2, y), b(x/2, y));
     return out;
 }
 
 Func interleave_y(Func a, Func b) {
-    Func out;
+    Func out("inter_y");
     out(x, y) = select((y%2)==0, a(x, y/2), b(x, y/2));
     return out;
 }
 
 Func deinterleave(Func raw) {
     // Deinterleave the color channels
-    Func deinterleaved;
+    Func deinterleaved("deinterleaved");
 
     deinterleaved(x, y, c) = select(c == 0, raw(2*x, 2*y),
                                     select(c == 1, raw(2*x+1, 2*y),
@@ -56,14 +56,15 @@ Func demosaic(Func deinterleaved) {
     // gr refers to green sites in the red rows
 
     // Give more convenient names to the four channels we know
-    Func r_r, g_gr, g_gb, b_b;
+    Func r_r("r_r"), g_gr("g_gr"), g_gb("g_gb"), b_b("b_b");
     g_gr(x, y) = deinterleaved(x, y, 0);
     r_r(x, y)  = deinterleaved(x, y, 1);
     b_b(x, y)  = deinterleaved(x, y, 2);
     g_gb(x, y) = deinterleaved(x, y, 3);
 
     // These are the ones we need to interpolate
-    Func b_r, g_r, b_gr, r_gr, b_gb, r_gb, r_b, g_b;
+    Func b_r("b_r"), g_r("g_r"), b_gr("b_gr"), r_gr("r_gr"),
+         b_gb("b_gb"), r_gb("r_gb"), r_b("r_b"), g_b("g_b");
 
     // First calculate green at the red and blue sites
 
@@ -141,7 +142,7 @@ Func demosaic(Func deinterleaved) {
     Func b = interleave_y(interleave_x(b_gr, b_r),
                           interleave_x(b_b, b_gb));
 
-    Func output;
+    Func output("output");
     output(x, y, c) = select(c == 0, r(x, y),
                              c == 1, g(x, y),
                                      b(x, y));
@@ -150,16 +151,6 @@ Func demosaic(Func deinterleaved) {
     if (schedule == 0) {
         // optimized for ARM
         // Compute these in chunks over tiles, vectorized by 8
-        g_r.compute_at(processed, tx).vectorize(x);
-        g_b.compute_at(processed, tx).vectorize(x);
-        r_gr.compute_at(processed, tx).vectorize(x);
-        b_gr.compute_at(processed, tx).vectorize(x);
-        r_gb.compute_at(processed, tx).vectorize(x);
-        b_gb.compute_at(processed, tx).vectorize(x);
-        r_b.compute_at(processed, tx).vectorize(x);
-        b_r.compute_at(processed, tx).vectorize(x);
-
-        /*
         g_r.compute_at(processed, tx).vectorize(x, 8);
         g_b.compute_at(processed, tx).vectorize(x, 8);
         r_gr.compute_at(processed, tx).vectorize(x, 8);
@@ -167,12 +158,12 @@ Func demosaic(Func deinterleaved) {
         r_gb.compute_at(processed, tx).vectorize(x, 8);
         b_gb.compute_at(processed, tx).vectorize(x, 8);
         r_b.compute_at(processed, tx).vectorize(x, 8);
-        b_r.compute_at(processed, tx).vectorize(x, 8);*/
+        b_r.compute_at(processed, tx).vectorize(x, 8);
         // These interleave in y, so unrolling them in y helps
         output.compute_at(processed, tx)
-            .vectorize(x, 8);
-            /*.unroll(y, 2)
-            .reorder(c, x, y).bound(c, 0, 3).unroll(c)*/;
+            .vectorize(x, 8)
+            .unroll(y, 2)
+            .reorder(c, x, y).bound(c, 0, 3).unroll(c);
     } else if (schedule == 1) {
         // optimized for X86
         // Don't vectorize, because sse is bad at 16-bit interleaving
@@ -208,13 +199,13 @@ Func color_correct(Func input, ImageParam matrix_3200, ImageParam matrix_7000, P
     // Get a color matrix by linearly interpolating between two
     // calibrated matrices using inverse kelvin.
 
-    Func matrix;
+    Func matrix("matrix");
     Expr alpha = (1.0f/kelvin - 1.0f/3200) / (1.0f/7000 - 1.0f/3200);
     Expr val =  (matrix_3200(x, y) * alpha + matrix_7000(x, y) * (1 - alpha));
     matrix(x, y) = cast<int32_t>(val * 256.0f); // Q8.8 fixed point
     matrix.compute_root();
 
-    Func corrected;
+    Func corrected("corrected");
     Expr ir = cast<int32_t>(input(x, y, 0));
     Expr ig = cast<int32_t>(input(x, y, 1));
     Expr ib = cast<int32_t>(input(x, y, 2));
@@ -274,12 +265,13 @@ Func process(Func raw, Type result_type,
     if (schedule == 0) {
         // Compute in chunks over tiles, vectorized by 8
         denoised.compute_at(processed, tx).vectorize(x, 8);
-        deinterleaved.compute_at(processed, tx).vectorize(x, 8)/*.reorder(c, x,
-                y).unroll(c)*/;
-        corrected.compute_at(processed, tx).vectorize(x, 4)/*.reorder(c, x,
-                y).unroll(c)*/;
+        deinterleaved.compute_at(processed, tx).vectorize(x, 8).reorder(c, x,
+                y).unroll(c);
+        corrected.compute_at(processed, tx).vectorize(x, 4).reorder(c, x,
+                y).unroll(c);
         processed.tile(tx, ty, xi, yi, 128, 32).reorder(xi, yi, c, tx, ty);
         processed.parallel(ty);
+        processed.print_loop_nest();
     } else if (schedule == 1) {
         // Same as above, but don't vectorize (sse is bad at interleaved 16-bit ops)
         denoised.compute_at(processed, tx);
@@ -310,7 +302,7 @@ int main(int argc, char **argv) {
     // boundaries so that we don't need to check bounds. We're going
     // to make a 2560x1920 output image, just like the FCam pipe, so
     // shift by 16, 12
-    Func shifted;
+    Func shifted("shifted");
     shifted(x, y) = input(x+16, y+12);
 
     // Parameterized output type, because LLVM PTX (GPU) backend does not

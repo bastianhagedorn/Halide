@@ -1210,31 +1210,34 @@ class ExprCostEarly : public IRVisitor {
         void visit(const UIntImm *) {}
         void visit(const FloatImm *) {}
         void visit(const StringImm *) {}
-        void visit(const Cast *) { ops+=1; }
+        void visit(const Cast * op) {
+            op->value.accept(this);
+            ops+=1;
+        }
         void visit(const Variable *) {}
 
         template<typename T>
-            void visit_binary_operator(const T *op) {
+            void visit_binary_operator(const T *op, int cost) {
                 op->a.accept(this);
                 op->b.accept(this);
-                ops += 1;
+                ops += cost;
             }
 
-        void visit(const Add *op) {visit_binary_operator(op);}
-        void visit(const Sub *op) {visit_binary_operator(op);}
-        void visit(const Mul *op) {visit_binary_operator(op);}
-        void visit(const Div *op) {visit_binary_operator(op);}
-        void visit(const Mod *op) {visit_binary_operator(op);}
-        void visit(const Min *op) {visit_binary_operator(op);}
-        void visit(const Max *op) {visit_binary_operator(op);}
-        void visit(const EQ *op) {visit_binary_operator(op);}
-        void visit(const NE *op) {visit_binary_operator(op);}
-        void visit(const LT *op) {visit_binary_operator(op);}
-        void visit(const LE *op) {visit_binary_operator(op);}
-        void visit(const GT *op) {visit_binary_operator(op);}
-        void visit(const GE *op) {visit_binary_operator(op);}
-        void visit(const And *op) {visit_binary_operator(op);}
-        void visit(const Or *op) {visit_binary_operator(op);}
+        void visit(const Add *op) {visit_binary_operator(op, 1);}
+        void visit(const Sub *op) {visit_binary_operator(op, 1);}
+        void visit(const Mul *op) {visit_binary_operator(op, 1);}
+        void visit(const Div *op) {visit_binary_operator(op, 4);}
+        void visit(const Mod *op) {visit_binary_operator(op, 2);}
+        void visit(const Min *op) {visit_binary_operator(op, 2);}
+        void visit(const Max *op) {visit_binary_operator(op, 2);}
+        void visit(const EQ *op) {visit_binary_operator(op, 1);}
+        void visit(const NE *op) {visit_binary_operator(op, 1);}
+        void visit(const LT *op) {visit_binary_operator(op, 1);}
+        void visit(const LE *op) {visit_binary_operator(op, 1);}
+        void visit(const GT *op) {visit_binary_operator(op, 1);}
+        void visit(const GE *op) {visit_binary_operator(op, 1);}
+        void visit(const And *op) {visit_binary_operator(op, 1);}
+        void visit(const Or *op) {visit_binary_operator(op, 1);}
 
         void visit(const Not *op) {
             op->a.accept(this);
@@ -1249,12 +1252,16 @@ class ExprCostEarly : public IRVisitor {
         }
 
         void visit(const Call * call) {
+            // TODO figure out the call types and how to distinguish between
+            // them
             if (call->call_type == Call::Halide) {
+                loads+=1;
+            } else if (call->call_type == Call::Extern) {
+                ops+=10;
+            } else if (call->call_type == Call::Image) {
                 loads+=1;
             } else if (call->call_type == Call::Intrinsic) {
                 ops+=1;
-            } else if (call->call_type == Call::Image) {
-                loads+=1;
             }
             for (size_t i = 0; (i < call->args.size()); i++)
                 call->args[i].accept(this);
@@ -1967,7 +1974,7 @@ struct Partitioner {
 
     struct GroupSched {
         vector<int> tile_sizes;
-        int benefit;
+        float benefit;
     };
 
     struct MachineParams {
@@ -2031,7 +2038,7 @@ struct Partitioner {
             const vector<string> &args = output.args();
 
             GroupSched sched;
-            sched.benefit = -1;
+            sched.benefit = 0;
             // From the outer to the inner most argument
             for (int i = (int)args.size() - 1; i >= 0; i --)
                 sched.tile_sizes.push_back(-1);
@@ -2051,6 +2058,12 @@ struct Partitioner {
                 num_calls[c.first] = c.second.size();
             }
             func_calls[f.first] = num_calls;
+        }
+
+        for (auto &f: analy.env) {
+            std::cout << f.first << " Cost " <<
+                get_func_op_cost(func_cost[f.first])  <<
+                std::endl;
         }
 
         disp_func_calls(func_calls);
@@ -2084,7 +2097,7 @@ struct Partitioner {
         arch_params.parallelism = 8;
         arch_params.vec_len = 8;
         arch_params.balance_fast_mem = 10;
-        arch_params.balance_inline = 4;
+        arch_params.balance_inline = 10;
         arch_params.inline_size = 32 * 4;
         //arch_params.fast_mem_size = 32 * 1024 * 8;
         arch_params.fast_mem_size = 32 * 1024 * 8;
@@ -2462,6 +2475,11 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
         // Option did not satisfy the parallelism constraint
         opt.benefit = -1;
     }
+    assert(group_sched[opt.cons_group].benefit >= 0 &&
+            group_sched[opt.prod_group].benefit >= 0 );
+    if (group_sched[opt.cons_group].benefit +
+            group_sched[opt.prod_group].benefit > opt.benefit)
+       opt.benefit = -1;
     std::cout << "Benefit:" << opt.benefit << std::endl;
 }
 
@@ -2495,17 +2513,10 @@ Partitioner::Option Partitioner::choose_candidate_inline(
         cand_opt.cons_group = p.second;
         cand_opt.benefit = -1;
 
-        // Evaluating on a larger tile size to get an accurate estimate
         for (unsigned int i = 0; i < args.size(); i++)
             cand_opt.tile_sizes.push_back(1);
 
         evaluate_option(cand_opt, Partitioner::INLINE);
-
-        // Clearing the tile sizes for low level code generation
-        cand_opt.tile_sizes.clear();
-
-        for (unsigned int i = 0; i < args.size(); i++)
-            cand_opt.tile_sizes.push_back(1);
 
         if (best_opt.benefit < cand_opt.benefit)
             best_opt = cand_opt;
@@ -2980,12 +2991,14 @@ void schedule_advisor(const vector<Function> &outputs,
     // TODO explain structure
     std::map<string, std::vector<pair<int, int> > > func_cost;
     for (auto& kv : env) {
-        // std::cout << kv.first << ":" << std::endl;
+        //std::cout << kv.first << ":" << std::endl;
         assert(func_cost.find(kv.first) == func_cost.end());
         for (auto& e: kv.second.values()) {
             ExprCostEarly cost_visitor;
             e.accept(&cost_visitor);
             auto p = make_pair(cost_visitor.ops, cost_visitor.loads);
+            //std::cout << e << std::endl;
+            //std::cout << cost_visitor.ops << std::endl;
             func_cost[kv.first].push_back(p);
             /*
             std::cout << e << " loads:" << cost_visitor.loads << " ops:"
@@ -2993,7 +3006,6 @@ void schedule_advisor(const vector<Function> &outputs,
             */
         }
     }
-
     // TODO explain structure
     map<string, vector<const Call*> > all_calls;
     map<string, vector<string> > consumers;
@@ -3022,8 +3034,11 @@ void schedule_advisor(const vector<Function> &outputs,
 
     // Make obvious inline decisions early
     map<string, string> inlines;
+    // No longer needed grouping for inlining will take care of this
+    /*
     if (auto_inline)
         inlines = simple_inline(all_calls, consumers, env);
+    */
 
     std::cout << "Inlining:" << std::endl;
     disp_inlines(inlines);
@@ -3101,8 +3116,8 @@ void schedule_advisor(const vector<Function> &outputs,
         Partitioner part(pipeline_bounds, inlines, analy, func_cost);
         part.group(Partitioner::INLINE);
         // Clear the option cache
-        //part.option_cache.clear();
-        //part.group(Partitioner::FAST_MEM);
+        part.option_cache.clear();
+        part.group(Partitioner::FAST_MEM);
 
         int vec_len = part.arch_params.vec_len;
         //disp_grouping(groups);
