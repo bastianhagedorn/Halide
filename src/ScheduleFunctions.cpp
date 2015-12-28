@@ -1728,8 +1728,9 @@ long long region_size(map<string, Box> &regions, map<string, Function> &env,
 
     vector<Function> outs;
     for(auto &f: num_consumers)
-        if (f.second  == 0)
+        if (f.second  == 0) {
             outs.push_back(env[f.first]);
+        }
 
     // This assumption should hold for now
     assert(outs.size() == 1);
@@ -2009,9 +2010,13 @@ struct Partitioner {
                 map<string, vector<pair<int, int> > > &_func_cost):
                 pipeline_bounds(_pipeline_bounds), inlines(_inlines),
                 analy(_analy), func_cost(_func_cost) {
+
         // Place each function in its own group
-        for (auto &kv: analy.env)
-            groups[kv.first].push_back(kv.second);
+        for (auto &kv: analy.env) {
+            vector<Dim> &dims = kv.second.schedule().dims();
+            if (dims.size() > 0)
+                groups[kv.first].push_back(kv.second);
+        }
 
         // Find consumers of each function relate groups with their children
         for (auto &kv: analy.env) {
@@ -2020,7 +2025,8 @@ struct Partitioner {
                 children[c.first].insert(kv.first);
         }
 
-        // disp_children(children);
+        //disp_children(children);
+
         // Add inlined functions to their child group
         for (auto &in: inlines) {
             for (auto &dest: in.second) {
@@ -2047,6 +2053,7 @@ struct Partitioner {
             group_sched[g.first] = sched;
         }
 
+        // disp_grouping();
         // Compute the amount of work done when inlining
 
         // Build a table of num_calls to each internal Halide function when
@@ -2098,7 +2105,7 @@ struct Partitioner {
         arch_params.parallelism = 8;
         arch_params.vec_len = 8;
         arch_params.balance_fast_mem = 10;
-        arch_params.balance_inline = 10;
+        arch_params.balance_inline = 4;
         arch_params.inline_size = 32 * 4 * 8;
         //arch_params.fast_mem_size = 32 * 1024 * 8;
         arch_params.fast_mem_size = 32 * 1024 * 8;
@@ -2112,6 +2119,8 @@ struct Partitioner {
         vector<Function> cand_funcs = groups[cand_group];
 
         groups.erase(cand_group);
+        group_sched.erase(cand_group);
+
         groups[child_group].insert(groups[child_group].end(),
                 cand_funcs.begin(), cand_funcs.end());
 
@@ -2137,6 +2146,7 @@ struct Partitioner {
                     cand_funcs.begin(), cand_funcs.end());
         }
         groups.erase(cand_group);
+        group_sched.erase(cand_group);
 
         // Update the children mapping
         for (auto &f: children) {
@@ -2189,7 +2199,7 @@ void Partitioner::group(Partitioner::Level level) {
                 if (num_children == 1 && level == Partitioner::FAST_MEM) {
                     cand.push_back(make_pair(g.first,
                                              *children[g.first].begin()));
-                } else if(level == Partitioner::INLINE) {
+                } else if(num_children > 0 && level == Partitioner::INLINE) {
                     cand.push_back(make_pair(g.first, ""));
                 }
             }
@@ -2222,17 +2232,19 @@ void Partitioner::group(Partitioner::Level level) {
                 analy.env[best.prod_group].schedule().store_level().var = "";
                 analy.env[best.prod_group].schedule().compute_level().var = "";
 
-                merge_group_all_children(best.prod_group);
-
-                vector<pair<string, string> > invalid_keys;
                 for (auto &c: children[best.prod_group]) {
+
                     inlines[best.prod_group].push_back(c);
+
                     GroupSched sched;
-                    sched.tile_sizes = best.tile_sizes;
+                    vector<int> tile_sizes;
+                    for (unsigned int i = 0; i < analy.env[c].args().size(); i++)
+                        tile_sizes.push_back(1);
+
+                    sched.tile_sizes = tile_sizes;
                     sched.benefit = best.benefit;
                     group_sched[c] = sched;
 
-                    vector<pair<string, string> > invalid_keys;
                     for (auto& opt: option_cache) {
                         assert(opt.first.second == "");
                         if (opt.first.first == c)
@@ -2240,9 +2252,9 @@ void Partitioner::group(Partitioner::Level level) {
                     }
                 }
 
-            } else {
+                merge_group_all_children(best.prod_group);
 
-                merge_groups(best.prod_group, best.cons_group);
+            } else {
 
                 for (auto& c: option_cache) {
                     if (c.first.second == best.cons_group
@@ -2254,6 +2266,8 @@ void Partitioner::group(Partitioner::Level level) {
                 sched.tile_sizes = best.tile_sizes;
                 sched.benefit = best.benefit;
                 group_sched[best.cons_group] = sched;
+
+                merge_groups(best.prod_group, best.cons_group);
             }
             // Invalidate the option cache
             for (auto& key: invalid_keys)
@@ -2430,7 +2444,7 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
     }
 
     long long work_per_tile = 0;
-    long long inter_s = 0; region_size(mem_reg, analy.env, analy.func_dep_regions);
+    long long inter_s = 0;
     // TODO the redundant compute introduced by inlines has to account for
     // separately when doing grouping for fast memory
     if (l == Partitioner::INLINE) {
@@ -3184,8 +3198,9 @@ void schedule_advisor(const vector<Function> &outputs,
         part.option_cache.clear();
         part.group(Partitioner::FAST_MEM);
 
+        //part.disp_grouping();
+
         int vec_len = part.arch_params.vec_len;
-        //disp_grouping(groups);
 
         // Schedule generation based on grouping
         for (auto& g: part.groups) {
@@ -3199,9 +3214,6 @@ void schedule_advisor(const vector<Function> &outputs,
 
             Partitioner::GroupSched sched = part.group_sched[g.first];
 
-            if (dims.size() <= 0)
-                continue;
-
             map<string, int> tile_sizes;
             for(int i = 0; i < (int)dims.size() - 1; i++) {
                 if (sched.tile_sizes[i] != -1) {
@@ -3209,7 +3221,6 @@ void schedule_advisor(const vector<Function> &outputs,
                     tile_sizes[dims[i].var] = sched.tile_sizes[i];
                 }
             }
-
             // TODO Eventually this weird step should be changed into something
             // that actually gives proper ordering within a tile
 
