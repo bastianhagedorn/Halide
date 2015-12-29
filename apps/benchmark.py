@@ -4,7 +4,9 @@ times_auto = {}
 speed_up = {}
 p = 1
 for app in ["blur/", "local_laplacian/", "interpolate/", "bilateral_grid/", \
-            "camera_pipe/", "cost_function_test/", "overlap_test/"] :
+            "camera_pipe/", "cost_function_test/", "overlap_test/", \
+            "split_test/", "tile_vs_inline_test/", "data_dependent_test/",\
+            "parallel_test/"] :
         f = open(app+ "ref_perf.txt")
         times_ref[app] = [ float(l) for l in f ]
         f.close()
@@ -15,7 +17,7 @@ for app in ["blur/", "local_laplacian/", "interpolate/", "bilateral_grid/", \
         for i in xrange(0, len(times_auto[app])):
             speed_up[app].append(times_ref[app][i]/times_auto[app][i])
 
-        ax = plt.subplot(3, 3, p)
+        ax = plt.subplot(4, 3, p)
         ax.bar([1, 2, 3, 4], speed_up[app], alpha=0.4, align='center')
         ax.set_xlabel("Threads")
         ax.set_ylabel("Speed Up")

@@ -1194,6 +1194,14 @@ class FindCallArgs : public IRVisitor {
         }
 };
 
+long long get_func_out_size(Function &f) {
+    long long size = 0;
+    const vector<Type> &types = f.output_types();
+    for(unsigned int i = 0; i < types.size(); i++)
+        size += types[i].bytes();
+    return size;
+}
+
 /* Visitor for computing the cost of a single value of a function*/
 class ExprCostEarly : public IRVisitor {
     public:
@@ -1225,7 +1233,7 @@ class ExprCostEarly : public IRVisitor {
 
         void visit(const Add *op) {visit_binary_operator(op, 1);}
         void visit(const Sub *op) {visit_binary_operator(op, 1);}
-        void visit(const Mul *op) {visit_binary_operator(op, 1);}
+        void visit(const Mul *op) {visit_binary_operator(op, 2);}
         void visit(const Div *op) {visit_binary_operator(op, 4);}
         void visit(const Mod *op) {visit_binary_operator(op, 2);}
         void visit(const Min *op) {visit_binary_operator(op, 2);}
@@ -1704,10 +1712,7 @@ long long region_size(string func, Box &region, map<string, Function> &env) {
     if (area < 0)
         // Area could not be determined
         return -1;
-    long long size = 0;
-    const vector<Type> &types = f.output_types();
-    for(unsigned int i = 0; i < types.size(); i++)
-        size += types[i].bytes();
+    long long size = get_func_out_size(f);
     return area * size;
 }
 
@@ -1785,12 +1790,25 @@ int get_func_op_cost(vector<pair<int, int> > &costs) {
     return op_cost;
 }
 
+
+
 int get_func_mem(vector<pair<int, int> > &costs) {
     // Going over each of the outputs of the function
     int mem_cost = 0;
     for (unsigned int t = 0; t < costs.size(); t++)
         mem_cost += costs[t].second;
     return mem_cost;
+}
+
+int data_from_group(string func, map<string, Function> &env,
+                    map<string, map<string, int> > &func_calls,
+                    vector<string> &prods) {
+    int data = 0;
+    for (auto&c: func_calls[func]) {
+        if (std::find(prods.begin(), prods.end(), c.first) != prods.end())
+            data += get_func_out_size(env[c.first]);
+    }
+    return data;
 }
 
 long long region_cost_inline(string func, vector<string> &inline_reg,
@@ -1998,7 +2016,7 @@ struct Partitioner {
 
     map<string, vector<int> > func_dim_estimates;
     map<string, long long > func_op;
-    map<string, long long > func_mem;
+    map<string, long long > func_size;
     map<string, map<string, int> > func_calls;
 
     map<pair<string, string>, Option> option_cache;
@@ -2070,11 +2088,10 @@ struct Partitioner {
 
         for (auto &f: analy.env) {
             std::cout << f.first << " Cost " <<
-                get_func_op_cost(func_cost[f.first])  <<
+                get_func_op_cost(func_cost[f.first])  << " " <<
+                get_func_mem(func_cost[f.first])  <<
                 std::endl;
         }
-
-        disp_func_calls(func_calls);
 
         for (auto &f: analy.env) {
             const vector<string> &args = f.second.args();
@@ -2089,14 +2106,12 @@ struct Partitioner {
                 else
                     size = -1;
             }
-            long long mem = size;
             long long work = size;
             if(size != -1) {
                 work = get_func_op_cost(func_cost[f.first]) * work;
-                mem = get_func_mem(func_cost[f.first]) * mem;
             }
             func_op[f.first] = work;
-            func_mem[f.first] = mem;
+            func_size[f.first] = size;
             func_dim_estimates[f.first] = dim_estimates;
 
         }
@@ -2105,7 +2120,7 @@ struct Partitioner {
         arch_params.parallelism = 8;
         arch_params.vec_len = 8;
         arch_params.balance_fast_mem = 10;
-        arch_params.balance_inline = 4;
+        arch_params.balance_inline = 10;
         arch_params.inline_size = 32 * 4 * 8;
         //arch_params.fast_mem_size = 32 * 1024 * 8;
         arch_params.fast_mem_size = 32 * 1024 * 8;
@@ -2182,8 +2197,17 @@ struct Partitioner {
     Option choose_candidate(const vector< pair<string, string > > &cand_pairs);
     Option choose_candidate_inline(const vector< pair<string, string > > &cand_pairs);
     void group(Partitioner::Level level);
-    void evaluate_option(Option &opt, Partitioner::Level level);
+    void clear_schedules();
+    void evaluate_option(Option &opt, Partitioner::Level level, int siblings);
 };
+
+void Partitioner::clear_schedules() {
+    for (auto &s: group_sched) {
+        s.second.benefit = 0;
+        for (unsigned int i = 0; i < s.second.tile_sizes.size(); i++)
+            s.second.tile_sizes[i] = -1;
+    }
+}
 
 void Partitioner::group(Partitioner::Level level) {
     // Partition the pipeline by iteratively merging groups until a fixpoint
@@ -2216,6 +2240,11 @@ void Partitioner::group(Partitioner::Level level) {
             best = choose_candidate(cand);
 
         if (best.benefit != -1) {
+            std::cout << "Choice:" << std::endl;
+            if (level == Partitioner::INLINE)
+                std::cout << "Inline ";
+            std::cout << best.prod_group << " " << best.cons_group << std::endl;
+
             vector<pair<string, string> > invalid_keys;
             if (level == Partitioner::INLINE) {
                 // Verify that all the functions in producer group are
@@ -2246,8 +2275,8 @@ void Partitioner::group(Partitioner::Level level) {
                     group_sched[c] = sched;
 
                     for (auto& opt: option_cache) {
-                        assert(opt.first.second == "");
-                        if (opt.first.first == c)
+                        assert(opt.first.second != "");
+                        if (opt.first.first == c || opt.first.second == c)
                             invalid_keys.push_back(opt.first);
                     }
                 }
@@ -2256,10 +2285,10 @@ void Partitioner::group(Partitioner::Level level) {
 
             } else {
 
-                for (auto& c: option_cache) {
-                    if (c.first.second == best.cons_group
-                            || c.first.first == best.cons_group)
-                        invalid_keys.push_back(c.first);
+                for (auto& opt: option_cache) {
+                    if (opt.first.second == best.cons_group
+                            || opt.first.first == best.cons_group)
+                        invalid_keys.push_back(opt.first);
                 }
 
                 GroupSched sched;
@@ -2296,9 +2325,11 @@ map<string, int> get_dim_estimates(string f, map<string, Box> &pipeline_bounds,
     return dim_estimates;
 }
 
-void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
+void Partitioner::evaluate_option(Option &opt, Partitioner::Level l,
+                                  int siblings) {
 
     //disp_option(opt);
+    assert(siblings >= 0);
 
     map<string, Box> conc_reg;
     vector< map<string, Box> > conc_overlaps;
@@ -2445,8 +2476,8 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
 
     long long work_per_tile = 0;
     long long inter_s = 0;
-    // TODO the redundant compute introduced by inlines has to account for
-    // separately when doing grouping for fast memory
+    // TODO the redundant compute introduced by inlines has to be accounted
+    // for separately when doing grouping for fast memory
     if (l == Partitioner::INLINE) {
         work_per_tile = region_cost_inline(opt.cons_group, prod_funcs,
                                            func_calls, func_cost);
@@ -2458,14 +2489,21 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
         inter_s = region_size(mem_reg, analy.env, analy.func_dep_regions);
     }
 
-    float total_work = work_per_tile * partial_tiles;
-
     long long original_work = 0;
     long long total_mem = 0;
+
+    vector<string> out_of_cache_prods;
+    for (auto &p: prod_funcs) {
+        if(func_size[p] > arch_params.fast_mem_size)
+            out_of_cache_prods.push_back(p);
+    }
+
     for (auto &f: prod_funcs) {
         if (func_op[f] != -1) {
             original_work += func_op[f];
-            total_mem += func_mem[f];
+            int data = data_from_group(f, analy.env, func_calls,
+                                       out_of_cache_prods);
+            total_mem += func_size[f] * data;
         } else {
             // This option cannot be evaluated
             opt.benefit = -1;
@@ -2473,8 +2511,14 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
             return;
         }
     }
-    if (total_mem != -1)
-        total_mem += func_mem[opt.cons_group];
+
+    float total_work = work_per_tile * partial_tiles + siblings * original_work;
+
+    if (total_mem != -1) {
+        int data = data_from_group(opt.cons_group, analy.env,
+                                   func_calls, out_of_cache_prods);
+        total_mem += func_size[opt.cons_group] * data;
+    }
 
 
     std::cout << std::endl;
@@ -2505,7 +2549,7 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
     // It can be and it is super interesting
     opt.redundant_work = total_work - original_work;
 
-    assert(total_mem > 0 && total_work > 0);
+    assert(total_work > 0);
 
     if (l == Partitioner::INLINE) {
         if (inter_s <= arch_params.inline_size) {
@@ -2538,8 +2582,15 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
     assert(group_sched[opt.cons_group].benefit >= 0 &&
             group_sched[opt.prod_group].benefit >= 0 );
     if (group_sched[opt.cons_group].benefit +
-            group_sched[opt.prod_group].benefit > opt.benefit)
-       opt.benefit = -1;
+            group_sched[opt.prod_group].benefit > opt.benefit) {
+        if (opt.benefit > 0) {
+            std::cout << opt.cons_group << " " << group_sched[opt.cons_group].benefit << std::endl;
+            std::cout << opt.prod_group << " " << group_sched[opt.prod_group].benefit << std::endl;
+            std::cout << opt.benefit << std::endl;
+            assert(0);
+        }
+        opt.benefit = -1;
+    }
     std::cout << "Benefit:" << opt.benefit << std::endl;
 }
 
@@ -2547,28 +2598,14 @@ Partitioner::Option Partitioner::choose_candidate_inline(
                     const vector< pair<string, string> > &cand_pairs) {
 
     vector<Option> options;
-    vector<int> size_variants = {1};
     Option best_opt;
     best_opt.benefit = -1;
 
     for (auto &p: cand_pairs) {
-        assert(p.second == "");
-        Option final_opt;
-        final_opt.benefit = -1;
-        // Check if the pair has been evaluated before
-        if (option_cache.find(p) != option_cache.end()) {
-            //std::cout << "Hit:" << p.first << "," << p.second << std::endl;
-            final_opt = option_cache[p];
-            if (best_opt.benefit < final_opt.benefit)
-                best_opt = final_opt;
-            continue;
-        }
-        // If the pair has not been evaluated before create an the option
-        // with tile size 1 in all dimensions
-
         // Compute the aggregate benefit for inlining into all the children
-        float total_benefit = 0;
+        float overall_benefit = 0;
         for (auto &c: children[p.first]) {
+
             // Get the output function of the child group
             Function output = analy.env[c];
             const vector<string> &args = output.args();
@@ -2578,27 +2615,42 @@ Partitioner::Option Partitioner::choose_candidate_inline(
             cand_opt.cons_group = c;
             cand_opt.benefit = -1;
 
-            for (unsigned int i = 0; i < args.size(); i++)
-                cand_opt.tile_sizes.push_back(1);
+            // Check if the pair has been evaluated before
+            pair<string, string> key = make_pair(p.first, c);
+            if (option_cache.find(key) != option_cache.end()) {
 
-            evaluate_option(cand_opt, Partitioner::INLINE);
+                cand_opt = option_cache[key];
+
+            } else {
+                // If the pair has not been evaluated before evaluate
+                // the option with tile size 1 in all dimensions
+
+                for (unsigned int i = 0; i < args.size(); i++)
+                    cand_opt.tile_sizes.push_back(1);
+
+                evaluate_option(cand_opt, Partitioner::INLINE,
+                                children[p.first].size() - 1);
+
+                // Cache the result of the evaluation for the pair
+                option_cache[key] = cand_opt;
+            }
 
             if (cand_opt.benefit < 0) {
-                total_benefit = -1;
+                overall_benefit = -1;
                 break;
             } else {
-                total_benefit += cand_opt.benefit;
+                overall_benefit = std::min(cand_opt.benefit, overall_benefit);
             }
         }
 
+        Option final_opt;
         final_opt.prod_group = p.first;
         final_opt.cons_group = "";
-        final_opt.benefit = total_benefit;
+        final_opt.benefit = overall_benefit;
 
         if (best_opt.benefit < final_opt.benefit)
             best_opt = final_opt;
-        // Cache the result of the evaluation for the pair
-        option_cache[p] = final_opt;
+
     }
     return best_opt;
 }
@@ -2729,7 +2781,7 @@ Partitioner::Option Partitioner::choose_candidate(
                     for (unsigned int j = i; j < args.size(); j++)
                         opt.tile_sizes.push_back(s);
 
-                    evaluate_option(opt, Partitioner::FAST_MEM);
+                    evaluate_option(opt, Partitioner::FAST_MEM, 1);
 
                     if (cand_best_opt.benefit < opt.benefit)
                         cand_best_opt = opt;
@@ -3193,9 +3245,10 @@ void schedule_advisor(const vector<Function> &outputs,
 
         // Grouping
         Partitioner part(pipeline_bounds, inlines, analy, func_cost);
-        part.group(Partitioner::INLINE);
+        // part.group(Partitioner::INLINE);
         // Clear the option cache
         part.option_cache.clear();
+        part.clear_schedules();
         part.group(Partitioner::FAST_MEM);
 
         //part.disp_grouping();
