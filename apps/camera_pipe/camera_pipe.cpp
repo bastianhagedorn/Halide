@@ -240,7 +240,7 @@ Func apply_curve(Func input, Type result_type, Param<float> gamma, Param<float> 
     curve(x) = val;
     curve.compute_root(); // It's a LUT, compute it once ahead of time.
 
-    Func curved;
+    Func curved("curved");
     curved(x, y, c) = curve(input(x, y, c));
 
     return curved;

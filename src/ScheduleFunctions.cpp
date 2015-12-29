@@ -2119,8 +2119,8 @@ struct Partitioner {
         // Initialize machine params
         arch_params.parallelism = 8;
         arch_params.vec_len = 8;
-        arch_params.balance_fast_mem = 10;
-        arch_params.balance_inline = 10;
+        arch_params.balance_fast_mem = 20;
+        arch_params.balance_inline = 2;
         arch_params.inline_size = 32 * 4 * 8;
         //arch_params.fast_mem_size = 32 * 1024 * 8;
         arch_params.fast_mem_size = 32 * 1024 * 8;
@@ -2198,7 +2198,7 @@ struct Partitioner {
     Option choose_candidate_inline(const vector< pair<string, string > > &cand_pairs);
     void group(Partitioner::Level level);
     void clear_schedules();
-    void evaluate_option(Option &opt, Partitioner::Level level, int siblings);
+    void evaluate_option(Option &opt, Partitioner::Level level);
 };
 
 void Partitioner::clear_schedules() {
@@ -2325,11 +2325,9 @@ map<string, int> get_dim_estimates(string f, map<string, Box> &pipeline_bounds,
     return dim_estimates;
 }
 
-void Partitioner::evaluate_option(Option &opt, Partitioner::Level l,
-                                  int siblings) {
+void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
 
     //disp_option(opt);
-    assert(siblings >= 0);
 
     map<string, Box> conc_reg;
     vector< map<string, Box> > conc_overlaps;
@@ -2512,14 +2510,13 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l,
         }
     }
 
-    float total_work = work_per_tile * partial_tiles + siblings * original_work;
+    float total_work = work_per_tile * partial_tiles;
 
     if (total_mem != -1) {
         int data = data_from_group(opt.cons_group, analy.env,
                                    func_calls, out_of_cache_prods);
         total_mem += func_size[opt.cons_group] * data;
     }
-
 
     std::cout << std::endl;
     std::cout << "Evaluating benefit " << opt.prod_group << "->"
@@ -2581,13 +2578,14 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l,
     }
     assert(group_sched[opt.cons_group].benefit >= 0 &&
             group_sched[opt.prod_group].benefit >= 0 );
+
     if (group_sched[opt.cons_group].benefit +
             group_sched[opt.prod_group].benefit > opt.benefit) {
         if (opt.benefit > 0) {
+            std::cout << "Older is better syndrome" << std::endl;
             std::cout << opt.cons_group << " " << group_sched[opt.cons_group].benefit << std::endl;
             std::cout << opt.prod_group << " " << group_sched[opt.prod_group].benefit << std::endl;
             std::cout << opt.benefit << std::endl;
-            assert(0);
         }
         opt.benefit = -1;
     }
@@ -2628,8 +2626,7 @@ Partitioner::Option Partitioner::choose_candidate_inline(
                 for (unsigned int i = 0; i < args.size(); i++)
                     cand_opt.tile_sizes.push_back(1);
 
-                evaluate_option(cand_opt, Partitioner::INLINE,
-                                children[p.first].size() - 1);
+                evaluate_option(cand_opt, Partitioner::INLINE);
 
                 // Cache the result of the evaluation for the pair
                 option_cache[key] = cand_opt;
@@ -2766,9 +2763,9 @@ Partitioner::Option Partitioner::choose_candidate(
 
         if (!invalid) {
             // From the outer to the inner most argument
+            // Do not tile the inner dim
+            //for (int i = (int)args.size() - 1; i >= 1; i--) {
             for (int i = (int)args.size() - 1; i >= 0; i--) {
-                // Do not tile the inner dim
-                //for (int i = (int)args.size() - 1; i >= 1; i--) {
                 for (auto s: size_variants) {
                     Option opt;
                     opt.prod_group = p.first;
@@ -2781,7 +2778,7 @@ Partitioner::Option Partitioner::choose_candidate(
                     for (unsigned int j = i; j < args.size(); j++)
                         opt.tile_sizes.push_back(s);
 
-                    evaluate_option(opt, Partitioner::FAST_MEM, 1);
+                    evaluate_option(opt, Partitioner::FAST_MEM);
 
                     if (cand_best_opt.benefit < opt.benefit)
                         cand_best_opt = opt;
@@ -3165,7 +3162,7 @@ void schedule_advisor(const vector<Function> &outputs,
     */
     std::cout << "Inlining:" << std::endl;
     for (auto &f: env) {
-    if (env[f.first].is_boundary() || env[f.first].is_lambda()) {
+        if (env[f.first].is_boundary() || env[f.first].is_lambda()) {
             assert(consumers[f.first].size() == 1);
             inlines[f.first].push_back(consumers[f.first][0]);
             env[f.first].schedule().store_level().var = "";
@@ -3245,7 +3242,7 @@ void schedule_advisor(const vector<Function> &outputs,
 
         // Grouping
         Partitioner part(pipeline_bounds, inlines, analy, func_cost);
-        // part.group(Partitioner::INLINE);
+        part.group(Partitioner::INLINE);
         // Clear the option cache
         part.option_cache.clear();
         part.clear_schedules();
