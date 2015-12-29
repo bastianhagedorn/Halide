@@ -37,8 +37,7 @@ int main(int argc, char **argv) {
 
     if (schedule == 0) {
         for (int i = 0; i < num_levels; i++) {
-            up[i].compute_root();
-            down[i].compute_root();
+            up[i].compute_root().parallel(y).vectorize(x, 8);
         }
     }
 

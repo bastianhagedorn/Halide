@@ -204,6 +204,7 @@ Func color_correct(Func input, ImageParam matrix_3200, ImageParam matrix_7000, P
     Expr val =  (matrix_3200(x, y) * alpha + matrix_7000(x, y) * (1 - alpha));
     matrix(x, y) = cast<int32_t>(val * 256.0f); // Q8.8 fixed point
     matrix.compute_root();
+    //matrix.parallel(y);
 
     Func corrected("corrected");
     Expr ir = cast<int32_t>(input(x, y, 0));
@@ -239,6 +240,7 @@ Func apply_curve(Func input, Type result_type, Param<float> gamma, Param<float> 
     Expr val = cast(result_type, clamp(z*256.0f, 0.0f, 255.0f));
     curve(x) = val;
     curve.compute_root(); // It's a LUT, compute it once ahead of time.
+    //curve.parallel(x);
 
     Func curved("curved");
     curved(x, y, c) = curve(input(x, y, c));

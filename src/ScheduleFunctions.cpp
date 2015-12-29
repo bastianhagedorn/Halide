@@ -1265,7 +1265,7 @@ class ExprCostEarly : public IRVisitor {
             if (call->call_type == Call::Halide) {
                 loads+=1;
             } else if (call->call_type == Call::Extern) {
-                ops+=10;
+                ops+=5;
             } else if (call->call_type == Call::Image) {
                 loads+=1;
             } else if (call->call_type == Call::Intrinsic) {
@@ -1800,13 +1800,18 @@ int get_func_mem(vector<pair<int, int> > &costs) {
     return mem_cost;
 }
 
-int data_from_group(string func, map<string, Function> &env,
-                    map<string, map<string, int> > &func_calls,
-                    vector<string> &prods) {
-    int data = 0;
+long long data_from_group(string func, map<string, Function> &env,
+                          map<string, map<string, int> > &func_calls,
+                          map<string, long long> &func_sizes,
+                          vector<string> &prods) {
+    long long data = 0;
     for (auto&c: func_calls[func]) {
-        if (std::find(prods.begin(), prods.end(), c.first) != prods.end())
-            data += get_func_out_size(env[c.first]);
+        if (std::find(prods.begin(), prods.end(), c.first) != prods.end()) {
+            int num_calls = c.second;
+            int prod_size_per_ele = get_func_out_size(env[c.first]);
+            data += std::min(num_calls * func_sizes[func], func_sizes[c.first])
+                    * prod_size_per_ele;
+        }
     }
     return data;
 }
@@ -2000,7 +2005,6 @@ struct Partitioner {
         int parallelism;
         int vec_len;
         long long fast_mem_size;
-        long long inline_size;
         int balance_fast_mem;
         int balance_inline;
     };
@@ -2120,9 +2124,7 @@ struct Partitioner {
         arch_params.parallelism = 8;
         arch_params.vec_len = 8;
         arch_params.balance_fast_mem = 20;
-        arch_params.balance_inline = 2;
-        arch_params.inline_size = 32 * 4 * 8;
-        //arch_params.fast_mem_size = 32 * 1024 * 8;
+        arch_params.balance_inline = 10;
         arch_params.fast_mem_size = 32 * 1024 * 8;
         // L1 = 32K
         // L2 = 256K
@@ -2223,7 +2225,7 @@ void Partitioner::group(Partitioner::Level level) {
                 if (num_children == 1 && level == Partitioner::FAST_MEM) {
                     cand.push_back(make_pair(g.first,
                                              *children[g.first].begin()));
-                } else if(num_children > 0 && level == Partitioner::INLINE) {
+                } else if(num_children > 0  && level == Partitioner::INLINE) {
                     cand.push_back(make_pair(g.first, ""));
                 }
             }
@@ -2499,9 +2501,9 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
     for (auto &f: prod_funcs) {
         if (func_op[f] != -1) {
             original_work += func_op[f];
-            int data = data_from_group(f, analy.env, func_calls,
-                                       out_of_cache_prods);
-            total_mem += func_size[f] * data;
+            long long data = data_from_group(f, analy.env, func_calls,
+                                             func_size, out_of_cache_prods);
+            total_mem += data;
         } else {
             // This option cannot be evaluated
             opt.benefit = -1;
@@ -2513,9 +2515,10 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
     float total_work = work_per_tile * partial_tiles;
 
     if (total_mem != -1) {
-        int data = data_from_group(opt.cons_group, analy.env,
-                                   func_calls, out_of_cache_prods);
-        total_mem += func_size[opt.cons_group] * data;
+        long long data = data_from_group(opt.cons_group, analy.env,
+                                         func_calls, func_size,
+                                         out_of_cache_prods);
+        total_mem += data;
     }
 
     std::cout << std::endl;
@@ -2549,16 +2552,8 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
     assert(total_work > 0);
 
     if (l == Partitioner::INLINE) {
-        if (inter_s <= arch_params.inline_size) {
-            opt.benefit = (total_mem) * (arch_params.balance_inline)
-                           - opt.redundant_work;
-        }
-        else if (inter_s <= 2 * arch_params.inline_size) {
-            float hit = (float)std::max(2 * arch_params.inline_size - inter_s, 0LL)/inter_s;
-            float loads_saved = hit * total_mem;
-            opt.benefit = loads_saved * (arch_params.balance_inline)
-                          - opt.redundant_work;
-        }
+        opt.benefit = (total_mem) * (arch_params.balance_inline)
+            - opt.redundant_work;
     } else {
         if (inter_s <= arch_params.fast_mem_size) {
             opt.benefit = (total_mem) * (arch_params.balance_fast_mem)
@@ -2581,12 +2576,6 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
 
     if (group_sched[opt.cons_group].benefit +
             group_sched[opt.prod_group].benefit > opt.benefit) {
-        if (opt.benefit > 0) {
-            std::cout << "Older is better syndrome" << std::endl;
-            std::cout << opt.cons_group << " " << group_sched[opt.cons_group].benefit << std::endl;
-            std::cout << opt.prod_group << " " << group_sched[opt.prod_group].benefit << std::endl;
-            std::cout << opt.benefit << std::endl;
-        }
         opt.benefit = -1;
     }
     std::cout << "Benefit:" << opt.benefit << std::endl;
@@ -2636,6 +2625,9 @@ Partitioner::Option Partitioner::choose_candidate_inline(
                 overall_benefit = -1;
                 break;
             } else {
+                // TODO this is not entirely accurate the right thing to do
+                // would be to assign benefit to each of the individual options
+                // involved in inlining
                 overall_benefit = std::min(cand_opt.benefit, overall_benefit);
             }
         }
@@ -3019,7 +3011,7 @@ void simple_vectorize(Function &func, map<string, int> &dim_estimates,
         vectorize_dim(func, dim_estimates, inner_dim, vec_width);
 }
 
-void pick_dim_to_parallelize(Function &f, map<string, int> &dim_estimates,
+bool pick_dim_to_parallelize(Function &f, map<string, int> &dim_estimates,
                              int parallelism, Partitioner::GroupSched &sched,
                              int &outer_dim, int& num_fused_dims) {
     // TODO Check which is better fusing the dimensions or moving
@@ -3039,7 +3031,7 @@ void pick_dim_to_parallelize(Function &f, map<string, int> &dim_estimates,
     if (num_tile_dims > 0) {
         for (int i = 0; i < num_tile_dims; i++) {
             if (dim_estimates[dims[outer_dim].var] > parallelism)
-                break;
+                return true;
             else {
                 fuse_dim(f, outer_dim, outer_dim - 1, dim_estimates);
                 outer_dim = dims.size() - 2;
@@ -3052,10 +3044,11 @@ void pick_dim_to_parallelize(Function &f, map<string, int> &dim_estimates,
             //          << dim_estimates[dims[i].var] << std::endl;
             if (dim_estimates[dims[i].var] > parallelism) {
                 move_dim_to_outermost(f.schedule().dims(), i);
-                break;
+                return true;
             }
         }
     }
+    return false;
 }
 
 bool check_bounds_on_outputs(const vector<Function> &outputs) {
@@ -3342,18 +3335,18 @@ void schedule_advisor(const vector<Function> &outputs,
                         simple_vectorize(g_out, dim_estimates, 0, vec_len);
                 }
                 int outer_dim = -1;
-                pick_dim_to_parallelize(g_out, dim_estimates, parallelism,
-                                        sched, outer_dim, num_fused_dims);
+                bool can_par = pick_dim_to_parallelize(g_out, dim_estimates, parallelism,
+                                                       sched, outer_dim, num_fused_dims);
 
-                if (auto_par && outer_dim !=-1)
+                if (auto_par && outer_dim !=-1 && can_par)
                     parallelize_dim(g_out.schedule().dims(), outer_dim);
 
             } else {
                 // TODO Consider vectorization of RDoms
                 int outer_dim = -1;
-                pick_dim_to_parallelize(g_out, dim_estimates, parallelism,
-                                        sched, outer_dim, num_fused_dims);
-                if (auto_par && outer_dim!=-1)
+                bool can_par = pick_dim_to_parallelize(g_out, dim_estimates, parallelism,
+                                                       sched, outer_dim, num_fused_dims);
+                if (auto_par && outer_dim!=-1 && can_par)
                     parallelize_dim(g_out.schedule().dims(), outer_dim);
 
                 int num_updates = g_out.updates().size();
