@@ -4,7 +4,7 @@
 
 int main(int argc, char **argv) {
 
-    int N = 16; // number of samples/batch_size
+    int N = 4; // number of samples/batch_size
     int d_w = 128; // data width
     int d_h = 128; // data height
     int ch = 64; // number of channels
@@ -85,6 +85,6 @@ int main(int argc, char **argv) {
 
     std::vector<Func> simple_outs;
     simple_outs.push_back(f_conv);
-    double best = benchmark(5, 1, [&]() { f_conv.realize(conv_out); });
+    double best = benchmark(3, 1, [&]() { f_conv.realize(conv_out); });
     std::cerr << best * 1e3 << std::endl;
 }
