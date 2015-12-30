@@ -53,6 +53,11 @@ int main(int argc, char **argv) {
                                       y + r.y - pad,
                                       r.z, n);
 
+    f_conv.bound(x, 0, conv->out_dim_size(0)).
+           bound(y, 0, conv->out_dim_size(1)).
+           bound(z, 0, conv->out_dim_size(2)).
+           bound(n, 0, conv->out_dim_size(3));
+
     int vec_len = 8;
     int o_block_size = 32;
     int y_block = 32;

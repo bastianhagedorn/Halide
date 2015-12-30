@@ -2044,7 +2044,8 @@ struct Partitioner {
         for (auto &kv: analy.env) {
             map<string, Function> calls = find_direct_calls(kv.second);
             for (auto &c: calls)
-                children[c.first].insert(kv.first);
+                if (c.first != kv.first)
+                    children[c.first].insert(kv.first);
         }
 
         //disp_children(children);
@@ -2339,9 +2340,10 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
 
     vector<string> prod_funcs;
     for (auto &f: groups[opt.prod_group])
-        prod_funcs.push_back(f.name());
+        if (!f.is_boundary() && !f.is_lambda())
+            prod_funcs.push_back(f.name());
     for (auto &f: groups[opt.cons_group])
-        if (f.name() != opt.cons_group)
+        if (f.name() != opt.cons_group && !f.is_boundary() && !f.is_lambda())
             prod_funcs.push_back(f.name());
 
     vector<pair<int, int> > bounds;
@@ -2698,6 +2700,7 @@ Partitioner::Option Partitioner::choose_candidate(
 
     vector<Option> options;
     vector<int> size_variants = {256, 128, 64, 32, 16, 8};
+    //vector<int> size_variants = {16, 8, 4, 1};
     Option best_opt;
     best_opt.benefit = -1;
 

@@ -17,7 +17,6 @@ for app in ["blur/", "unsharp/", "harris/", "local_laplacian/", "interpolate/", 
         for i in xrange(0, len(times_auto[app])):
             speed_up[app].append(times_ref[app][i]/times_auto[app][i])
 
-        plt.tight_layout()
         ax = plt.subplot(4, 4, p)
         ax.bar([1, 2, 3, 4], speed_up[app], alpha=0.4, align='center')
         ax.set_xlabel("Threads")
@@ -28,4 +27,5 @@ for app in ["blur/", "unsharp/", "harris/", "local_laplacian/", "interpolate/", 
         ax.set_title(app)
         p = p+1
         print speed_up[app]
+plt.tight_layout()
 plt.show()

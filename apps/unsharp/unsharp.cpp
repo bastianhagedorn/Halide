@@ -16,9 +16,12 @@ int main(int argc, char **argv) {
     Func in_bounded = BoundaryConditions::repeat_edge(in);
 
     Func gray("gray");
-    gray(x, y) = max(in_bounded(x, y, 0),
-                     max(in_bounded(x, y, 1),
-                         in_bounded(x, y, 2)));
+    //gray(x, y) = max(in_bounded(x, y, 0),
+    //                 max(in_bounded(x, y, 1),
+    //                     in_bounded(x, y, 2)));
+    //
+    gray(x, y) = 0.299f * in_bounded(x, y, 0) + 0.587f * in_bounded(x, y, 1)
+                 + 0.114f * in_bounded(x, y, 2);
 
     Func blur_y("blur_y");
     blur_y(x, y) = (kernel(0) * gray(x, y) +
@@ -29,7 +32,7 @@ int main(int argc, char **argv) {
                     kernel(3) * (gray(x, y-3) +
                                  gray(x, y+3)));
 
-    Func blur_x("blur_X");
+    Func blur_x("blur_x");
     blur_x(x, y) = (kernel(0) * blur_y(x, y) +
                     kernel(1) * (blur_y(x-1, y) +
                                  blur_y(x+1, y)) +
@@ -45,7 +48,7 @@ int main(int argc, char **argv) {
     ratio(x, y) = sharpen(x, y) / gray(x, y);
 
     Func unsharp("unsharp");
-    unsharp(x, y, c) = min(ratio(x, y), 1.5f) * in(x, y, c);
+    unsharp(x, y, c) = ratio(x, y) * in(x, y, c);
 
     unsharp.bound(x, 0, 1536).bound(y, 0, 2560).bound(c, 0, 3);
     // Pick a schedule
