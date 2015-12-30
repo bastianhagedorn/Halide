@@ -2123,7 +2123,7 @@ struct Partitioner {
         // Initialize machine params
         arch_params.parallelism = 8;
         arch_params.vec_len = 8;
-        arch_params.balance_fast_mem = 20;
+        arch_params.balance_fast_mem = 10;
         arch_params.balance_inline = 10;
         arch_params.fast_mem_size = 32 * 1024 * 8;
         // L1 = 32K
@@ -2225,7 +2225,7 @@ void Partitioner::group(Partitioner::Level level) {
                 if (num_children == 1 && level == Partitioner::FAST_MEM) {
                     cand.push_back(make_pair(g.first,
                                              *children[g.first].begin()));
-                } else if(num_children > 0  && level == Partitioner::INLINE) {
+                } else if(num_children == 1  && level == Partitioner::INLINE) {
                     cand.push_back(make_pair(g.first, ""));
                 }
             }
