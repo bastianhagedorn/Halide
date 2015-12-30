@@ -3,8 +3,8 @@ times_ref = {}
 times_auto = {}
 speed_up = {}
 p = 1
-for app in ["blur/", "unsharp/", "harris/", "local_laplacian/", "interpolate/", "bilateral_grid/", \
-            "camera_pipe/", "conv_layer/", "cost_function_test/", "overlap_test/", \
+for app in ["blur/", "hist/", "unsharp/", "harris/", "local_laplacian/", "interpolate/", "bilateral_grid/", \
+            "camera_pipe/", "conv_layer/", "mat_mul/", "cost_function_test/", "overlap_test/", \
             "split_test/", "tile_vs_inline_test/", "data_dependent_test/",\
             "parallel_test/"] :
         f = open(app+ "ref_perf.txt")
