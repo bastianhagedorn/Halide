@@ -2979,8 +2979,7 @@ void vectorize_dim(Function &func, map<string, int> &dim_estimates,
 bool check_dim_size(Function &func, int dim, int min_size,
                     map<string, Box> &pipeline_bounds) {
     if (pipeline_bounds.find(func.name()) == pipeline_bounds.end()) {
-        // Optimistic
-        return true;
+        return false;
     }
     else {
         Box &b = pipeline_bounds[func.name()];
@@ -2992,10 +2991,10 @@ bool check_dim_size(Function &func, int dim, int min_size,
                 if (extent >= 0)
                     return extent >= min_size;
                 else
-                    return true;
+                    return false;
             }
     }
-    return true;
+    return false;
 }
 
 void simple_vectorize(Function &func, map<string, int> &dim_estimates,
