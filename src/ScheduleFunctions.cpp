@@ -1314,7 +1314,7 @@ void simplify_box(Box& b) {
     }
 }
 
-/* Compute the regions of functions required to compute a region of the function
+/* Compute the regions of producers required to compute a region of the function
    'f' given symbolic sizes of the tile in each dimension. */
 map<string, Box> regions_required(Function f,
                                   const vector< pair<Expr, Expr> > &sym_bounds,
@@ -1324,16 +1324,6 @@ map<string, Box> regions_required(Function f,
     std::vector<Interval> bounds;
     int num_args = f.args().size();
 
-    // The region of function 'f' for which the analysis is done ranges from
-    // zero to tile_size in each dimension. The underlying assumption is that
-    // the dependence patterns are more or less uniform over the range of the
-    // function. This assumption may not hold for more sophisticated functions.
-    // However, note that this assumption will not affect the program
-    // correctness but might result in poor performance decisions. Polyhedral
-    // analysis should be able to capture the exact dependence regions
-    // compactly. Capturing the exact dependences may lead to large
-    // approximations which are not desirable. Going forward as we encounter
-    // more exotic patterns we will need to revisit this simple analysis.
     for (int arg = 0; arg < num_args; arg++)
         bounds.push_back(Interval(sym_bounds[arg].first, sym_bounds[arg].second));
 
