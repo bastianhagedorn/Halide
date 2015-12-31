@@ -1772,24 +1772,6 @@ long long region_size(map<string, Box> &regions, map<string, Function> &env,
     */
 }
 
-int get_func_op_cost(vector<pair<int, int> > &costs) {
-    // Going over each of the outputs of the function
-    int op_cost = 1;
-    for (unsigned int t = 0; t < costs.size(); t++)
-        op_cost += costs[t].first;
-    return op_cost;
-}
-
-
-
-int get_func_mem(vector<pair<int, int> > &costs) {
-    // Going over each of the outputs of the function
-    int mem_cost = 0;
-    for (unsigned int t = 0; t < costs.size(); t++)
-        mem_cost += costs[t].second;
-    return mem_cost;
-}
-
 long long data_from_group(string func, map<string, Function> &env,
                           map<string, map<string, int> > &func_calls,
                           map<string, long long> &func_sizes,
@@ -1808,7 +1790,7 @@ long long data_from_group(string func, map<string, Function> &env,
 
 long long region_cost_inline(string func, vector<string> &inline_reg,
                              map<string, map<string, int> > &func_calls,
-                             map<string, vector<pair<int, int> > > &func_cost) {
+                             map<string, pair<int, int> > &func_cost) {
 
     map<string, int> calls;
     for (auto&c: func_calls[func])
@@ -1823,8 +1805,7 @@ long long region_cost_inline(string func, vector<string> &inline_reg,
             if (calls.find(p) != calls.end()) {
                 int num_calls = calls[p];
                 assert(num_calls > 0);
-                auto &costs = func_cost[p];
-                int op_cost = get_func_op_cost(costs);
+                int op_cost = func_cost[p].first;
                 total_cost += num_calls * op_cost;
                 for (auto &c: func_calls[p]) {
                     if (calls.find(c.first) != calls.end())
@@ -1842,20 +1823,19 @@ long long region_cost_inline(string func, vector<string> &inline_reg,
 }
 
 long long region_cost(string func, Box &region,
-                      map<string, vector<pair<int, int> > > &func_cost) {
+                      map<string, pair<int, int> > &func_cost) {
     long long area = box_area(region);
     if (area < 0)
         // Area could not be determined
         return -1;
-    auto &costs = func_cost[func];
-    int op_cost = get_func_op_cost(costs);
+    int op_cost = func_cost[func].first;
 
     long long cost = area * (op_cost);
     return cost;
 }
 
 long long region_cost(map<string, Box> &regions,
-                      map<string, vector<pair<int, int> > > &func_cost) {
+                      map<string, pair<int, int> > &func_cost) {
 
     long long total_cost = 0;
     for(auto &f: regions) {
@@ -1869,7 +1849,7 @@ long long region_cost(map<string, Box> &regions,
 }
 
 long long overlap_cost(string cons, Function prod, vector<map<string, Box> > &overlaps,
-                       map<string, vector<pair<int, int> > > &func_cost, int dim=-1) {
+                       map<string, pair<int, int> > &func_cost, int dim=-1) {
     long long total_area = 0;
     assert((int)overlaps.size() > dim);
     for (unsigned int d = 0; d < overlaps.size(); d++) {
@@ -1884,15 +1864,14 @@ long long overlap_cost(string cons, Function prod, vector<map<string, Box> > &ov
                 return -1;
         }
     }
-    auto &costs = func_cost[prod.name()];
-    int op_cost = get_func_op_cost(costs);
+    int op_cost = func_cost[prod.name()].first;
     long long overlap_cost = total_area * (op_cost);
     return overlap_cost;
 }
 
 long long overlap_cost(string cons, vector<Function> &prods,
                        vector<map<string, Box> > &overlaps,
-                       map<string, vector<pair<int, int> > > &func_cost,
+                       map<string, pair<int, int> > &func_cost,
                        int dim=-1) {
 
     long long total_cost = 0;
@@ -2002,7 +1981,7 @@ struct Partitioner {
     map<string, Box> &pipeline_bounds;
     map<string, vector<string> > &inlines;
     DependenceAnalysis &analy;
-    map<string, vector<pair<int, int> > > &func_cost;
+    map<string, pair<int, int> > &func_cost;
 
     map<string, vector<Function> > groups;
     map<string, GroupSched> group_sched;
@@ -2019,7 +1998,7 @@ struct Partitioner {
 
     Partitioner(map<string, Box> &_pipeline_bounds,
                 map<string, vector<string> > &_inlines, DependenceAnalysis &_analy,
-                map<string, vector<pair<int, int> > > &_func_cost):
+                map<string, pair<int, int> > &_func_cost):
                 pipeline_bounds(_pipeline_bounds), inlines(_inlines),
                 analy(_analy), func_cost(_func_cost) {
 
@@ -2083,8 +2062,8 @@ struct Partitioner {
 
         for (auto &f: analy.env) {
             std::cout << f.first << " Cost " <<
-                get_func_op_cost(func_cost[f.first])  << " " <<
-                get_func_mem(func_cost[f.first])  <<
+                func_cost[f.first].first  << " " <<
+                func_cost[f.first].second  <<
                 std::endl;
         }
 
@@ -2103,7 +2082,7 @@ struct Partitioner {
             }
             long long work = size;
             if(size != -1) {
-                work = get_func_op_cost(func_cost[f.first]) * work;
+                work = func_cost[f.first].first * work;
             }
             func_op[f.first] = work;
             func_size[f.first] = size;
@@ -2191,6 +2170,7 @@ struct Partitioner {
     Option choose_candidate_inline(const vector< pair<string, string > > &cand_pairs);
     void group(Partitioner::Level level);
     void clear_schedules();
+    void update_function_costs();
     void evaluate_option(Option &opt, Partitioner::Level level);
 };
 
@@ -2199,6 +2179,19 @@ void Partitioner::clear_schedules() {
         s.second.benefit = 0;
         for (unsigned int i = 0; i < s.second.tile_sizes.size(); i++)
             s.second.tile_sizes[i] = -1;
+    }
+}
+
+void Partitioner::update_function_costs() {
+    for (auto &g: groups) {
+        vector<string> prod_funcs;
+        for (auto &f: g.second)
+            if (f.name() != g.first)
+                prod_funcs.push_back(f.name());
+
+        int work_per_ele = region_cost_inline(g.first, prod_funcs,
+                                              func_calls, func_cost);
+        func_cost[g.first].first = work_per_ele;
     }
 }
 
@@ -2216,7 +2209,7 @@ void Partitioner::group(Partitioner::Level level) {
                 if (num_children == 1 && level == Partitioner::FAST_MEM) {
                     cand.push_back(make_pair(g.first,
                                              *children[g.first].begin()));
-                } else if(num_children == 1  && level == Partitioner::INLINE) {
+                } else if(num_children > 0  && level == Partitioner::INLINE) {
                     cand.push_back(make_pair(g.first, ""));
                 }
             }
@@ -2438,9 +2431,10 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
     // Do not count inlines while accounting for intermediate storage when
     // grouping for fast mem
     for (auto &f: prod_funcs) {
-        if (inlines.find(f) == inlines.end() || l == Partitioner::INLINE)
+        if (inlines.find(f) == inlines.end() || l == Partitioner::INLINE) {
             mem_reg[f] = conc_reg[f];
-        prod_comp[f] = conc_reg[f];
+            prod_comp[f] = conc_reg[f];
+        }
     }
 
     mem_reg[opt.cons_group] = cons_box;
@@ -2468,15 +2462,11 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
 
     long long work_per_tile = 0;
     long long inter_s = 0;
-    // TODO the redundant compute introduced by inlines has to be accounted
-    // for separately when doing grouping for fast memory
+
     if (l == Partitioner::INLINE) {
         work_per_tile = region_cost_inline(opt.cons_group, prod_funcs,
                                            func_calls, func_cost);
-        // This is just a proxy has to be replaced with a better metric
-        inter_s = work_per_tile;
-    }
-    else {
+    } else {
         work_per_tile = region_cost(prod_comp, func_cost);
         inter_s = region_size(mem_reg, analy.env, analy.func_dep_regions);
     }
@@ -3095,23 +3085,27 @@ void schedule_advisor(const vector<Function> &outputs,
 
     // TODO Method for estimating cost when reductions are involved
     // TODO explain structure
-    std::map<string, std::vector<pair<int, int> > > func_cost;
+    std::map<string, pair<int, int> > func_cost;
     for (auto& kv : env) {
         //std::cout << kv.first << ":" << std::endl;
         assert(func_cost.find(kv.first) == func_cost.end());
+        func_cost[kv.first].first = 0;
+        func_cost[kv.first].second = 0;
         for (auto& e: kv.second.values()) {
             ExprCostEarly cost_visitor;
             e.accept(&cost_visitor);
             auto p = make_pair(cost_visitor.ops, cost_visitor.loads);
             //std::cout << e << std::endl;
             //std::cout << cost_visitor.ops << std::endl;
-            func_cost[kv.first].push_back(p);
+            func_cost[kv.first].first += p.first;
+            func_cost[kv.first].second += p.second;
             /*
             std::cout << e << " loads:" << cost_visitor.loads << " ops:"
                       << cost_visitor.ops << std::endl;
             */
         }
     }
+
     // TODO explain structure
     map<string, vector<const Call*> > all_calls;
     map<string, vector<string> > consumers;
@@ -3231,6 +3225,8 @@ void schedule_advisor(const vector<Function> &outputs,
         // Clear the option cache
         part.option_cache.clear();
         part.clear_schedules();
+        part.update_function_costs();
+
         part.group(Partitioner::FAST_MEM);
 
         //part.disp_grouping();
