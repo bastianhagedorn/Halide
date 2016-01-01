@@ -1,0 +1,5 @@
+parallel
+parallel.h
+out.png
+ref_perf.txt
+auto_perf.txt
