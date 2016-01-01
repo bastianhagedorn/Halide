@@ -1,0 +1,14 @@
+APPS = cost_function_test overlap_test split_test tile_vs_inline_test \
+           mat_mul data_dependent_test parallel_test \
+           blur hist unsharp harris local_laplacian interpolate bilateral_grid camera_pipe conv_layer
+
+REF_PERFS = $(APPS:%=%/ref_perf.txt)
+AUTO_PERFS = $(APPS:%=%/auto_perf.txt)
+
+%/ref_perf.txt: % $(LIB_HALIDE)
+	make -C $< bench_ref
+
+%/auto_perf.txt: % $(LIB_HALIDE)
+	make -C $< bench_auto
+
+all: $(REF_PERFS) $(AUTO_PERFS)
