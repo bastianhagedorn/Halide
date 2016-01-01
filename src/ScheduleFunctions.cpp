@@ -2652,7 +2652,10 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
         }
     }
 
-    float total_work = work_per_tile * partial_tiles;
+    //float total_work = work_per_tile * partial_tiles;
+    // This is more accurate since partial tiles are handled by shifting
+    // and computing a full tile.
+    float total_work = work_per_tile * estimate_tiles;
 
     if (total_mem != -1) {
         long long data = data_from_group(opt.cons_group, analy.env,
