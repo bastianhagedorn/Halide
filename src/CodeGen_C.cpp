@@ -759,8 +759,8 @@ void CodeGen_C::visit(const FloatImm *op) {
         u.as_float = op->value;
 
         ostringstream oss;
-        //oss << "float_from_bits(" << u.as_uint << " /* " << u.as_float << " */)";
-        oss << "(float)" << u.as_float;
+        oss << "float_from_bits(" << u.as_uint << " /* " << u.as_float << " */)";
+        //oss << "(float)" << u.as_float;
         id = oss.str();
     }
 }
@@ -1516,7 +1516,6 @@ void CodeGen_C::test() {
             << "\nDifference starts at: " << src.substr(diff, diff_end - diff) << "\n";
 
     }
-
 
     std::cout << "CodeGen_C test passed\n";
 }

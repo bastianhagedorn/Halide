@@ -17,6 +17,7 @@
 #include "RealizationOrder.h"
 
 #include <algorithm>
+#include <limits>
 
 namespace Halide {
 namespace Internal {
@@ -1314,7 +1315,7 @@ void simplify_box(Box& b) {
     }
 }
 
-/* Compute the regions of functions required to compute a region of the function
+/* Compute the regions of producers required to compute a region of the function
    'f' given symbolic sizes of the tile in each dimension. */
 map<string, Box> regions_required(Function f,
                                   const vector< pair<Expr, Expr> > &sym_bounds,
@@ -1324,16 +1325,6 @@ map<string, Box> regions_required(Function f,
     std::vector<Interval> bounds;
     int num_args = f.args().size();
 
-    // The region of function 'f' for which the analysis is done ranges from
-    // zero to tile_size in each dimension. The underlying assumption is that
-    // the dependence patterns are more or less uniform over the range of the
-    // function. This assumption may not hold for more sophisticated functions.
-    // However, note that this assumption will not affect the program
-    // correctness but might result in poor performance decisions. Polyhedral
-    // analysis should be able to capture the exact dependence regions
-    // compactly. Capturing the exact dependences may lead to large
-    // approximations which are not desirable. Going forward as we encounter
-    // more exotic patterns we will need to revisit this simple analysis.
     for (int arg = 0; arg < num_args; arg++)
         bounds.push_back(Interval(sym_bounds[arg].first, sym_bounds[arg].second));
 
@@ -1668,6 +1659,15 @@ struct DependenceAnalysis {
 
 };
 
+int get_min(const Interval &i) {
+
+    if ((i.min.as<IntImm>())) {
+        const IntImm * bmin = i.min.as<IntImm>();
+        return bmin->value;
+    }
+    return std::numeric_limits<int>::max();
+}
+
 int get_extent(const Interval &i) {
 
     if ((i.min.as<IntImm>()) && (i.max.as<IntImm>())) {
@@ -1687,6 +1687,17 @@ int get_extent(const Interval &i) {
             return diff.as<IntImm>()->value;
     } */
     return -1;
+}
+
+pair<int, int> get_bound(const Interval &i) {
+
+    if ((i.min.as<IntImm>()) && (i.max.as<IntImm>())) {
+        const IntImm * bmin = i.min.as<IntImm>();
+        const IntImm * bmax = i.max.as<IntImm>();
+        return make_pair(bmin->value, bmax->value);
+    }
+    return make_pair(std::numeric_limits<int>::max(),
+                     std::numeric_limits<int>::min());
 }
 
 long long box_area(Box &b) {
@@ -1782,24 +1793,6 @@ long long region_size(map<string, Box> &regions, map<string, Function> &env,
     */
 }
 
-int get_func_op_cost(vector<pair<int, int> > &costs) {
-    // Going over each of the outputs of the function
-    int op_cost = 1;
-    for (unsigned int t = 0; t < costs.size(); t++)
-        op_cost += costs[t].first;
-    return op_cost;
-}
-
-
-
-int get_func_mem(vector<pair<int, int> > &costs) {
-    // Going over each of the outputs of the function
-    int mem_cost = 0;
-    for (unsigned int t = 0; t < costs.size(); t++)
-        mem_cost += costs[t].second;
-    return mem_cost;
-}
-
 long long data_from_group(string func, map<string, Function> &env,
                           map<string, map<string, int> > &func_calls,
                           map<string, long long> &func_sizes,
@@ -1818,7 +1811,7 @@ long long data_from_group(string func, map<string, Function> &env,
 
 long long region_cost_inline(string func, vector<string> &inline_reg,
                              map<string, map<string, int> > &func_calls,
-                             map<string, vector<pair<int, int> > > &func_cost) {
+                             map<string, pair<int, int> > &func_cost) {
 
     map<string, int> calls;
     for (auto&c: func_calls[func])
@@ -1833,8 +1826,7 @@ long long region_cost_inline(string func, vector<string> &inline_reg,
             if (calls.find(p) != calls.end()) {
                 int num_calls = calls[p];
                 assert(num_calls > 0);
-                auto &costs = func_cost[p];
-                int op_cost = get_func_op_cost(costs);
+                int op_cost = func_cost[p].first;
                 total_cost += num_calls * op_cost;
                 for (auto &c: func_calls[p]) {
                     if (calls.find(c.first) != calls.end())
@@ -1852,20 +1844,19 @@ long long region_cost_inline(string func, vector<string> &inline_reg,
 }
 
 long long region_cost(string func, Box &region,
-                      map<string, vector<pair<int, int> > > &func_cost) {
+                      map<string, pair<int, int> > &func_cost) {
     long long area = box_area(region);
     if (area < 0)
         // Area could not be determined
         return -1;
-    auto &costs = func_cost[func];
-    int op_cost = get_func_op_cost(costs);
+    int op_cost = func_cost[func].first;
 
     long long cost = area * (op_cost);
     return cost;
 }
 
 long long region_cost(map<string, Box> &regions,
-                      map<string, vector<pair<int, int> > > &func_cost) {
+                      map<string, pair<int, int> > &func_cost) {
 
     long long total_cost = 0;
     for(auto &f: regions) {
@@ -1879,7 +1870,7 @@ long long region_cost(map<string, Box> &regions,
 }
 
 long long overlap_cost(string cons, Function prod, vector<map<string, Box> > &overlaps,
-                       map<string, vector<pair<int, int> > > &func_cost, int dim=-1) {
+                       map<string, pair<int, int> > &func_cost, int dim=-1) {
     long long total_area = 0;
     assert((int)overlaps.size() > dim);
     for (unsigned int d = 0; d < overlaps.size(); d++) {
@@ -1894,15 +1885,14 @@ long long overlap_cost(string cons, Function prod, vector<map<string, Box> > &ov
                 return -1;
         }
     }
-    auto &costs = func_cost[prod.name()];
-    int op_cost = get_func_op_cost(costs);
+    int op_cost = func_cost[prod.name()].first;
     long long overlap_cost = total_area * (op_cost);
     return overlap_cost;
 }
 
 long long overlap_cost(string cons, vector<Function> &prods,
                        vector<map<string, Box> > &overlaps,
-                       map<string, vector<pair<int, int> > > &func_cost,
+                       map<string, pair<int, int> > &func_cost,
                        int dim=-1) {
 
     long long total_cost = 0;
@@ -1961,10 +1951,52 @@ int get_extent_estimate(Function &f, map<string, Box> &bounds, int dim) {
         Interval &I = bounds[f.name()][dim];
         int extent = get_extent(I);
         if (extent > 0)
-            estimate = std::max(estimate, extent);
+            estimate = std::min(estimate, extent);
     }
 
     return estimate;
+}
+
+int get_min_estimate(Function &f, map<string, Box> &bounds, int dim) {
+
+    vector<string> vars = f.args();
+    int estimate = std::numeric_limits<int>::max();
+    for (auto &b: f.schedule().bounds())
+        if (b.var == vars[dim]) {
+            const IntImm * bmin = b.min.as<IntImm>();
+            estimate = bmin->value;
+        }
+
+    if (bounds.find(f.name()) != bounds.end()) {
+        Interval &I = bounds[f.name()][dim];
+        int lower = get_min(I);
+        estimate = std::max(estimate, lower);
+    }
+
+    return estimate;
+}
+
+pair<int, int> get_bound_estimates(Function &f, map<string, Box> &bounds,
+                                   int dim) {
+    vector<string> vars = f.args();
+    int est_lower = std::numeric_limits<int>::max();
+    int est_upper = std::numeric_limits<int>::min();
+    for (auto &b: f.schedule().bounds())
+        if (b.var == vars[dim]) {
+            const IntImm * bmin = b.min.as<IntImm>();
+            const IntImm * bextent = b.extent.as<IntImm>();
+            est_lower = bmin->value;
+            est_upper = bmin->value + bextent->value - 1;
+        }
+
+    if (bounds.find(f.name()) != bounds.end()) {
+        Interval &I = bounds[f.name()][dim];
+        pair<int, int> b = get_bound(I);
+        est_lower = std::max(est_lower, b.first);
+        est_upper = std::max(est_upper, b.second);
+    }
+
+    return make_pair(est_lower, est_upper);
 }
 
 void disp_func_calls(map<string, map<string, int> > &func_calls) {
@@ -2012,7 +2044,7 @@ struct Partitioner {
     map<string, Box> &pipeline_bounds;
     map<string, vector<string> > &inlines;
     DependenceAnalysis &analy;
-    map<string, vector<pair<int, int> > > &func_cost;
+    map<string, pair<int, int> > &func_cost;
 
     map<string, vector<Function> > groups;
     map<string, GroupSched> group_sched;
@@ -2029,7 +2061,7 @@ struct Partitioner {
 
     Partitioner(map<string, Box> &_pipeline_bounds,
                 map<string, vector<string> > &_inlines, DependenceAnalysis &_analy,
-                map<string, vector<pair<int, int> > > &_func_cost):
+                map<string, pair<int, int> > &_func_cost):
                 pipeline_bounds(_pipeline_bounds), inlines(_inlines),
                 analy(_analy), func_cost(_func_cost) {
 
@@ -2092,13 +2124,6 @@ struct Partitioner {
         }
 
         for (auto &f: analy.env) {
-            std::cout << f.first << " Cost " <<
-                get_func_op_cost(func_cost[f.first])  << " " <<
-                get_func_mem(func_cost[f.first])  <<
-                std::endl;
-        }
-
-        for (auto &f: analy.env) {
             const vector<string> &args = f.second.args();
             vector<int> dim_estimates;
             long long size = 1;
@@ -2113,7 +2138,7 @@ struct Partitioner {
             }
             long long work = size;
             if(size != -1) {
-                work = get_func_op_cost(func_cost[f.first]) * work;
+                work = func_cost[f.first].first * work;
             }
             func_op[f.first] = work;
             func_size[f.first] = size;
@@ -2183,6 +2208,16 @@ struct Partitioner {
             std::cout << "Group " <<  g.first  << " :"<< std::endl;
             for (auto& m: g.second)
                 std::cout << m.name() << std::endl;
+            std::cout << std::endl;
+        }
+    }
+
+    void disp_costs() {
+        for (auto &f: analy.env) {
+            std::cout << f.first << " Cost " <<
+                func_cost[f.first].first  << " " <<
+                func_cost[f.first].second  <<
+                std::endl;
         }
     }
 
@@ -2201,6 +2236,7 @@ struct Partitioner {
     Option choose_candidate_inline(const vector< pair<string, string > > &cand_pairs);
     void group(Partitioner::Level level);
     void clear_schedules();
+    void update_function_costs();
     void evaluate_option(Option &opt, Partitioner::Level level);
 };
 
@@ -2209,6 +2245,19 @@ void Partitioner::clear_schedules() {
         s.second.benefit = 0;
         for (unsigned int i = 0; i < s.second.tile_sizes.size(); i++)
             s.second.tile_sizes[i] = -1;
+    }
+}
+
+void Partitioner::update_function_costs() {
+    for (auto &g: groups) {
+        vector<string> prod_funcs;
+        for (auto &f: g.second)
+            if (f.name() != g.first)
+                prod_funcs.push_back(f.name());
+
+        int work_per_ele = region_cost_inline(g.first, prod_funcs,
+                                              func_calls, func_cost);
+        func_cost[g.first].first += work_per_ele;
     }
 }
 
@@ -2448,9 +2497,10 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
     // Do not count inlines while accounting for intermediate storage when
     // grouping for fast mem
     for (auto &f: prod_funcs) {
-        if (inlines.find(f) == inlines.end() || l == Partitioner::INLINE)
+        if (inlines.find(f) == inlines.end() || l == Partitioner::INLINE) {
             mem_reg[f] = conc_reg[f];
-        prod_comp[f] = conc_reg[f];
+            prod_comp[f] = conc_reg[f];
+        }
     }
 
     mem_reg[opt.cons_group] = cons_box;
@@ -2478,15 +2528,12 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
 
     long long work_per_tile = 0;
     long long inter_s = 0;
-    // TODO the redundant compute introduced by inlines has to be accounted
-    // for separately when doing grouping for fast memory
+
     if (l == Partitioner::INLINE) {
         work_per_tile = region_cost_inline(opt.cons_group, prod_funcs,
                                            func_calls, func_cost);
-        // This is just a proxy has to be replaced with a better metric
-        inter_s = work_per_tile;
-    }
-    else {
+        work_per_tile += func_cost[opt.cons_group].first;
+    } else {
         work_per_tile = region_cost(prod_comp, func_cost);
         inter_s = region_size(mem_reg, analy.env, analy.func_dep_regions);
     }
@@ -2496,7 +2543,7 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
 
     vector<string> out_of_cache_prods;
     for (auto &p: prod_funcs) {
-        if(func_size[p] > arch_params.fast_mem_size)
+        if(func_size[p] > arch_params.fast_mem_size || l == Partitioner::INLINE)
             out_of_cache_prods.push_back(p);
     }
 
@@ -2700,7 +2747,7 @@ Partitioner::Option Partitioner::choose_candidate(
 
     vector<Option> options;
     vector<int> size_variants = {256, 128, 64, 32, 16, 8};
-    //vector<int> size_variants = {16, 8, 4, 1};
+    //vector<int> size_variants = {8};
     Option best_opt;
     best_opt.benefit = -1;
 
@@ -2977,25 +3024,18 @@ void vectorize_dim(Function &func, map<string, int> &dim_estimates,
 }
 
 bool check_dim_size(Function &func, int dim, int min_size,
-                    map<string, Box> &pipeline_bounds) {
-    if (pipeline_bounds.find(func.name()) == pipeline_bounds.end()) {
-        // Optimistic
-        return true;
+                    map<string, int> &dim_estimates) {
+    vector<Dim> &dims = func.schedule().dims();
+    int extent = dim_estimates[dims[dim].var];
+    bool can_vec = false;
+    if (extent >= 0)
+        can_vec = extent >= min_size;
+    if(!can_vec) {
+        std::cout << "Vectorization failed" << std::endl;
+        std::cout << func.name() << std::endl;
+        std::cout << dims[dim].var << " " << extent << std::endl;
     }
-    else {
-        Box &b = pipeline_bounds[func.name()];
-        vector<Dim> &dims = func.schedule().dims();
-        const vector<string> vars = func.args();
-        for (unsigned int i = 0; i < vars.size(); i++)
-            if (dims[dim].var == vars[i]) {
-                int extent = get_extent(b[i]);
-                if (extent >= 0)
-                    return extent >= min_size;
-                else
-                    return true;
-            }
-    }
-    return true;
+    return can_vec;
 }
 
 void simple_vectorize(Function &func, map<string, int> &dim_estimates,
@@ -3106,23 +3146,27 @@ void schedule_advisor(const vector<Function> &outputs,
 
     // TODO Method for estimating cost when reductions are involved
     // TODO explain structure
-    std::map<string, std::vector<pair<int, int> > > func_cost;
+    std::map<string, pair<int, int> > func_cost;
     for (auto& kv : env) {
         //std::cout << kv.first << ":" << std::endl;
         assert(func_cost.find(kv.first) == func_cost.end());
+        func_cost[kv.first].first = 1;
+        func_cost[kv.first].second = 0;
         for (auto& e: kv.second.values()) {
             ExprCostEarly cost_visitor;
             e.accept(&cost_visitor);
             auto p = make_pair(cost_visitor.ops, cost_visitor.loads);
             //std::cout << e << std::endl;
             //std::cout << cost_visitor.ops << std::endl;
-            func_cost[kv.first].push_back(p);
+            func_cost[kv.first].first += p.first;
+            func_cost[kv.first].second += p.second;
             /*
             std::cout << e << " loads:" << cost_visitor.loads << " ops:"
                       << cost_visitor.ops << std::endl;
             */
         }
     }
+
     // TODO explain structure
     map<string, vector<const Call*> > all_calls;
     map<string, vector<string> > consumers;
@@ -3238,12 +3282,25 @@ void schedule_advisor(const vector<Function> &outputs,
 
         // Grouping
         Partitioner part(pipeline_bounds, inlines, analy, func_cost);
+        std::cout << std::endl << "Function costs pre Inlining" << std::endl;
+        part.disp_costs();
+        std::cout << std::endl;
         part.group(Partitioner::INLINE);
+        std::cout << std::endl << "Groups Inlining" << std::endl;
+        part.disp_grouping();
+        std::cout << std::endl;
         // Clear the option cache
         part.option_cache.clear();
         part.clear_schedules();
-        part.group(Partitioner::FAST_MEM);
+        part.update_function_costs();
+        std::cout << std::endl << "Function costs post Inlining" << std::endl;
+        part.disp_costs();
+        std::cout << std::endl;
 
+        part.group(Partitioner::FAST_MEM);
+        std::cout << std::endl << "Groups Fast Mem" << std::endl;
+        part.disp_grouping();
+        std::cout << std::endl;
         //part.disp_grouping();
 
         int vec_len = part.arch_params.vec_len;
@@ -3303,7 +3360,7 @@ void schedule_advisor(const vector<Function> &outputs,
                 zero_reuse_var = dims[dims.size() - 1].var;
             */
             // Get estimates of pipeline bounds
-            map<string, int> dim_estimates =
+            map<string, int> out_estimates =
                           get_dim_estimates(g_out.name(), pipeline_bounds, env);
 
             // Realizing the tiling and updating the dimension estimates
@@ -3318,7 +3375,7 @@ void schedule_advisor(const vector<Function> &outputs,
                 assert(index!=-1);
                 if (tile_sizes[v] > 1) {
                     split_dim(g_out, index, tile_sizes[v],
-                              dim_estimates, "tile", false);
+                              out_estimates, "tile", false);
                     move_dim_to_outermost(g_out.schedule().dims(), index + 1);
                 } else if (tile_sizes[v] == 1) {
                     move_dim_to_outermost(g_out.schedule().dims(), index);
@@ -3334,11 +3391,11 @@ void schedule_advisor(const vector<Function> &outputs,
 
                 // Vectorize first
                 if (auto_vec) {
-                    if (check_dim_size(g_out, 0, vec_len, pipeline_bounds))
-                        simple_vectorize(g_out, dim_estimates, 0, vec_len);
+                    if (check_dim_size(g_out, 0, vec_len, out_estimates))
+                        simple_vectorize(g_out, out_estimates, 0, vec_len);
                 }
                 int outer_dim = -1;
-                bool can_par = pick_dim_to_parallelize(g_out, dim_estimates, parallelism,
+                bool can_par = pick_dim_to_parallelize(g_out, out_estimates, parallelism,
                                                        sched, outer_dim, num_fused_dims);
 
                 if (auto_par && outer_dim !=-1 && can_par)
@@ -3347,7 +3404,7 @@ void schedule_advisor(const vector<Function> &outputs,
             } else {
                 // TODO Consider vectorization of RDoms
                 int outer_dim = -1;
-                bool can_par = pick_dim_to_parallelize(g_out, dim_estimates, parallelism,
+                bool can_par = pick_dim_to_parallelize(g_out, out_estimates, parallelism,
                                                        sched, outer_dim, num_fused_dims);
                 if (auto_par && outer_dim!=-1 && can_par)
                     parallelize_dim(g_out.schedule().dims(), outer_dim);
@@ -3360,7 +3417,7 @@ void schedule_advisor(const vector<Function> &outputs,
                     for (int i = (int)dims.size() - 2; i > 0 ; i--) {
                         bool dim_par = can_parallelize_rvar(dims[i].var,
                                                             g_out.name(), u);
-                        if (dim_par && dim_estimates[dims[i].var] > parallelism) {
+                        if (dim_par && out_estimates[dims[i].var] > parallelism) {
                             move_dim_to_outermost(dims, i);
                             int outer_dim = dims.size() - 2;
                             parallelize_dim(dims, outer_dim);
@@ -3372,6 +3429,8 @@ void schedule_advisor(const vector<Function> &outputs,
 
             for (auto &m: g.second) {
                 int outer_dim = dims.size() - 2;
+                map<string, int> mem_estimates =
+                          get_dim_estimates(m.name(), pipeline_bounds, env);
                 if (m.name() != g_out.name() &&
                    inlines.find(m.name()) == inlines.end() && num_tile_dims > 0) {
                     //int compute_level = inner_tile_dim;
@@ -3383,9 +3442,8 @@ void schedule_advisor(const vector<Function> &outputs,
                     m.schedule().compute_level().func = g_out.name();
                     m.schedule().compute_level().var = dims[compute_level].var;
                     if (m.is_pure() && auto_vec)
-                        if (check_dim_size(m, 0, vec_len, pipeline_bounds))
-                            simple_vectorize(m, dim_estimates, 0, vec_len);
-                            //simple_vectorize(g_out, 0);
+                        if (check_dim_size(m, 0, vec_len, mem_estimates))
+                            simple_vectorize(m, mem_estimates, 0, vec_len);
                 }
             }
         }

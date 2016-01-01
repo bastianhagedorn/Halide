@@ -12,8 +12,8 @@ using namespace Halide::Tools;
 
 int main(int argc, char **argv) {
 
-    Image<unsigned char> input = load_image(argv[1]);
-    Image<int> output(256);
+    Image<uint8_t> input = load_image(argv[1]);
+    Image<uint8_t> output(input.width(), input.height(), 3);
 
     hist(input, output);
 
@@ -24,6 +24,7 @@ int main(int argc, char **argv) {
     });
     printf("%g\n", min_t * 1e3);
 
+    save_image(output, argv[2]);
 
     return 0;
 }
