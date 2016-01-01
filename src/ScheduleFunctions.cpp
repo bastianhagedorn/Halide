@@ -2061,13 +2061,6 @@ struct Partitioner {
         }
 
         for (auto &f: analy.env) {
-            std::cout << f.first << " Cost " <<
-                func_cost[f.first].first  << " " <<
-                func_cost[f.first].second  <<
-                std::endl;
-        }
-
-        for (auto &f: analy.env) {
             const vector<string> &args = f.second.args();
             vector<int> dim_estimates;
             long long size = 1;
@@ -2152,6 +2145,16 @@ struct Partitioner {
             std::cout << "Group " <<  g.first  << " :"<< std::endl;
             for (auto& m: g.second)
                 std::cout << m.name() << std::endl;
+            std::cout << std::endl;
+        }
+    }
+
+    void disp_costs() {
+        for (auto &f: analy.env) {
+            std::cout << f.first << " Cost " <<
+                func_cost[f.first].first  << " " <<
+                func_cost[f.first].second  <<
+                std::endl;
         }
     }
 
@@ -2191,7 +2194,7 @@ void Partitioner::update_function_costs() {
 
         int work_per_ele = region_cost_inline(g.first, prod_funcs,
                                               func_calls, func_cost);
-        func_cost[g.first].first = work_per_ele;
+        func_cost[g.first].first += work_per_ele;
     }
 }
 
@@ -2209,7 +2212,7 @@ void Partitioner::group(Partitioner::Level level) {
                 if (num_children == 1 && level == Partitioner::FAST_MEM) {
                     cand.push_back(make_pair(g.first,
                                              *children[g.first].begin()));
-                } else if(num_children > 0  && level == Partitioner::INLINE) {
+                } else if(num_children == 1  && level == Partitioner::INLINE) {
                     cand.push_back(make_pair(g.first, ""));
                 }
             }
@@ -2466,6 +2469,7 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
     if (l == Partitioner::INLINE) {
         work_per_tile = region_cost_inline(opt.cons_group, prod_funcs,
                                            func_calls, func_cost);
+        work_per_tile += func_cost[opt.cons_group].first;
     } else {
         work_per_tile = region_cost(prod_comp, func_cost);
         inter_s = region_size(mem_reg, analy.env, analy.func_dep_regions);
@@ -2476,7 +2480,7 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
 
     vector<string> out_of_cache_prods;
     for (auto &p: prod_funcs) {
-        if(func_size[p] > arch_params.fast_mem_size)
+        if(func_size[p] > arch_params.fast_mem_size || l == Partitioner::INLINE)
             out_of_cache_prods.push_back(p);
     }
 
@@ -2679,8 +2683,8 @@ Partitioner::Option Partitioner::choose_candidate(
     // intensity of the child group in the pair.
 
     vector<Option> options;
-    vector<int> size_variants = {256, 128, 64, 32, 16, 8};
-    //vector<int> size_variants = {16, 8, 4, 1};
+    //vector<int> size_variants = {256, 128, 64, 32, 16, 8};
+    vector<int> size_variants = {8};
     Option best_opt;
     best_opt.benefit = -1;
 
@@ -2957,24 +2961,18 @@ void vectorize_dim(Function &func, map<string, int> &dim_estimates,
 }
 
 bool check_dim_size(Function &func, int dim, int min_size,
-                    map<string, Box> &pipeline_bounds) {
-    if (pipeline_bounds.find(func.name()) == pipeline_bounds.end()) {
-        return false;
+                    map<string, int> &dim_estimates) {
+    vector<Dim> &dims = func.schedule().dims();
+    int extent = dim_estimates[dims[dim].var];
+    bool can_vec = false;
+    if (extent >= 0)
+        can_vec = extent >= min_size;
+    if(!can_vec) {
+        std::cout << "Vectorization failed" << std::endl;
+        std::cout << func.name() << std::endl;
+        std::cout << dims[dim].var << " " << extent << std::endl;
     }
-    else {
-        Box &b = pipeline_bounds[func.name()];
-        vector<Dim> &dims = func.schedule().dims();
-        const vector<string> vars = func.args();
-        for (unsigned int i = 0; i < vars.size(); i++)
-            if (dims[dim].var == vars[i]) {
-                int extent = get_extent(b[i]);
-                if (extent >= 0)
-                    return extent >= min_size;
-                else
-                    return false;
-            }
-    }
-    return false;
+    return can_vec;
 }
 
 void simple_vectorize(Function &func, map<string, int> &dim_estimates,
@@ -3089,7 +3087,7 @@ void schedule_advisor(const vector<Function> &outputs,
     for (auto& kv : env) {
         //std::cout << kv.first << ":" << std::endl;
         assert(func_cost.find(kv.first) == func_cost.end());
-        func_cost[kv.first].first = 0;
+        func_cost[kv.first].first = 1;
         func_cost[kv.first].second = 0;
         for (auto& e: kv.second.values()) {
             ExprCostEarly cost_visitor;
@@ -3221,14 +3219,25 @@ void schedule_advisor(const vector<Function> &outputs,
 
         // Grouping
         Partitioner part(pipeline_bounds, inlines, analy, func_cost);
+        std::cout << std::endl << "Function costs pre Inlining" << std::endl;
+        part.disp_costs();
+        std::cout << std::endl;
         part.group(Partitioner::INLINE);
+        std::cout << std::endl << "Groups Inlining" << std::endl;
+        part.disp_grouping();
+        std::cout << std::endl;
         // Clear the option cache
         part.option_cache.clear();
         part.clear_schedules();
         part.update_function_costs();
+        std::cout << std::endl << "Function costs post Inlining" << std::endl;
+        part.disp_costs();
+        std::cout << std::endl;
 
         part.group(Partitioner::FAST_MEM);
-
+        std::cout << std::endl << "Groups Fast Mem" << std::endl;
+        part.disp_grouping();
+        std::cout << std::endl;
         //part.disp_grouping();
 
         int vec_len = part.arch_params.vec_len;
@@ -3288,7 +3297,7 @@ void schedule_advisor(const vector<Function> &outputs,
                 zero_reuse_var = dims[dims.size() - 1].var;
             */
             // Get estimates of pipeline bounds
-            map<string, int> dim_estimates =
+            map<string, int> out_estimates =
                           get_dim_estimates(g_out.name(), pipeline_bounds, env);
 
             // Realizing the tiling and updating the dimension estimates
@@ -3303,7 +3312,7 @@ void schedule_advisor(const vector<Function> &outputs,
                 assert(index!=-1);
                 if (tile_sizes[v] > 1) {
                     split_dim(g_out, index, tile_sizes[v],
-                              dim_estimates, "tile", false);
+                              out_estimates, "tile", false);
                     move_dim_to_outermost(g_out.schedule().dims(), index + 1);
                 } else if (tile_sizes[v] == 1) {
                     move_dim_to_outermost(g_out.schedule().dims(), index);
@@ -3319,11 +3328,11 @@ void schedule_advisor(const vector<Function> &outputs,
 
                 // Vectorize first
                 if (auto_vec) {
-                    if (check_dim_size(g_out, 0, vec_len, pipeline_bounds))
-                        simple_vectorize(g_out, dim_estimates, 0, vec_len);
+                    if (check_dim_size(g_out, 0, vec_len, out_estimates))
+                        simple_vectorize(g_out, out_estimates, 0, vec_len);
                 }
                 int outer_dim = -1;
-                bool can_par = pick_dim_to_parallelize(g_out, dim_estimates, parallelism,
+                bool can_par = pick_dim_to_parallelize(g_out, out_estimates, parallelism,
                                                        sched, outer_dim, num_fused_dims);
 
                 if (auto_par && outer_dim !=-1 && can_par)
@@ -3332,7 +3341,7 @@ void schedule_advisor(const vector<Function> &outputs,
             } else {
                 // TODO Consider vectorization of RDoms
                 int outer_dim = -1;
-                bool can_par = pick_dim_to_parallelize(g_out, dim_estimates, parallelism,
+                bool can_par = pick_dim_to_parallelize(g_out, out_estimates, parallelism,
                                                        sched, outer_dim, num_fused_dims);
                 if (auto_par && outer_dim!=-1 && can_par)
                     parallelize_dim(g_out.schedule().dims(), outer_dim);
@@ -3345,7 +3354,7 @@ void schedule_advisor(const vector<Function> &outputs,
                     for (int i = (int)dims.size() - 2; i > 0 ; i--) {
                         bool dim_par = can_parallelize_rvar(dims[i].var,
                                                             g_out.name(), u);
-                        if (dim_par && dim_estimates[dims[i].var] > parallelism) {
+                        if (dim_par && out_estimates[dims[i].var] > parallelism) {
                             move_dim_to_outermost(dims, i);
                             int outer_dim = dims.size() - 2;
                             parallelize_dim(dims, outer_dim);
@@ -3357,6 +3366,8 @@ void schedule_advisor(const vector<Function> &outputs,
 
             for (auto &m: g.second) {
                 int outer_dim = dims.size() - 2;
+                map<string, int> mem_estimates =
+                          get_dim_estimates(m.name(), pipeline_bounds, env);
                 if (m.name() != g_out.name() &&
                    inlines.find(m.name()) == inlines.end() && num_tile_dims > 0) {
                     //int compute_level = inner_tile_dim;
@@ -3368,9 +3379,8 @@ void schedule_advisor(const vector<Function> &outputs,
                     m.schedule().compute_level().func = g_out.name();
                     m.schedule().compute_level().var = dims[compute_level].var;
                     if (m.is_pure() && auto_vec)
-                        if (check_dim_size(m, 0, vec_len, pipeline_bounds))
-                            simple_vectorize(m, dim_estimates, 0, vec_len);
-                            //simple_vectorize(g_out, 0);
+                        if (check_dim_size(m, 0, vec_len, mem_estimates))
+                            simple_vectorize(m, mem_estimates, 0, vec_len);
                 }
             }
         }
