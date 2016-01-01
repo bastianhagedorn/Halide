@@ -1,0 +1,9 @@
+test
+large_window_test
+large_window_test
+large_win.h
+large_win.o
+ref_perf.txt
+auto_perf.txt
+test_ref
+test_auto

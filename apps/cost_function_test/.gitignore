@@ -1,0 +1,7 @@
+cost_function_test
+cost.h
+cost.o
+ref_perf.txt
+auto_perf.txt
+test_auto
+test_ref

@@ -1,7 +1,8 @@
-harris
-harris.h
+unsharp
+unsharp.o
+unsharp.h
 filter_ref
 filter_auto
-auto_perf.txt
 ref_perf.txt
+auto_perf.txt
 out.png

@@ -1203,6 +1203,95 @@ long long get_func_out_size(Function &f) {
     return size;
 }
 
+class VectorExprCheck : public IRVisitor {
+    public:
+        bool can_vec;
+        string var;
+
+        VectorExprCheck(string _var): var(_var) {
+            can_vec = true;
+        }
+
+        using IRVisitor::visit;
+
+        void visit(const IntImm *) {}
+        void visit(const UIntImm *) {}
+        void visit(const FloatImm *) { can_vec = false; }
+        void visit(const StringImm *) { can_vec = false; }
+        void visit(const Cast *) { can_vec = false; }
+        void visit(const Variable * v) { can_vec = (can_vec) && (v->name == var); }
+
+        template<typename T>
+            void visit_binary_operator(const T *op) {
+                op->a.accept(this);
+                op->b.accept(this);
+            }
+
+        void visit(const Add *op) {visit_binary_operator(op);}
+        void visit(const Sub *op) {visit_binary_operator(op);}
+
+        void visit(const Mul *op) {
+            visit_binary_operator(op);
+            Expr a = simplify(op->a);
+            Expr b = simplify(op->b);
+            if ( !(a.as<UIntImm>() || a.as<IntImm>()) &&
+                     !(b.as<UIntImm>() || b.as<IntImm>()) )
+                can_vec = false;
+        }
+
+        void visit(const Div *op) {
+            visit_binary_operator(op);
+            Expr b = simplify(op->b);
+            if(!(b.as<UIntImm>() || b.as<IntImm>()))
+                can_vec = false;
+
+        }
+
+        void visit(const Mod *op) {
+            visit_binary_operator(op);
+            Expr b = simplify(op->b);
+            if(!(b.as<UIntImm>() || b.as<IntImm>()))
+                can_vec = false;
+        }
+
+        void visit(const Min *op) { can_vec = false;}
+        void visit(const Max *op) { can_vec = false;}
+        void visit(const EQ *op) { can_vec = false;}
+        void visit(const NE *op) { can_vec = false;}
+        void visit(const LT *op) { can_vec = false;}
+        void visit(const LE *op) { can_vec = false;}
+        void visit(const GT *op) { can_vec = false;}
+        void visit(const GE *op) { can_vec = false;}
+        void visit(const And *op) { can_vec = false;}
+        void visit(const Or *op) { can_vec = false;}
+
+        void visit(const Not *op) {
+            op->a.accept(this);
+        }
+
+        void visit(const Select *op) { can_vec = false; }
+
+        void visit(const Call * call) { can_vec = false; }
+
+        void visit(const Let * let) { assert(0); }
+        void visit(const Load *) { assert(0); }
+        void visit(const Ramp *) { assert(0); }
+        void visit(const Broadcast *) { assert(0); }
+        void visit(const LetStmt *) { assert(0); }
+        void visit(const AssertStmt *) {}
+        void visit(const ProducerConsumer *) { assert(0); }
+        void visit(const For *) { assert(0); }
+        void visit(const Store *) { assert(0); }
+        void visit(const Provide *) { assert(0); }
+        void visit(const Allocate *) { assert(0); }
+        void visit(const Free *) { assert(0); }
+        void visit(const Realize *) { assert(0); }
+        void visit(const Block *) { assert(0); }
+        void visit(const IfThenElse *) { assert(0); }
+        void visit(const Evaluate *) { assert(0); }
+
+};
+
 /* Visitor for computing the cost of a single value of a function*/
 class ExprCostEarly : public IRVisitor {
     public:
@@ -1950,8 +2039,10 @@ int get_extent_estimate(Function &f, map<string, Box> &bounds, int dim) {
     if (bounds.find(f.name()) != bounds.end()) {
         Interval &I = bounds[f.name()][dim];
         int extent = get_extent(I);
-        if (extent > 0)
+        if (extent > 0 && estimate > 0)
             estimate = std::min(estimate, extent);
+        else
+            estimate = extent;
     }
 
     return estimate;
@@ -3044,13 +3135,21 @@ void simple_vectorize(Function &func, map<string, int> &dim_estimates,
     FindCallArgs find;
     func.accept(&find);
     // For all the loads find the stride of the innermost loop
-    bool constant_stride = true;
+    bool vec = true;
     for(auto& larg: find.load_args) {
         Expr diff = simplify(finite_difference(larg[inner_dim],
                              func.args()[inner_dim]));
-        constant_stride = constant_stride && is_simple_const(diff);
+
+        //std::cout << "Diff expr" << std::endl;
+        //std::cout << diff << std::endl;
+        VectorExprCheck vec_check(func.args()[inner_dim]);
+        diff.accept(&vec_check);
+
+        vec = vec && ( is_simple_const(diff) ||
+                       vec_check.can_vec );
+        //std::cout << vec_check.can_vec << std::endl;
     }
-    if (constant_stride)
+    if (vec)
         vectorize_dim(func, dim_estimates, inner_dim, vec_width);
 }
 
