@@ -17,6 +17,7 @@
 #include "RealizationOrder.h"
 
 #include <algorithm>
+#include <limits>
 
 namespace Halide {
 namespace Internal {
@@ -1658,6 +1659,15 @@ struct DependenceAnalysis {
 
 };
 
+int get_min(const Interval &i) {
+
+    if ((i.min.as<IntImm>())) {
+        const IntImm * bmin = i.min.as<IntImm>();
+        return bmin->value;
+    }
+    return std::numeric_limits<int>::max();
+}
+
 int get_extent(const Interval &i) {
 
     if ((i.min.as<IntImm>()) && (i.max.as<IntImm>())) {
@@ -1677,6 +1687,17 @@ int get_extent(const Interval &i) {
             return diff.as<IntImm>()->value;
     } */
     return -1;
+}
+
+pair<int, int> get_bound(const Interval &i) {
+
+    if ((i.min.as<IntImm>()) && (i.max.as<IntImm>())) {
+        const IntImm * bmin = i.min.as<IntImm>();
+        const IntImm * bmax = i.max.as<IntImm>();
+        return make_pair(bmin->value, bmax->value);
+    }
+    return make_pair(std::numeric_limits<int>::max(),
+                     std::numeric_limits<int>::min());
 }
 
 long long box_area(Box &b) {
@@ -1930,10 +1951,52 @@ int get_extent_estimate(Function &f, map<string, Box> &bounds, int dim) {
         Interval &I = bounds[f.name()][dim];
         int extent = get_extent(I);
         if (extent > 0)
-            estimate = std::max(estimate, extent);
+            estimate = std::min(estimate, extent);
     }
 
     return estimate;
+}
+
+int get_min_estimate(Function &f, map<string, Box> &bounds, int dim) {
+
+    vector<string> vars = f.args();
+    int estimate = std::numeric_limits<int>::max();
+    for (auto &b: f.schedule().bounds())
+        if (b.var == vars[dim]) {
+            const IntImm * bmin = b.min.as<IntImm>();
+            estimate = bmin->value;
+        }
+
+    if (bounds.find(f.name()) != bounds.end()) {
+        Interval &I = bounds[f.name()][dim];
+        int lower = get_min(I);
+        estimate = std::max(estimate, lower);
+    }
+
+    return estimate;
+}
+
+pair<int, int> get_bound_estimates(Function &f, map<string, Box> &bounds,
+                                   int dim) {
+    vector<string> vars = f.args();
+    int est_lower = std::numeric_limits<int>::max();
+    int est_upper = std::numeric_limits<int>::min();
+    for (auto &b: f.schedule().bounds())
+        if (b.var == vars[dim]) {
+            const IntImm * bmin = b.min.as<IntImm>();
+            const IntImm * bextent = b.extent.as<IntImm>();
+            est_lower = bmin->value;
+            est_upper = bmin->value + bextent->value - 1;
+        }
+
+    if (bounds.find(f.name()) != bounds.end()) {
+        Interval &I = bounds[f.name()][dim];
+        pair<int, int> b = get_bound(I);
+        est_lower = std::max(est_lower, b.first);
+        est_upper = std::max(est_upper, b.second);
+    }
+
+    return make_pair(est_lower, est_upper);
 }
 
 void disp_func_calls(map<string, map<string, int> > &func_calls) {
@@ -2683,8 +2746,8 @@ Partitioner::Option Partitioner::choose_candidate(
     // intensity of the child group in the pair.
 
     vector<Option> options;
-    //vector<int> size_variants = {256, 128, 64, 32, 16, 8};
-    vector<int> size_variants = {8};
+    vector<int> size_variants = {256, 128, 64, 32, 16, 8};
+    //vector<int> size_variants = {8};
     Option best_opt;
     best_opt.benefit = -1;
 
