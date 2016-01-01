@@ -2320,7 +2320,6 @@ struct Partitioner {
         }
         std::cout << "]" << std::endl;
         std::cout << "Benefit:" << opt.benefit << std::endl;
-        std::cout << "Redundant Work:" << opt.redundant_work << std::endl;
     }
 
     Option choose_candidate(const vector< pair<string, string > > &cand_pairs);
@@ -2328,7 +2327,7 @@ struct Partitioner {
     void group(Partitioner::Level level);
     void clear_schedules();
     void update_function_costs();
-    void evaluate_option(Option &opt, Partitioner::Level level);
+    void evaluate_option(Option &opt, Partitioner::Level level, float penalty);
 };
 
 void Partitioner::clear_schedules() {
@@ -2468,7 +2467,8 @@ map<string, int> get_dim_estimates(string f, map<string, Box> &pipeline_bounds,
     return dim_estimates;
 }
 
-void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
+void Partitioner::evaluate_option(Option &opt, Partitioner::Level l,
+                                  float penalty = 1.0) {
 
     //disp_option(opt);
 
@@ -2512,7 +2512,8 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
     for (unsigned int i = 0; i < args.size(); i++) {
         if (opt.tile_sizes[i] != -1) {
             // Check if the bounds allow for tiling with the given tile size
-            if (dim_estimates_cons[i] >= opt.tile_sizes[i]) {
+            // Ensure atleast 2 tiles
+            if (dim_estimates_cons[i] >= 2 * opt.tile_sizes[i]) {
                 bounds.push_back(make_pair(0, opt.tile_sizes[i] - 1));
                 tile_size = tile_size * (opt.tile_sizes[i]);
                 cons_box.push_back(Interval(0, opt.tile_sizes[i] -1));
@@ -2653,8 +2654,10 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
     }
 
     //float total_work = work_per_tile * partial_tiles;
+
     // This is more accurate since partial tiles are handled by shifting
     // and computing a full tile.
+    //float total_work = work_per_tile * estimate_tiles * penalty;
     float total_work = work_per_tile * estimate_tiles;
 
     if (total_mem != -1) {
@@ -2840,7 +2843,10 @@ Partitioner::Option Partitioner::choose_candidate(
     // intensity of the child group in the pair.
 
     vector<Option> options;
-    vector<int> size_variants = {256, 128, 64, 32, 16, 8};
+    vector<int> size_variants = {256, 128, 64, 32, 16, 8, 4};
+
+    map<int, float> penalty = { {256, 1.25}, {128, 1.5}, {64, 2},
+                                {32, 2.5}, {16, 4}, {8, 8}, {4, 16}};
     //vector<int> size_variants = {8};
     Option best_opt;
     best_opt.benefit = -1;
@@ -2911,10 +2917,18 @@ Partitioner::Option Partitioner::choose_candidate(
                     for (int j = 0; j < i; j++)
                         opt.tile_sizes.push_back(-1);
 
-                    for (unsigned int j = i; j < args.size(); j++)
-                        opt.tile_sizes.push_back(s);
+                    for (unsigned int j = i; j < args.size(); j++) {
+                        if (j == 0)
+                            opt.tile_sizes.push_back(std::max(s, 64));
+                        else
+                            opt.tile_sizes.push_back(s);
+                    }
 
-                    evaluate_option(opt, Partitioner::FAST_MEM);
+                    if (i == 0)
+                        evaluate_option(opt, Partitioner::FAST_MEM, penalty[s]);
+                    else
+                        evaluate_option(opt, Partitioner::FAST_MEM);
+
 
                     if (cand_best_opt.benefit < opt.benefit)
                         cand_best_opt = opt;
