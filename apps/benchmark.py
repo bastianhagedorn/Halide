@@ -15,9 +15,9 @@ speed_up = {}
 p = 1
 
 for app in ["blur", "hist", "unsharp", "harris", "local_laplacian", "interpolate", "bilateral_grid", \
-            "camera_pipe", "conv_layer", "mat_mul", "cost_function_test", "overlap_test", \
+            "camera_pipe", "conv_layer", "mat_mul", "vgg", "cost_function_test", "overlap_test", \
             "split_test", "tile_vs_inline_test", "data_dependent_test",\
-            "parallel_test"] :
+            "parallel_test", "large_window_test"] :
 
         with open(os.path.join(app, "ref_perf.txt")) as f:
             times_ref[app] = [ float(l) for l in f ]
@@ -27,7 +27,7 @@ for app in ["blur", "hist", "unsharp", "harris", "local_laplacian", "interpolate
 
         speed_up[app] = [ref/auto for (ref,auto) in zip(times_ref[app], times_auto[app])]
 
-        ax = plt.subplot(4, 4, p)
+        ax = plt.subplot(5, 4, p)
         ax.bar([1, 2, 3, 4], speed_up[app], alpha=0.4, align='center')
         ax.set_xlabel("Threads")
         ax.set_ylabel("Speed Up")
