@@ -15,3 +15,6 @@ unsharp/unsharp
 unsharp/unsharp.h
 overlap_test/overlap.h
 overlap_test/overlap_test
+hist/hist
+hist/hist.h
+mat_mul/mat_mul
