@@ -2344,7 +2344,7 @@ struct Partitioner {
     }
 
     Option choose_candidate(const vector< pair<string, string > > &cand_pairs);
-    pair<int, vector<Option> >
+    pair<float, vector<Option> >
         choose_candidate_inline(const vector< pair<string, string > > &cand_pairs);
     void group(Partitioner::Level level);
     void clear_schedules();
@@ -2402,9 +2402,9 @@ void Partitioner::group(Partitioner::Level level) {
 
         vector<pair<string, string> > invalid_keys;
         if (level == Partitioner::INLINE) {
-            pair<int, vector<Option> > best;
+            pair<float, vector<Option> > best;
             best = choose_candidate_inline(cand);
-            if (best.first != -1) {
+            if (best.first >= 0) {
                 string prod = best.second[0].prod_group;
 
                 std::cout << "Choice Inline:" << std::endl;
@@ -2446,7 +2446,7 @@ void Partitioner::group(Partitioner::Level level) {
         } else {
             Option best;
             best = choose_candidate(cand);
-            if (best.benefit != -1) {
+            if (best.benefit >= 0) {
 
                 std::cout << "Choice Fuse:" << std::endl;
                 std::cout << best.prod_group << " "
@@ -2761,11 +2761,11 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l,
     std::cout << std::endl << "Final benefit:" << opt.benefit << std::endl;
 }
 
-pair<int, vector<Partitioner::Option> >
+pair<float, vector<Partitioner::Option> >
     Partitioner::choose_candidate_inline(
                     const vector< pair<string, string> > &cand_pairs) {
 
-    pair<int, vector<Partitioner::Option> > best;
+    pair<float, vector<Partitioner::Option> > best;
     best.first = -1;
     for (auto &p: cand_pairs) {
         // Compute the aggregate benefit for inlining into all the children
