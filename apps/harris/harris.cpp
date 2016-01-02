@@ -34,7 +34,7 @@ int main(int argc, char **argv) {
     Func Ixx("Ixx");
     Ixx(x, y) = Ix(x, y) * Ix(x, y);
 
-    Func Iyy("Ixx");
+    Func Iyy("Iyy");
     Iyy(x, y) = Iy(x, y) * Iy(x, y);
 
     Func Ixy("Ixy");

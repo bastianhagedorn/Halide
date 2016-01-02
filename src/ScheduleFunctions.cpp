@@ -2147,8 +2147,7 @@ struct Partitioner {
         int parallelism;
         int vec_len;
         long long fast_mem_size;
-        int balance_fast_mem;
-        int balance_inline;
+        int balance;
     };
 
     map<string, Box> &pipeline_bounds;
@@ -2259,8 +2258,7 @@ struct Partitioner {
         // Initialize machine params
         arch_params.parallelism = 8;
         arch_params.vec_len = 8;
-        arch_params.balance_fast_mem = 10;
-        arch_params.balance_inline = 10;
+        arch_params.balance = 20;
         arch_params.fast_mem_size = 32 * 1024 * 8;
         // L1 = 32K
         // L2 = 256K
@@ -2354,7 +2352,7 @@ struct Partitioner {
 
 void Partitioner::clear_schedules() {
     for (auto &s: group_sched) {
-        s.second.benefit = 0;
+        // Do not reset benefit carry over from inlining phase
         s.second.redundant_work = 0;
         s.second.saved_mem = 0;
 
@@ -2373,6 +2371,23 @@ void Partitioner::update_function_costs() {
         int work_per_ele = region_cost_inline(g.first, prod_funcs,
                                               func_calls, func_cost);
         func_cost[g.first].first += work_per_ele;
+    }
+    for (auto &f: analy.env) {
+        const vector<string> &args = f.second.args();
+        long long size = 1;
+        for (unsigned int i = 0; i < args.size(); i++) {
+            int estimate = get_extent_estimate(f.second,
+                                               pipeline_bounds, i);
+            if (estimate != -1 && size != -1)
+                size *= estimate;
+            else
+                size = -1;
+        }
+        long long work = size;
+        if(size != -1) {
+            work = func_cost[f.first].first * work;
+        }
+        func_op[f.first] = work;
     }
 }
 
@@ -2552,15 +2567,15 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l,
                 // If the dimension is too small do not tile it and set the
                 // extent of the bounds to that of the dimension estimate
                 opt.tile_sizes[i] = -1;
-                bounds.push_back(make_pair(0, dim_estimates_cons[i] - 1));
+                bounds.push_back(make_pair(0, dim_estimates_cons[i]));
                 tile_size = tile_size * (dim_estimates_cons[i]);
-                cons_box.push_back(Interval(0, dim_estimates_cons[i] - 1));
+                cons_box.push_back(Interval(0, dim_estimates_cons[i]));
             }
         }
         else {
-            bounds.push_back(make_pair(0, dim_estimates_cons[i] - 1));
+            bounds.push_back(make_pair(0, dim_estimates_cons[i]));
             tile_size = tile_size * (dim_estimates_cons[i]);
-            cons_box.push_back(Interval(0, dim_estimates_cons[i] - 1));
+            cons_box.push_back(Interval(0, dim_estimates_cons[i]));
         }
 
         eval.push_back(true);
@@ -2619,10 +2634,12 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l,
 
     // Do not count inlines while accounting for intermediate storage when
     // grouping for fast mem
+    long long original_work = 0;
     for (auto &f: prod_funcs) {
         if (inlines.find(f) == inlines.end() || l == Partitioner::INLINE) {
             mem_reg[f] = conc_reg[f];
             prod_comp[f] = conc_reg[f];
+            original_work += func_op[f];
         }
     }
 
@@ -2647,7 +2664,6 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l,
         inter_s = region_size(mem_reg, analy.env, analy.func_dep_regions);
     }
 
-    long long original_work = 0;
     long long saved_mem = 0;
 
     vector<string> out_of_cache_prods;
@@ -2658,7 +2674,6 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l,
 
     for (auto &f: prod_funcs) {
         if (func_op[f] != -1) {
-            original_work += func_op[f];
             long long data = data_from_group(f, analy.env, func_calls,
                                              func_size, out_of_cache_prods);
             saved_mem += data;
@@ -2707,17 +2722,17 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l,
     assert(total_work > 0);
 
     if (l == Partitioner::INLINE) {
-        opt.benefit = (saved_mem) * (arch_params.balance_inline)
+        opt.benefit = (saved_mem) * (arch_params.balance)
                                   - opt.redundant_work;
     } else {
         if (inter_s <= arch_params.fast_mem_size) {
-            opt.benefit = (saved_mem) * (arch_params.balance_fast_mem)
+            opt.benefit = (saved_mem) * (arch_params.balance)
                            - opt.redundant_work;
         }
         else if (inter_s <= 2 * arch_params.fast_mem_size) {
             float hit = (float)std::max(2 * arch_params.fast_mem_size - inter_s, 0LL)/inter_s;
             float loads_saved = hit * saved_mem;
-            opt.benefit = loads_saved * (arch_params.balance_fast_mem)
+            opt.benefit = loads_saved * (arch_params.balance)
                           - opt.redundant_work;
         }
     }
