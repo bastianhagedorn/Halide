@@ -2101,8 +2101,8 @@ void disp_func_calls(map<string, map<string, int> > &func_calls) {
 struct Partitioner {
 
     struct Option {
-        // Option is the cost when the prod_group is merged with the cons_group
-        // and computed at the granularity of the tile given by tile_sizes
+        // Option encodes the possibility of the prod_group being merged with
+        // the cons_group at the granularity of the tile given by tile_sizes
         string prod_group;
         string cons_group;
         // Tile sizes of along dimensions of the output of the child group
@@ -2110,10 +2110,18 @@ struct Partitioner {
         vector<int> tile_sizes;
         // A score indicating the benefit of the option
         float benefit;
-        // Amount of redundant compute relative to the work done when both
-        // prod_group and cons_group are fused
+        // Estimate of extra aritmetic introduced
         float redundant_work;
+        // Estimate of mem accesses saved
+        float saved_mem;
 
+        Option() {
+            prod_group = "";
+            cons_group = "";
+            benefit = -1;
+            redundant_work = -1;
+            saved_mem = -1;
+        }
     };
 
     // Levels that are targetted by the grouping algorithm
@@ -2121,7 +2129,18 @@ struct Partitioner {
 
     struct GroupSched {
         vector<int> tile_sizes;
+        // A score indicating the benefit of the scheduling choice
         float benefit;
+        // Estimate of extra aritmetic introduced
+        float redundant_work;
+        // Estimate of mem accesses saved
+        float saved_mem;
+
+        GroupSched() {
+            benefit = 0;
+            redundant_work = 0;
+            saved_mem = 0;
+        }
     };
 
     struct MachineParams {
@@ -2191,7 +2210,7 @@ struct Partitioner {
             const vector<string> &args = output.args();
 
             GroupSched sched;
-            sched.benefit = 0;
+
             // From the outer to the inner most argument
             for (int i = (int)args.size() - 1; i >= 0; i --)
                 sched.tile_sizes.push_back(-1);
@@ -2320,10 +2339,13 @@ struct Partitioner {
         }
         std::cout << "]" << std::endl;
         std::cout << "Benefit:" << opt.benefit << std::endl;
+        std::cout << "Redundant work:" << opt.redundant_work << std::endl;
+        std::cout << "Memory accesses saved:" << opt.saved_mem << std::endl;
     }
 
     Option choose_candidate(const vector< pair<string, string > > &cand_pairs);
-    Option choose_candidate_inline(const vector< pair<string, string > > &cand_pairs);
+    pair<int, vector<Option> >
+        choose_candidate_inline(const vector< pair<string, string > > &cand_pairs);
     void group(Partitioner::Level level);
     void clear_schedules();
     void update_function_costs();
@@ -2333,6 +2355,9 @@ struct Partitioner {
 void Partitioner::clear_schedules() {
     for (auto &s: group_sched) {
         s.second.benefit = 0;
+        s.second.redundant_work = 0;
+        s.second.saved_mem = 0;
+
         for (unsigned int i = 0; i < s.second.tile_sizes.size(); i++)
             s.second.tile_sizes[i] = -1;
     }
@@ -2374,58 +2399,58 @@ void Partitioner::group(Partitioner::Level level) {
             std::cout << "[" << p.first << "," <<  p.second << "]";
         }
         std::cout << std::endl;
-        // Pick a pair of groups to merge. This is a tricky choice.
-        Option best;
-        if (level == Partitioner::INLINE)
+
+        vector<pair<string, string> > invalid_keys;
+        if (level == Partitioner::INLINE) {
+            pair<int, vector<Option> > best;
             best = choose_candidate_inline(cand);
-        else
-            best = choose_candidate(cand);
+            if (best.first != -1) {
+                string prod = best.second[0].prod_group;
 
-        if (best.benefit != -1) {
-            std::cout << "Choice:" << std::endl;
-            if (level == Partitioner::INLINE)
-                std::cout << "Inline ";
-            std::cout << best.prod_group << " " << best.cons_group << std::endl;
+                std::cout << "Choice Inline:" << std::endl;
+                std::cout << prod << std::endl;
 
-            vector<pair<string, string> > invalid_keys;
-            if (level == Partitioner::INLINE) {
-                // Verify that all the functions in producer group are
-                // scheduled inline
+                for (auto &o: best.second)
+                    assert(o.prod_group == prod);
 
-                // TODO a cleaner way would be to move all this manipulating
-                // schedules to later including the ones done in the inline
-                // phase
+                assert(best.second.size() == children[prod].size());
 
-                // Inline the producer group into the consumer group i.e.,
-                // add the producer group to the set of inlines
-                assert(best.cons_group == "");
+                analy.env[prod].schedule().store_level().var = "";
+                analy.env[prod].schedule().compute_level().var = "";
 
-                analy.env[best.prod_group].schedule().store_level().var = "";
-                analy.env[best.prod_group].schedule().compute_level().var = "";
+                int i = 0;
+                for (auto &c: children[prod]) {
+                    assert(best.second[i].cons_group == c);
 
-                for (auto &c: children[best.prod_group]) {
-
-                    inlines[best.prod_group].push_back(c);
-
+                    inlines[prod].push_back(c);
                     GroupSched sched;
-                    vector<int> tile_sizes;
-                    for (unsigned int i = 0; i < analy.env[c].args().size(); i++)
-                        tile_sizes.push_back(1);
 
-                    sched.tile_sizes = tile_sizes;
-                    sched.benefit = best.benefit;
+                    sched.tile_sizes = best.second[i].tile_sizes;
+                    sched.benefit = best.second[i].benefit;
+                    sched.redundant_work = best.second[i].redundant_work;
+                    assert(best.second[i].saved_mem >= 0);
+                    sched.saved_mem = best.second[i].saved_mem;
                     group_sched[c] = sched;
 
                     for (auto& opt: option_cache) {
-                        assert(opt.first.second != "");
-                        if (opt.first.first == c || opt.first.second == c)
+                        if (opt.first.first == c ||
+                                opt.first.second == c)
                             invalid_keys.push_back(opt.first);
                     }
+                    i++;
                 }
+                merge_group_all_children(prod);
+                fixpoint = false;
+            }
 
-                merge_group_all_children(best.prod_group);
+        } else {
+            Option best;
+            best = choose_candidate(cand);
+            if (best.benefit != -1) {
 
-            } else {
+                std::cout << "Choice Fuse:" << std::endl;
+                std::cout << best.prod_group << " "
+                          << best.cons_group << std::endl;
 
                 for (auto& opt: option_cache) {
                     if (opt.first.second == best.cons_group
@@ -2436,15 +2461,20 @@ void Partitioner::group(Partitioner::Level level) {
                 GroupSched sched;
                 sched.tile_sizes = best.tile_sizes;
                 sched.benefit = best.benefit;
+                sched.redundant_work = best.redundant_work;
+                assert(best.saved_mem >= 0);
+                sched.saved_mem = best.saved_mem;
+
                 group_sched[best.cons_group] = sched;
 
                 merge_groups(best.prod_group, best.cons_group);
+                fixpoint = false;
             }
-            // Invalidate the option cache
-            for (auto& key: invalid_keys)
-                option_cache.erase(key);
-            fixpoint = false;
         }
+
+        // Invalidate the option cache
+        for (auto& key: invalid_keys)
+            option_cache.erase(key);
     }
 }
 
@@ -2548,9 +2578,9 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l,
     }
 
     conc_reg = analy.concrete_dep_regions(opt.cons_group, eval, bounds);
-    conc_overlaps = analy.concrete_overlap_regions(opt.cons_group, eval, bounds);
 
-    // disp_regions(conc_reg);
+    //disp_regions(conc_reg);
+
     // Cost model
 
     // We currently assume a two level memory model. The fast_mem_size field in
@@ -2581,11 +2611,12 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l,
     //                     * op_c)
     //    => hit * (s_c - f_c) - (redundant_ops) * op_c
 
-    // Determine size of intermediates
-
     // disp_regions(conc_reg);
     map<string, Box> mem_reg;
     map<string, Box> prod_comp;
+
+    // Determine size of intermediates
+
     // Do not count inlines while accounting for intermediate storage when
     // grouping for fast mem
     for (auto &f: prod_funcs) {
@@ -2604,20 +2635,6 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l,
     //for (auto &o: conc_overlaps)
     //    disp_regions(o);
 
-    long long red_work_tile = 0;
-    for (unsigned int i = 0; i < args.size(); i++) {
-        if (opt.tile_sizes[i] != -1) {
-            long long dir_red_work = overlap_cost(opt.cons_group, prods,
-                                                  conc_overlaps, func_cost, i);
-            if (dir_red_work != -1) {
-                red_work_tile += dir_red_work;
-            } else {
-                red_work_tile = -1;
-                break;
-            }
-        }
-    }
-
     long long work_per_tile = 0;
     long long inter_s = 0;
 
@@ -2631,7 +2648,7 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l,
     }
 
     long long original_work = 0;
-    long long total_mem = 0;
+    long long saved_mem = 0;
 
     vector<string> out_of_cache_prods;
     for (auto &p: prod_funcs) {
@@ -2644,11 +2661,12 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l,
             original_work += func_op[f];
             long long data = data_from_group(f, analy.env, func_calls,
                                              func_size, out_of_cache_prods);
-            total_mem += data;
+            saved_mem += data;
         } else {
             // This option cannot be evaluated
             opt.benefit = -1;
             opt.redundant_work = -1;
+            opt.saved_mem = -1;
             return;
         }
     }
@@ -2657,19 +2675,18 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l,
 
     // This is more accurate since partial tiles are handled by shifting
     // and computing a full tile.
-    //float total_work = work_per_tile * estimate_tiles * penalty;
     float total_work = work_per_tile * estimate_tiles;
 
-    if (total_mem != -1) {
+    if (saved_mem != -1) {
         long long data = data_from_group(opt.cons_group, analy.env,
                                          func_calls, func_size,
                                          out_of_cache_prods);
-        total_mem += data;
+        saved_mem += data;
     }
 
     std::cout << std::endl;
     std::cout << "Evaluating benefit " << opt.prod_group << "->"
-                                    << opt.cons_group << ":" << std::endl;
+                                       << opt.cons_group << ":" << std::endl;
 
     disp_regions(prod_comp);
 
@@ -2677,66 +2694,83 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l,
     std::cout << "Num tiles:" << estimate_tiles << std::endl;
     std::cout << "Partial tiles:" << partial_tiles << std::endl;
     std::cout << "Total work:" << total_work << std::endl;
-    std::cout << "Total mem:" << total_mem << std::endl;
     std::cout << "Original work:" << original_work << std::endl;
+    std::cout << "Saved mem:" << saved_mem << std::endl;
 
     std::cout << "Intermediate size:" << inter_s << std::endl;
-
-    std::cout << "Redundant work per tile:" << red_work_tile << std::endl;
-    std::cout << "Redundant work overall using tiles:"
-                    << red_work_tile * estimate_tiles << std::endl;
-    std::cout << "Redundant work overall:" <<
+    std::cout << "Redundant work:" <<
                     (total_work - original_work) << std::endl;
-    std::cout << "Ratio of different measures:"
-              << (float) (total_work - original_work)/
-                         (red_work_tile * estimate_tiles) << std::endl;
 
-    // TODO check why total_work can be less than original_work
-    // It can be and it is super interesting
     opt.redundant_work = total_work - original_work;
+    opt.saved_mem = saved_mem;
 
     assert(total_work > 0);
 
     if (l == Partitioner::INLINE) {
-        opt.benefit = (total_mem) * (arch_params.balance_inline)
-            - opt.redundant_work;
+        opt.benefit = (saved_mem) * (arch_params.balance_inline)
+                                  - opt.redundant_work;
     } else {
         if (inter_s <= arch_params.fast_mem_size) {
-            opt.benefit = (total_mem) * (arch_params.balance_fast_mem)
+            opt.benefit = (saved_mem) * (arch_params.balance_fast_mem)
                            - opt.redundant_work;
         }
         else if (inter_s <= 2 * arch_params.fast_mem_size) {
             float hit = (float)std::max(2 * arch_params.fast_mem_size - inter_s, 0LL)/inter_s;
-            float loads_saved = hit * total_mem;
+            float loads_saved = hit * saved_mem;
             opt.benefit = loads_saved * (arch_params.balance_fast_mem)
                           - opt.redundant_work;
         }
     }
 
+    std::cout << "Estimated benefit:" << opt.benefit << std::endl;
+
     if (arch_params.parallelism > estimate_tiles) {
         // Option did not satisfy the parallelism constraint
         opt.benefit = -1;
     }
+
+    std::cout << std::endl << "Producer group:" << std::endl;
+    for (auto &f: groups[opt.prod_group])
+        std::cout << f.name() << std::endl;
+    std::cout << "Saved mem:" << group_sched[opt.prod_group].saved_mem
+              << std::endl;
+    std::cout << "Redundant work:" << group_sched[opt.prod_group].redundant_work
+              << std::endl;
+    std::cout << "Producer benefit:" << group_sched[opt.prod_group].benefit << std::endl;
+
+    std::cout << std::endl << "Consumer group:" << std::endl;
+    for (auto &f: groups[opt.cons_group])
+        std::cout << f.name() << std::endl;
+    std::cout << "Saved mem:" << group_sched[opt.cons_group].saved_mem
+              << std::endl;
+    std::cout << "Redundant work:" << group_sched[opt.cons_group].redundant_work
+              << std::endl;
+    std::cout << "Consumer benefit:" << group_sched[opt.cons_group].benefit
+              << std::endl;
+
     assert(group_sched[opt.cons_group].benefit >= 0 &&
             group_sched[opt.prod_group].benefit >= 0 );
+
+    assert(group_sched[opt.cons_group].saved_mem >= 0 &&
+            group_sched[opt.prod_group].saved_mem >= 0 );
 
     if (group_sched[opt.cons_group].benefit +
             group_sched[opt.prod_group].benefit > opt.benefit) {
         opt.benefit = -1;
     }
-    std::cout << "Benefit:" << opt.benefit << std::endl;
+    std::cout << std::endl << "Final benefit:" << opt.benefit << std::endl;
 }
 
-Partitioner::Option Partitioner::choose_candidate_inline(
+pair<int, vector<Partitioner::Option> >
+    Partitioner::choose_candidate_inline(
                     const vector< pair<string, string> > &cand_pairs) {
 
-    vector<Option> options;
-    Option best_opt;
-    best_opt.benefit = -1;
-
+    pair<int, vector<Partitioner::Option> > best;
+    best.first = -1;
     for (auto &p: cand_pairs) {
         // Compute the aggregate benefit for inlining into all the children
         float overall_benefit = 0;
+        vector<Option> options;
         for (auto &c: children[p.first]) {
 
             // Get the output function of the child group
@@ -2746,7 +2780,6 @@ Partitioner::Option Partitioner::choose_candidate_inline(
             Option cand_opt;
             cand_opt.prod_group = p.first;
             cand_opt.cons_group = c;
-            cand_opt.benefit = -1;
 
             // Check if the pair has been evaluated before
             pair<string, string> key = make_pair(p.first, c);
@@ -2771,23 +2804,19 @@ Partitioner::Option Partitioner::choose_candidate_inline(
                 overall_benefit = -1;
                 break;
             } else {
-                // TODO this is not entirely accurate the right thing to do
-                // would be to assign benefit to each of the individual options
-                // involved in inlining
-                overall_benefit = std::min(cand_opt.benefit, overall_benefit);
+                options.push_back(cand_opt);
+                overall_benefit += cand_opt.benefit;
             }
         }
 
-        Option final_opt;
-        final_opt.prod_group = p.first;
-        final_opt.cons_group = "";
-        final_opt.benefit = overall_benefit;
-
-        if (best_opt.benefit < final_opt.benefit)
-            best_opt = final_opt;
+        if (best.first < overall_benefit) {
+            assert(children[p.first].size() == options.size());
+            best.first = overall_benefit;
+            best.second = options;
+        }
 
     }
-    return best_opt;
+    return best;
 }
 
 Partitioner::Option Partitioner::choose_candidate(
@@ -2847,9 +2876,8 @@ Partitioner::Option Partitioner::choose_candidate(
 
     map<int, float> penalty = { {256, 1.25}, {128, 1.5}, {64, 2},
                                 {32, 2.5}, {16, 4}, {8, 8}, {4, 16}};
-    //vector<int> size_variants = {8};
+
     Option best_opt;
-    best_opt.benefit = -1;
 
     for (auto &p: cand_pairs) {
         pair<string, string> key = make_pair(p.first, p.second);
@@ -2901,7 +2929,6 @@ Partitioner::Option Partitioner::choose_candidate(
 
         cand_best_opt.prod_group = p.first;
         cand_best_opt.cons_group = p.second;
-        cand_best_opt.benefit = -1;
 
         if (!invalid) {
             // From the outer to the inner most argument
@@ -2912,7 +2939,6 @@ Partitioner::Option Partitioner::choose_candidate(
                     Option opt;
                     opt.prod_group = p.first;
                     opt.cons_group = p.second;
-                    opt.benefit = -1;
 
                     for (int j = 0; j < i; j++)
                         opt.tile_sizes.push_back(-1);
