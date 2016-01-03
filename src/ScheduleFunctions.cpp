@@ -1928,19 +1928,21 @@ long long region_cost_inline(string func, vector<string> &inline_reg,
             }
         }
     }
-
+    assert(total_cost >= 0);
     return total_cost;
 }
 
 long long region_cost(string func, Box &region,
                       map<string, pair<int, int> > &func_cost) {
     long long area = box_area(region);
-    if (area < 0)
+    if (area < 0) {
         // Area could not be determined
         return -1;
+    }
     int op_cost = func_cost[func].first;
 
     long long cost = area * (op_cost);
+    assert(cost >= 0);
     return cost;
 }
 
@@ -1949,12 +1951,14 @@ long long region_cost(map<string, Box> &regions,
 
     long long total_cost = 0;
     for(auto &f: regions) {
-        int cost = region_cost(f.first, f.second, func_cost);
-        if (cost < 0)
+        long long cost = region_cost(f.first, f.second, func_cost);
+        if (cost < 0) {
             return -1;
+        }
         else
             total_cost += cost;
     }
+    assert(total_cost >= 0);
     return total_cost;
 }
 
@@ -2217,9 +2221,6 @@ struct Partitioner {
             group_sched[g.first] = sched;
         }
 
-        // disp_grouping();
-        // Compute the amount of work done when inlining
-
         // Build a table of num_calls to each internal Halide function when
         // each function
         for (auto &f: analy.env) {
@@ -2258,7 +2259,7 @@ struct Partitioner {
         // Initialize machine params
         arch_params.parallelism = 8;
         arch_params.vec_len = 8;
-        arch_params.balance = 20;
+        arch_params.balance = 10;
         arch_params.fast_mem_size = 32 * 1024 * 8;
         // L1 = 32K
         // L2 = 256K
@@ -2346,19 +2347,52 @@ struct Partitioner {
         choose_candidate_inline(const vector< pair<string, string > > &cand_pairs);
     void group(Partitioner::Level level);
     void clear_schedules();
+    void initialize_groups_fast_mem();
+    void initialize_groups_inline();
     void update_function_costs();
     void evaluate_option(Option &opt, Partitioner::Level level, float penalty);
 };
 
 void Partitioner::clear_schedules() {
     for (auto &s: group_sched) {
-        // Do not reset benefit carry over from inlining phase
+        // Do not clear the benefit from inlining phase
+        s.second.benefit = s.second.saved_mem * arch_params.balance;
         s.second.redundant_work = 0;
         s.second.saved_mem = 0;
 
         for (unsigned int i = 0; i < s.second.tile_sizes.size(); i++)
             s.second.tile_sizes[i] = -1;
     }
+}
+
+void Partitioner::initialize_groups_inline() {
+    for (auto &g: groups) {
+        Option opt;
+        opt.prod_group = "";
+        opt.cons_group = g.first;
+
+        Function output = analy.env[g.first];
+        const vector<string> &args = output.args();
+
+        for (unsigned int i = 0; i < args.size(); i++)
+            opt.tile_sizes.push_back(1);
+
+        evaluate_option(opt, Partitioner::INLINE, 1.0);
+
+        GroupSched sched;
+        sched.saved_mem = opt.saved_mem;
+        sched.redundant_work = opt.redundant_work;
+        sched.benefit = opt.benefit;
+        sched.tile_sizes = opt.tile_sizes;
+
+        group_sched[g.first] = sched;
+    }
+}
+
+void Partitioner::initialize_groups_fast_mem() {
+    option_cache.clear();
+    clear_schedules();
+    update_function_costs();
 }
 
 void Partitioner::update_function_costs() {
@@ -2370,6 +2404,7 @@ void Partitioner::update_function_costs() {
 
         int work_per_ele = region_cost_inline(g.first, prod_funcs,
                                               func_calls, func_cost);
+        assert(work_per_ele >= 0);
         func_cost[g.first].first += work_per_ele;
     }
     for (auto &f: analy.env) {
@@ -2405,7 +2440,7 @@ void Partitioner::group(Partitioner::Level level) {
                 if (num_children == 1 && level == Partitioner::FAST_MEM) {
                     cand.push_back(make_pair(g.first,
                                              *children[g.first].begin()));
-                } else if(num_children == 1  && level == Partitioner::INLINE) {
+                } else if(num_children > 0  && level == Partitioner::INLINE) {
                     cand.push_back(make_pair(g.first, ""));
                 }
             }
@@ -2518,18 +2553,21 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l,
     //disp_option(opt);
 
     map<string, Box> conc_reg;
-    vector< map<string, Box> > conc_overlaps;
 
     // For each function in the prod and child group that is not the
     // output figure out the concrete bounds
 
     vector<string> prod_funcs;
-    for (auto &f: groups[opt.prod_group])
-        if (!f.is_boundary() && !f.is_lambda())
+    if (opt.prod_group != "") {
+        for (auto &f: groups[opt.prod_group])
+            if ((!f.is_boundary() && !f.is_lambda()) || l == Partitioner::INLINE)
+                prod_funcs.push_back(f.name());
+    }
+    for (auto &f: groups[opt.cons_group]) {
+        if (f.name() != opt.cons_group && ((!f.is_boundary() && !f.is_lambda()) ||
+                                            l == Partitioner::INLINE ))
             prod_funcs.push_back(f.name());
-    for (auto &f: groups[opt.cons_group])
-        if (f.name() != opt.cons_group && !f.is_boundary() && !f.is_lambda())
-            prod_funcs.push_back(f.name());
+    }
 
     vector<pair<int, int> > bounds;
     vector<bool> eval;
@@ -2658,9 +2696,9 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l,
     if (l == Partitioner::INLINE) {
         work_per_tile = region_cost_inline(opt.cons_group, prod_funcs,
                                            func_calls, func_cost);
-        work_per_tile += func_cost[opt.cons_group].first;
     } else {
         work_per_tile = region_cost(prod_comp, func_cost);
+        assert(work_per_tile >= 0);
         inter_s = region_size(mem_reg, analy.env, analy.func_dep_regions);
     }
 
@@ -2677,7 +2715,7 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l,
             long long data = data_from_group(f, analy.env, func_calls,
                                              func_size, out_of_cache_prods);
             saved_mem += data;
-        } else {
+        } else if (!analy.env[f].is_boundary() && !analy.env[f].is_lambda()) {
             // This option cannot be evaluated
             opt.benefit = -1;
             opt.redundant_work = -1;
@@ -2719,7 +2757,8 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l,
     opt.redundant_work = total_work - original_work;
     opt.saved_mem = saved_mem;
 
-    assert(total_work > 0);
+    if (prod_comp.size() > 0)
+        assert(total_work > 0);
 
     if (l == Partitioner::INLINE) {
         opt.benefit = (saved_mem) * (arch_params.balance)
@@ -2739,19 +2778,21 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l,
 
     std::cout << "Estimated benefit:" << opt.benefit << std::endl;
 
-    if (arch_params.parallelism > estimate_tiles) {
+    if ((arch_params.parallelism > estimate_tiles) && opt.prod_group != "") {
         // Option did not satisfy the parallelism constraint
         opt.benefit = -1;
     }
 
-    std::cout << std::endl << "Producer group:" << std::endl;
-    for (auto &f: groups[opt.prod_group])
-        std::cout << f.name() << std::endl;
-    std::cout << "Saved mem:" << group_sched[opt.prod_group].saved_mem
-              << std::endl;
-    std::cout << "Redundant work:" << group_sched[opt.prod_group].redundant_work
-              << std::endl;
-    std::cout << "Producer benefit:" << group_sched[opt.prod_group].benefit << std::endl;
+    if (opt.prod_group != "") {
+        std::cout << std::endl << "Producer group:" << std::endl;
+        for (auto &f: groups[opt.prod_group])
+            std::cout << f.name() << std::endl;
+        std::cout << "Saved mem:" << group_sched[opt.prod_group].saved_mem
+            << std::endl;
+        std::cout << "Redundant work:" << group_sched[opt.prod_group].redundant_work
+            << std::endl;
+        std::cout << "Producer benefit:" << group_sched[opt.prod_group].benefit << std::endl;
+    }
 
     std::cout << std::endl << "Consumer group:" << std::endl;
     for (auto &f: groups[opt.cons_group])
@@ -2763,15 +2804,17 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l,
     std::cout << "Consumer benefit:" << group_sched[opt.cons_group].benefit
               << std::endl;
 
-    assert(group_sched[opt.cons_group].benefit >= 0 &&
-            group_sched[opt.prod_group].benefit >= 0 );
+    if (opt.prod_group != "")  {
+        assert(group_sched[opt.cons_group].benefit >= 0 &&
+                group_sched[opt.prod_group].benefit >= 0 );
 
-    assert(group_sched[opt.cons_group].saved_mem >= 0 &&
-            group_sched[opt.prod_group].saved_mem >= 0 );
+        assert(group_sched[opt.cons_group].saved_mem >= 0 &&
+                group_sched[opt.prod_group].saved_mem >= 0 );
 
-    if (group_sched[opt.cons_group].benefit +
-            group_sched[opt.prod_group].benefit > opt.benefit) {
-        opt.benefit = -1;
+        if (group_sched[opt.cons_group].benefit +
+                group_sched[opt.prod_group].benefit > opt.benefit) {
+            opt.benefit = -1;
+        }
     }
     std::cout << std::endl << "Final benefit:" << opt.benefit << std::endl;
 }
@@ -3307,8 +3350,13 @@ void schedule_advisor(const vector<Function> &outputs,
     for (auto& kv : env) {
         //std::cout << kv.first << ":" << std::endl;
         assert(func_cost.find(kv.first) == func_cost.end());
+
         func_cost[kv.first].first = 1;
         func_cost[kv.first].second = 0;
+
+        if (kv.second.is_boundary())
+            continue;
+
         for (auto& e: kv.second.values()) {
             ExprCostEarly cost_visitor;
             e.accept(&cost_visitor);
@@ -3328,7 +3376,6 @@ void schedule_advisor(const vector<Function> &outputs,
     map<string, vector<const Call*> > all_calls;
     map<string, vector<string> > consumers;
     for (auto& kv:env) {
-
     	FindCallArgs call_args;
     	kv.second.accept(&call_args);
     	//std::cout << kv.second.name() << ":" << std::endl;
@@ -3352,11 +3399,10 @@ void schedule_advisor(const vector<Function> &outputs,
 
     // Make obvious inline decisions early
     map<string, vector<string> > inlines;
-    // No longer needed grouping for inlining will take care of this
-    /*
-    if (auto_inline)
-        inlines = simple_inline(all_calls, consumers, env);
-    */
+
+    //if (auto_inline)
+    //    inlines = simple_inline(all_calls, consumers, env);
+
     std::cout << "Inlining:" << std::endl;
     for (auto &f: env) {
         if (env[f.first].is_boundary() || env[f.first].is_lambda()) {
@@ -3366,6 +3412,7 @@ void schedule_advisor(const vector<Function> &outputs,
             env[f.first].schedule().compute_level().var = "";
         }
     }
+
     disp_inlines(inlines);
     std::cout << std::endl;
 
@@ -3442,18 +3489,22 @@ void schedule_advisor(const vector<Function> &outputs,
         std::cout << std::endl << "Function costs pre Inlining" << std::endl;
         part.disp_costs();
         std::cout << std::endl;
+
+        part.initialize_groups_inline();
+        std::cout << std::endl << "Groups Pre Inlining" << std::endl;
+        part.disp_grouping();
+        std::cout << std::endl;
         part.group(Partitioner::INLINE);
         std::cout << std::endl << "Groups Inlining" << std::endl;
         part.disp_grouping();
         std::cout << std::endl;
         // Clear the option cache
-        part.option_cache.clear();
-        part.clear_schedules();
-        part.update_function_costs();
+
         std::cout << std::endl << "Function costs post Inlining" << std::endl;
         part.disp_costs();
         std::cout << std::endl;
 
+        part.initialize_groups_fast_mem();
         part.group(Partitioner::FAST_MEM);
         std::cout << std::endl << "Groups Fast Mem" << std::endl;
         part.disp_grouping();
