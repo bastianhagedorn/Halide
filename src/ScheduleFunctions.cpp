@@ -2560,12 +2560,10 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l,
     vector<string> prod_funcs;
     if (opt.prod_group != "") {
         for (auto &f: groups[opt.prod_group])
-            if ((!f.is_boundary() && !f.is_lambda()) || l == Partitioner::INLINE)
                 prod_funcs.push_back(f.name());
     }
     for (auto &f: groups[opt.cons_group]) {
-        if (f.name() != opt.cons_group && ((!f.is_boundary() && !f.is_lambda()) ||
-                                            l == Partitioner::INLINE ))
+        if (f.name() != opt.cons_group)
             prod_funcs.push_back(f.name());
     }
 
