@@ -271,7 +271,7 @@ Func process(Func raw, Type result_type,
                 y).unroll(c);
         corrected.compute_at(processed, tx).vectorize(x, 4).reorder(c, x,
                 y).unroll(c);
-        processed.tile(tx, ty, xi, yi, 128, 32).reorder(xi, yi, c, tx, ty);
+        processed.tile(tx, ty, xi, yi, 32, 32).reorder(xi, yi, c, tx, ty);
         processed.parallel(ty);
         processed.print_loop_nest();
     } else if (schedule == 1) {
