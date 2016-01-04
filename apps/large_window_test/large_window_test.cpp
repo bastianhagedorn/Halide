@@ -6,15 +6,16 @@ int main(int argc, char **argv) {
     ImageParam in(UInt(16), 2);
     Var x("x"), y("y"), c("c");
 
-    Func in_b = BoundaryConditions::repeat_edge(in);
+    Func in_b("in_b");
+    in_b = BoundaryConditions::repeat_edge(in);
 
     int win_size = 15;
     RDom w(-win_size, win_size, -win_size, win_size);
     Func f("f");
-    f(x, y) = sum(in_b(x + w.x, y + w.y))/1024;
+    f(x, y) = sum(in_b(x + w.x, y + w.y), "sum1")/1024;
 
     Func g("g");
-    g(x, y) = sum(f(x + w.x, y + w.y))/1024;
+    g(x, y) = sum(f(x + w.x, y + w.y), "sum2")/1024;
 
     // Adding bounds
     g.bound(x, 0, 6408).bound(y, 0, 4802);

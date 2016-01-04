@@ -1426,7 +1426,7 @@ map<string, Box> regions_required(Function f,
         Function curr_f = f_queue.front().first;
         vector<Interval> curr_bounds = f_queue.front().second;
         f_queue.pop_front();
-        for (auto& val: curr_f.values()) {
+        for (auto &val: curr_f.values()) {
             map<string, Box> curr_regions;
             Scope<Interval> curr_scope;
             int interval_index = 0;
@@ -1447,6 +1447,53 @@ map<string, Box> regions_required(Function f,
                 else
                     merge_boxes(regions[reg.first], reg.second);
                 f_queue.push_back(make_pair(env[reg.first], reg.second.bounds));
+            }
+        }
+        // Currently handling only a single update which covers simple
+        // reductions which we want to handle
+        assert(curr_f.updates().size() <= 1);
+        for (auto &update: curr_f.updates()) {
+            for (auto &val: update.values) {
+                map<string, Box> curr_regions;
+                Scope<Interval> curr_scope;
+                int interval_index = 0;
+                vector<Expr> exprs;
+                exprs.push_back(val);
+                for (auto &arg: update.args) {
+                    Interval simple_bounds = Interval(simplify(curr_bounds[interval_index].min),
+                                                      simplify(curr_bounds[interval_index].max));
+                    // Check for a pure variable
+                    const Variable *v = arg.as<Variable>();
+                    if (!v)
+                        // Need to evaluate boxes required on args that are not pure
+                        // for potenial calls to other functions
+                        exprs.push_back(arg);
+                    else
+                        curr_scope.push(v->name, simple_bounds);
+                    interval_index++;
+                }
+
+                if (update.domain.defined()) {
+                    for (auto &rvar: update.domain.domain()) {
+                        Interval simple_bounds = Interval(rvar.min, rvar.min + rvar.extent - 1);
+                        curr_scope.push(rvar.var, simple_bounds);
+                    }
+                }
+
+                for (auto &e: exprs) {
+                    curr_regions = boxes_required(e, curr_scope, func_val_bounds);
+                    for (auto& reg: curr_regions) {
+                        // Merge region with an existing region for the function in
+                        // the global map
+                        if(reg.first != curr_f.name()) {
+                            if (regions.find(reg.first) == regions.end())
+                                regions[reg.first] = reg.second;
+                            else
+                                merge_boxes(regions[reg.first], reg.second);
+                            f_queue.push_back(make_pair(env[reg.first], reg.second.bounds));
+                        }
+                    }
+                }
             }
         }
     }
@@ -3342,7 +3389,6 @@ void schedule_advisor(const vector<Function> &outputs,
     // TODO explain strcuture
     map<string, Box> pipeline_bounds;
 
-    // TODO Method for estimating cost when reductions are involved
     // TODO explain structure
     std::map<string, pair<int, int> > func_cost;
     for (auto& kv : env) {
@@ -3355,18 +3401,45 @@ void schedule_advisor(const vector<Function> &outputs,
         if (kv.second.is_boundary())
             continue;
 
-        for (auto& e: kv.second.values()) {
+        for (auto &e: kv.second.values()) {
             ExprCostEarly cost_visitor;
             e.accept(&cost_visitor);
-            auto p = make_pair(cost_visitor.ops, cost_visitor.loads);
-            //std::cout << e << std::endl;
-            //std::cout << cost_visitor.ops << std::endl;
-            func_cost[kv.first].first += p.first;
-            func_cost[kv.first].second += p.second;
-            /*
-            std::cout << e << " loads:" << cost_visitor.loads << " ops:"
-                      << cost_visitor.ops << std::endl;
-            */
+            func_cost[kv.first].first += cost_visitor.ops;
+            func_cost[kv.first].second += cost_visitor.loads;
+        }
+
+        // Estimating cost when reductions are involved
+        // Only considering functions with a single update covers most of the
+        // cases we want to tackle
+        assert(kv.second.updates().size() <= 1);
+        for (auto &u: kv.second.updates()) {
+            int ops = 1;
+            int loads = 0;
+            for (auto &e: u.values) {
+                ExprCostEarly cost_visitor;
+                e.accept(&cost_visitor);
+                ops += cost_visitor.ops;
+                loads += cost_visitor.loads;
+            }
+            for (auto &arg: u.args) {
+                ExprCostEarly cost_visitor;
+                arg.accept(&cost_visitor);
+                ops += cost_visitor.ops;
+                loads += cost_visitor.loads;
+            }
+
+            if (u.domain.defined()) {
+                Box b;
+                for (auto &rvar: u.domain.domain()) {
+                    b.push_back(Interval(simplify(rvar.min),
+                                         simplify(rvar.min + rvar.extent - 1)));
+                }
+                long long area = box_area(b);
+                // Fixed size RDom
+                assert(area!=-1);
+                func_cost[kv.first].first += ops * area;
+                func_cost[kv.first].second += loads * area;
+            }
         }
     }
 
@@ -3427,11 +3500,10 @@ void schedule_advisor(const vector<Function> &outputs,
 
         DependenceAnalysis analy(env, func_val_bounds);
 
-        /*
         for (auto &reg: analy.func_dep_regions) {
             disp_regions(reg.second);
             std::cout << std::endl;
-        } */
+        }
 
         bool bounds_avail = check_bounds_on_outputs(outputs);
         // std::cout << "output bounds:" << bounds_avail << std::endl;
