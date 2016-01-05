@@ -27,8 +27,7 @@ int main(int argc, char **argv) {
     hist(bin) += 1;
 
     Func cdf("cdf");
-    cdf(x) = 0;
-    cdf(0) = hist(0);
+    cdf(x) = hist(0);
     RDom b(1, 255);
     cdf(b.x) = cdf(b.x - 1) + hist(b.x);
 
