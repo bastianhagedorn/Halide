@@ -2619,6 +2619,17 @@ map<string, int> get_dim_estimates(string f, map<string, Box> &pipeline_bounds,
         int estimate = get_extent_estimate(env[f], pipeline_bounds, i);
         dim_estimates[args[i]] = estimate;
     }
+    // Add the estimates for RDom dimensions
+    for (auto &u: env[f].updates()) {
+        if (u.domain.defined()) {
+            Box b;
+            for (auto &rvar: u.domain.domain()) {
+                Interval I = Interval(simplify(rvar.min),
+                                       simplify(rvar.min + rvar.extent - 1));
+                dim_estimates[rvar.var] = get_extent(I);
+            }
+        }
+    }
     return dim_estimates;
 }
 
@@ -3323,6 +3334,15 @@ void simple_vectorize(Function &func, map<string, int> &dim_estimates,
         vectorize_dim(func.schedule(), dim_estimates, inner_dim, vec_width);
 }
 
+void vectorize_updates(Function &func, map<string, int> &dim_estimates,
+                       int vec_len) {
+    int num_updates = func.updates().size();
+    for (int i = 0; i < num_updates; i ++) {
+        Schedule &s = func.update_schedule(i);
+        check_dim_size(s, 0, vec_len, dim_estimates);
+    }
+}
+
 bool pick_dim_to_parallelize(Function &f, map<string, int> &dim_estimates,
                              int parallelism, Partitioner::GroupSched &sched,
                              int &outer_dim, int& num_fused_dims) {
@@ -3652,6 +3672,7 @@ void schedule_advisor(const vector<Function> &outputs,
             else
                 zero_reuse_var = dims[dims.size() - 1].var;
             */
+
             // Get estimates of pipeline bounds
             map<string, int> out_estimates =
                           get_dim_estimates(g_out.name(), pipeline_bounds, env);
@@ -3696,9 +3717,10 @@ void schedule_advisor(const vector<Function> &outputs,
             }
 
             if (!g_out.is_pure()) {
-                int num_updates = g_out.updates().size();
+                // TODO Vectorization of update definitions
+                vectorize_updates(g_out, out_estimates, vec_len);
 
-                // TODO Consider vectorization of RDoms
+                int num_updates = g_out.updates().size();
                 for (int i = 0; i < num_updates; i ++) {
                     const UpdateDefinition &u = g_out.updates()[i];
                     Schedule &s = g_out.update_schedule(i);
@@ -3730,9 +3752,11 @@ void schedule_advisor(const vector<Function> &outputs,
                     m.schedule().store_level().var = dims[compute_level].var;
                     m.schedule().compute_level().func = g_out.name();
                     m.schedule().compute_level().var = dims[compute_level].var;
-                    if (m.is_pure() && auto_vec)
+                    if (auto_vec)
                         if (check_dim_size(m.schedule(), 0, vec_len, mem_estimates))
                             simple_vectorize(m, mem_estimates, 0, vec_len);
+                    if (!m.is_pure())
+                        vectorize_updates(m, mem_estimates, vec_len);
                 }
             }
         }
