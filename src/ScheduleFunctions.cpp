@@ -3334,12 +3334,18 @@ void simple_vectorize(Function &func, map<string, int> &dim_estimates,
         vectorize_dim(func.schedule(), dim_estimates, inner_dim, vec_width);
 }
 
-void vectorize_updates(Function &func, map<string, int> &dim_estimates,
-                       int vec_len) {
-    int num_updates = func.updates().size();
-    for (int i = 0; i < num_updates; i ++) {
-        Schedule &s = func.update_schedule(i);
-        check_dim_size(s, 0, vec_len, dim_estimates);
+void vectorize_update(Function &func, int stage,
+                      map<string, int> &dim_estimates, int vec_len) {
+    Schedule &s = func.update_schedule(stage);
+    const UpdateDefinition &u = func.updates()[stage];
+    vector<Dim> &dims = s.dims();
+    // Vectorize the inner most loop that can be vectorized
+    for (unsigned int dim = 0; dim < dims.size(); dim++) {
+        bool dim_par = can_parallelize_rvar(dims[dim].var, func.name(), u);
+        if(check_dim_size(s, dim, vec_len, dim_estimates) && dim_par) {
+            vectorize_dim(s, dim_estimates, dim, vec_len);
+            break;
+        }
     }
 }
 
@@ -3717,18 +3723,23 @@ void schedule_advisor(const vector<Function> &outputs,
             }
 
             if (!g_out.is_pure()) {
-                // TODO Vectorization of update definitions
-                vectorize_updates(g_out, out_estimates, vec_len);
 
                 int num_updates = g_out.updates().size();
                 for (int i = 0; i < num_updates; i ++) {
+                    // Start with fresh bounds estimates for each update
+                    map<string, int> out_up_estimates =
+                        get_dim_estimates(g_out.name(), pipeline_bounds, env);
                     const UpdateDefinition &u = g_out.updates()[i];
+
+                    // TODO Vectorization of update definitions
+                    vectorize_update(g_out, i, out_up_estimates, vec_len);
+
                     Schedule &s = g_out.update_schedule(i);
                     vector<Dim> &dims = s.dims();
                     for (int i = (int)dims.size() - 2; i > 0 ; i--) {
                         bool dim_par = can_parallelize_rvar(dims[i].var,
                                                             g_out.name(), u);
-                        if (dim_par && out_estimates[dims[i].var] > parallelism) {
+                        if (dim_par && out_up_estimates[dims[i].var] > parallelism) {
                             move_dim_to_outermost(s, i);
                             int outer_dim = dims.size() - 2;
                             parallelize_dim(s, outer_dim);
@@ -3755,8 +3766,15 @@ void schedule_advisor(const vector<Function> &outputs,
                     if (auto_vec)
                         if (check_dim_size(m.schedule(), 0, vec_len, mem_estimates))
                             simple_vectorize(m, mem_estimates, 0, vec_len);
-                    if (!m.is_pure())
-                        vectorize_updates(m, mem_estimates, vec_len);
+                    if (!m.is_pure()) {
+                        int num_updates = m.updates().size();
+                        for (int i = 0; i < num_updates; i ++) {
+                            // Start with fresh bounds estimates for each update
+                            map<string, int> mem_up_estimates =
+                                get_dim_estimates(m.name(), pipeline_bounds, env);
+                            vectorize_update(m, i, mem_up_estimates, vec_len);
+                        }
+                    }
                 }
             }
         }
