@@ -38,7 +38,7 @@ int main(int argc, char **argv) {
 
     if (sched == 0) {
         prod.compute_root().parallel(y).vectorize(x);
-        prod.update().parallel(y).vectorize(x);
+        prod.update().parallel(y).reorder(x, r.x).vectorize(x);
     }
 
     Target target = get_target_from_environment();
