@@ -3170,18 +3170,20 @@ simple_inline(map<string, vector<const Call*>> &all_calls,
 // Helpers for schedule surgery
 
 // Parallel
-void parallelize_dim(vector<Dim> &dims, int dim) {
+void parallelize_dim(Schedule &sched, int dim) {
+    vector<Dim> &dims = sched.dims();
     dims[dim].for_type = ForType::Parallel;
 }
 
-void move_dim_to_outermost(vector<Dim> &dims, int dim) {
+void move_dim_to_outermost(Schedule &sched, int dim) {
+    vector<Dim> &dims = sched.dims();
     dims.insert(dims.end() - 1, dims[dim]);
     dims.erase(dims.begin() + dim);
 }
 
-void move_dim_to_var(Function& func, int dim, string var) {
+void move_dim_to_var(Schedule& sched, int dim, string var) {
 
-    vector<Dim> &dims = func.schedule().dims();
+    vector<Dim> &dims = sched.dims();
     int cand_dim = -1;
     for (unsigned int i = 0;  i < dims.size(); i++)
         if (dims[i].var == var)
@@ -3191,9 +3193,9 @@ void move_dim_to_var(Function& func, int dim, string var) {
     dims.erase(dims.begin() + dim);
 }
 
-void swap_dim(Function &func, int dim1, int dim2) {
+void swap_dim(Schedule &sched, int dim1, int dim2) {
 
-    vector<Dim> &dims = func.schedule().dims();
+    vector<Dim> &dims = sched.dims();
 
     string name1 = dims[dim1].var;
     ForType type1 = dims[dim1].for_type;
@@ -3209,10 +3211,10 @@ void swap_dim(Function &func, int dim1, int dim2) {
 }
 
 // Splitting
-void split_dim(Function &func, int dim, int split_size,
+void split_dim(Schedule &sched, int dim, int split_size,
                map<string, int> &dim_estimates, string prefix, bool partial) {
 
-    vector<Dim> &dims = func.schedule().dims();
+    vector<Dim> &dims = sched.dims();
     // Vectorization is not easy to insert in a Function object
     // have to revisit if this is the cleanest way to do it
     string old = dims[dim].var;
@@ -3230,7 +3232,7 @@ void split_dim(Function &func, int dim, int split_size,
     // Add the split to the splits list
     Split split = {old_name, outer_name, inner_name, split_size,
                    false, partial, Split::SplitVar};
-    func.schedule().splits().push_back(split);
+    sched.splits().push_back(split);
 
     // Updating the estimates to reflect the splitting
     dim_estimates[inner_name] = split_size;
@@ -3243,11 +3245,11 @@ void split_dim(Function &func, int dim, int split_size,
     dim_estimates.erase(old_name);
 }
 
-string fuse_dim(Function &func, int dim1, int dim2,
+string fuse_dim(Schedule &sched, int dim1, int dim2,
                 map<string, int> &dim_estimates) {
     // Add the fuse to the splits list
     string inner_name, outer_name, fused_name;
-    vector<Dim> &dims = func.schedule().dims();
+    vector<Dim> &dims = sched.dims();
 
     outer_name = dims[dim1].var;
     bool outer_pure = dims[dim1].pure;
@@ -3271,35 +3273,29 @@ string fuse_dim(Function &func, int dim1, int dim2,
 
     Split split = {fused_name, outer_name, inner_name, Expr(),
                    true, false, Split::FuseVars};
-    func.schedule().splits().push_back(split);
+    sched.splits().push_back(split);
     return fused_name;
 }
 
 // Vectorization
-void vectorize_dim(Function &func, map<string, int> &dim_estimates,
+void vectorize_dim(Schedule &sched, map<string, int> &dim_estimates,
                    int dim, int vec_width) {
-
-    vector<Dim> &dims = func.schedule().dims();
+    vector<Dim> &dims = sched.dims();
     if (vec_width != -1) {
-        split_dim(func, dim, vec_width, dim_estimates, "vec", false);
+        split_dim(sched, dim, vec_width, dim_estimates, "vec", false);
         dims[dim].for_type = ForType::Vectorized;
     } else {
         dims[dim].for_type = ForType::Vectorized;
     }
 }
 
-bool check_dim_size(Function &func, int dim, int min_size,
+bool check_dim_size(Schedule &sched, int dim, int min_size,
                     map<string, int> &dim_estimates) {
-    vector<Dim> &dims = func.schedule().dims();
+    vector<Dim> &dims = sched.dims();
     int extent = dim_estimates[dims[dim].var];
     bool can_vec = false;
     if (extent >= 0)
         can_vec = extent >= min_size;
-    if(!can_vec) {
-        std::cout << "Vectorization failed" << std::endl;
-        std::cout << func.name() << std::endl;
-        std::cout << dims[dim].var << " " << extent << std::endl;
-    }
     return can_vec;
 }
 
@@ -3324,7 +3320,7 @@ void simple_vectorize(Function &func, map<string, int> &dim_estimates,
         //std::cout << vec_check.can_vec << std::endl;
     }
     if (vec)
-        vectorize_dim(func, dim_estimates, inner_dim, vec_width);
+        vectorize_dim(func.schedule(), dim_estimates, inner_dim, vec_width);
 }
 
 bool pick_dim_to_parallelize(Function &f, map<string, int> &dim_estimates,
@@ -3349,7 +3345,7 @@ bool pick_dim_to_parallelize(Function &f, map<string, int> &dim_estimates,
             if (dim_estimates[dims[outer_dim].var] > parallelism)
                 return true;
             else {
-                fuse_dim(f, outer_dim, outer_dim - 1, dim_estimates);
+                fuse_dim(f.schedule(), outer_dim, outer_dim - 1, dim_estimates);
                 outer_dim = dims.size() - 2;
                 num_fused_dims++;
             }
@@ -3359,7 +3355,7 @@ bool pick_dim_to_parallelize(Function &f, map<string, int> &dim_estimates,
             //std::cout << dims[i].var << " Num Iter "
             //          << dim_estimates[dims[i].var] << std::endl;
             if (dim_estimates[dims[i].var] > parallelism) {
-                move_dim_to_outermost(f.schedule().dims(), i);
+                move_dim_to_outermost(f.schedule(), i);
                 return true;
             }
         }
@@ -3671,53 +3667,49 @@ void schedule_advisor(const vector<Function> &outputs,
                     }
                 assert(index!=-1);
                 if (tile_sizes[v] > 1) {
-                    split_dim(g_out, index, tile_sizes[v],
+                    split_dim(g_out.schedule(), index, tile_sizes[v],
                               out_estimates, "tile", false);
-                    move_dim_to_outermost(g_out.schedule().dims(), index + 1);
+                    move_dim_to_outermost(g_out.schedule(), index + 1);
                 } else if (tile_sizes[v] == 1) {
-                    move_dim_to_outermost(g_out.schedule().dims(), index);
+                    move_dim_to_outermost(g_out.schedule(), index);
                 }
                 num_tile_dims++;
             }
 
             int num_fused_dims = 0;
             int parallelism = part.arch_params.parallelism;
-            if (g_out.is_pure()) {
-                // Need to consider the case when the same dimension needs to
-                // be both vectorized and parallelized
 
+            {
                 // Vectorize first
+                Schedule &s = g_out.schedule();
                 if (auto_vec) {
-                    if (check_dim_size(g_out, 0, vec_len, out_estimates))
+                    if (check_dim_size(s, 0, vec_len, out_estimates))
                         simple_vectorize(g_out, out_estimates, 0, vec_len);
                 }
                 int outer_dim = -1;
-                bool can_par = pick_dim_to_parallelize(g_out, out_estimates, parallelism,
-                                                       sched, outer_dim, num_fused_dims);
+                bool can_par = pick_dim_to_parallelize(g_out, out_estimates,
+                                                       parallelism, sched,
+                                                       outer_dim, num_fused_dims);
 
                 if (auto_par && outer_dim !=-1 && can_par)
-                    parallelize_dim(g_out.schedule().dims(), outer_dim);
+                    parallelize_dim(g_out.schedule(), outer_dim);
+            }
 
-            } else {
-                // TODO Consider vectorization of RDoms
-                int outer_dim = -1;
-                bool can_par = pick_dim_to_parallelize(g_out, out_estimates, parallelism,
-                                                       sched, outer_dim, num_fused_dims);
-                if (auto_par && outer_dim!=-1 && can_par)
-                    parallelize_dim(g_out.schedule().dims(), outer_dim);
-
+            if (!g_out.is_pure()) {
                 int num_updates = g_out.updates().size();
 
+                // TODO Consider vectorization of RDoms
                 for (int i = 0; i < num_updates; i ++) {
                     const UpdateDefinition &u = g_out.updates()[i];
-                    vector<Dim> &dims = g_out.update_schedule(i).dims();
+                    Schedule &s = g_out.update_schedule(i);
+                    vector<Dim> &dims = s.dims();
                     for (int i = (int)dims.size() - 2; i > 0 ; i--) {
                         bool dim_par = can_parallelize_rvar(dims[i].var,
                                                             g_out.name(), u);
                         if (dim_par && out_estimates[dims[i].var] > parallelism) {
-                            move_dim_to_outermost(dims, i);
+                            move_dim_to_outermost(s, i);
                             int outer_dim = dims.size() - 2;
-                            parallelize_dim(dims, outer_dim);
+                            parallelize_dim(s, outer_dim);
                             break;
                         }
                     }
@@ -3739,7 +3731,7 @@ void schedule_advisor(const vector<Function> &outputs,
                     m.schedule().compute_level().func = g_out.name();
                     m.schedule().compute_level().var = dims[compute_level].var;
                     if (m.is_pure() && auto_vec)
-                        if (check_dim_size(m, 0, vec_len, mem_estimates))
+                        if (check_dim_size(m.schedule(), 0, vec_len, mem_estimates))
                             simple_vectorize(m, mem_estimates, 0, vec_len);
                 }
             }
