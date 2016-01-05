@@ -1,5 +1,5 @@
 #include "fcam/Demosaic.h"
-#include "fcam/Demosaic_ARM.h"
+//#include "fcam/Demosaic_ARM.h"
 
 #include "benchmark.h"
 #include "curved.h"
@@ -60,11 +60,13 @@ int main(int argc, char **argv) {
     //fprintf(stdout, "C++:\t%gus\n", best * 1e6);
     save_image(output, "fcam_c.png");
 
+#if 0
     best = benchmark(timing_iterations, 1, [&]() {;
         FCam::demosaic_ARM(input, output, color_temp, contrast, true, 25, gamma);
     });
     //fprintf(stdout, "ASM:\t%gus\n", best * 1e6);
     save_image(output, "fcam_arm.png");
+#endif
 
     // Timings on N900 as of SIGGRAPH 2012 camera ready are (best of 10)
     // Halide: 722ms, FCam: 741ms

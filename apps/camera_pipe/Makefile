@@ -26,12 +26,12 @@ fcam/Demosaic.o: fcam/Demosaic.cpp fcam/Demosaic.h
 fcam/Demosaic_ARM.o: fcam/Demosaic_ARM.cpp fcam/Demosaic_ARM.h
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-process_ref: process.cpp curved_ref fcam/Demosaic.o fcam/Demosaic_ARM.o
-	$(CXX) $(CXXFLAGS) process.cpp fcam/Demosaic.o fcam/Demosaic_ARM.o curved.o \
+process_ref: process.cpp curved_ref fcam/Demosaic.o 
+	$(CXX) $(CXXFLAGS) process.cpp fcam/Demosaic.o curved.o \
 		-o $@ -lpthread -ldl -fopenmp $(PNGFLAGS)
 
-process_auto: process.cpp curved_auto fcam/Demosaic.o fcam/Demosaic_ARM.o
-	$(CXX) $(CXXFLAGS) process.cpp fcam/Demosaic.o fcam/Demosaic_ARM.o curved.o \
+process_auto: process.cpp curved_auto fcam/Demosaic.o 
+	$(CXX) $(CXXFLAGS) process.cpp fcam/Demosaic.o curved.o \
 		-o $@ -lpthread -ldl -fopenmp $(PNGFLAGS)
 
 out.png: process_ref
