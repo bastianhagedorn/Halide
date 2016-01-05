@@ -2277,8 +2277,36 @@ struct Partitioner {
             for(auto &c: find.calls) {
                 num_calls[c.first] = c.second.size();
             }
+
+            for (auto &u: f.second.updates()) {
+                FindCallArgs find_update;
+
+                for (auto &e: u.values)
+                    e.accept(&find_update);
+                for (auto &arg: u.args)
+                    arg.accept(&find_update);
+
+                if (u.domain.defined()) {
+                    Box b;
+                    for (auto &rvar: u.domain.domain()) {
+                        b.push_back(Interval(simplify(rvar.min),
+                                    simplify(rvar.min + rvar.extent - 1)));
+                    }
+                    long long area = box_area(b);
+
+                    if (area != -1) {
+                        for(auto &c: find.calls) {
+                            num_calls[c.first] -= c.second.size();
+                            num_calls[c.first] += c.second.size() * area;
+                        }
+                    }
+                }
+            }
+
             func_calls[f.first] = num_calls;
         }
+
+        disp_func_calls(func_calls);
 
         for (auto &f: analy.env) {
             const vector<string> &args = f.second.args();
@@ -2850,8 +2878,8 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l,
               << std::endl;
 
     if (opt.prod_group != "")  {
-        assert(group_sched[opt.cons_group].benefit >= 0 &&
-                group_sched[opt.prod_group].benefit >= 0 );
+        //assert(group_sched[opt.cons_group].benefit >= 0 &&
+        //        group_sched[opt.prod_group].benefit >= 0 );
 
         assert(group_sched[opt.cons_group].saved_mem >= 0 &&
                 group_sched[opt.prod_group].saved_mem >= 0 );
@@ -3443,36 +3471,27 @@ void schedule_advisor(const vector<Function> &outputs,
         }
     }
 
+    // Make obvious inline decisions early
+    map<string, vector<string> > inlines;
+
     // TODO explain structure
     map<string, vector<const Call*> > all_calls;
     map<string, vector<string> > consumers;
     for (auto& kv:env) {
     	FindCallArgs call_args;
     	kv.second.accept(&call_args);
-    	//std::cout << kv.second.name() << ":" << std::endl;
     	for (auto& fcalls: call_args.calls){
             consumers[fcalls.first].push_back(kv.first);
     		all_calls[fcalls.first].insert(all_calls[fcalls.first].end(),
     								  	   fcalls.second.begin(),
                                            fcalls.second.end());
-            /*
-    		for (auto& call: fcalls.second){
-    			std::cout << fcalls.first << "(";
-    			for(auto& arg: call->args){
-    				std::cout << arg << ",";
-    			}
-    			std::cout << "),";
-    		}
-            */
     	}
-    	//std::cout << std::endl;
     }
 
-    // Make obvious inline decisions early
-    map<string, vector<string> > inlines;
-
-    //if (auto_inline)
-    //    inlines = simple_inline(all_calls, consumers, env);
+    /*
+    if (auto_inline)
+        inlines = simple_inline(all_calls, consumers, env);
+    */
 
     std::cout << "Inlining:" << std::endl;
     for (auto &f: env) {

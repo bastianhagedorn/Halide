@@ -25,6 +25,7 @@ int main(int argc, char **argv) {
 
     if (schedule == 0) {
         Var xi, yi;
+        in_b.compute_root();
         f.compute_root().parallel(y).vectorize(x, 8);
         g.compute_root().parallel(y).vectorize(x, 8);
         g.print_loop_nest();
