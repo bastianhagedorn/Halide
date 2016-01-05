@@ -2615,9 +2615,10 @@ map<string, int> get_dim_estimates(string f, map<string, Box> &pipeline_bounds,
                                    map<string, Function> &env) {
     map<string, int> dim_estimates;
     const vector<string> &args = env[f].args();
+    vector<Dim> &dims = env[f].schedule().dims();
     for (unsigned int i = 0; i < args.size(); i++) {
         int estimate = get_extent_estimate(env[f], pipeline_bounds, i);
-        dim_estimates[args[i]] = estimate;
+        dim_estimates[dims[i].var] = estimate;
     }
     // Add the estimates for RDom dimensions
     for (auto &u: env[f].updates()) {
@@ -3680,8 +3681,9 @@ void schedule_advisor(const vector<Function> &outputs,
             */
 
             // Get estimates of pipeline bounds
-            map<string, int> out_estimates =
+            map<string, int> org_out_estimates =
                           get_dim_estimates(g_out.name(), pipeline_bounds, env);
+            map<string, int> out_estimates = org_out_estimates;
 
             // Realizing the tiling and updating the dimension estimates
             int num_tile_dims = 0;
@@ -3727,8 +3729,7 @@ void schedule_advisor(const vector<Function> &outputs,
                 int num_updates = g_out.updates().size();
                 for (int i = 0; i < num_updates; i ++) {
                     // Start with fresh bounds estimates for each update
-                    map<string, int> out_up_estimates =
-                        get_dim_estimates(g_out.name(), pipeline_bounds, env);
+                    map<string, int> out_up_estimates = org_out_estimates;
                     const UpdateDefinition &u = g_out.updates()[i];
 
                     // TODO Vectorization of update definitions
@@ -3751,8 +3752,9 @@ void schedule_advisor(const vector<Function> &outputs,
 
             for (auto &m: g.second) {
                 int outer_dim = dims.size() - 2;
-                map<string, int> mem_estimates =
+                map<string, int> org_mem_estimates =
                           get_dim_estimates(m.name(), pipeline_bounds, env);
+                map<string, int> mem_estimates = org_mem_estimates;
                 if (m.name() != g_out.name() &&
                    inlines.find(m.name()) == inlines.end() && num_tile_dims > 0) {
                     //int compute_level = inner_tile_dim;
@@ -3771,7 +3773,7 @@ void schedule_advisor(const vector<Function> &outputs,
                         for (int i = 0; i < num_updates; i ++) {
                             // Start with fresh bounds estimates for each update
                             map<string, int> mem_up_estimates =
-                                get_dim_estimates(m.name(), pipeline_bounds, env);
+                                                org_mem_estimates;
                             vectorize_update(m, i, mem_up_estimates, vec_len);
                         }
                     }

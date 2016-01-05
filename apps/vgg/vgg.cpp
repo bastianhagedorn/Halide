@@ -261,6 +261,7 @@ int main(int argc, char **argv) {
 
     softm->forward.bound(softm->forward.args()[0], 0, C).
                    bound(softm->forward.args()[1], 0, N);
+    acc.bound(acc.args()[0], 0, 1);
 
     std::vector<Func> test_outs;
     test_outs.push_back(acc);
