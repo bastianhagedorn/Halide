@@ -1,4 +1,3 @@
-#include <emmintrin.h>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>

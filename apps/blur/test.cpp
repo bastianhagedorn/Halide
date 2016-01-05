@@ -1,4 +1,3 @@
-#include <emmintrin.h>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -35,7 +34,12 @@ Image<uint16_t> blur(Image<uint16_t> in) {
     return out;
 }
 
-
+#ifdef __arm__
+Image<uint16_t> blur_fast(Image<uint16_t> in) {
+    return blur(in);
+}
+#else
+#include <emmintrin.h>
 Image<uint16_t> blur_fast(Image<uint16_t> in) {
     Image<uint16_t> out(in.width()-8, in.height()-2);
 
@@ -171,6 +175,7 @@ Image<uint16_t> blur_fast2(const Image<uint16_t> &in) {
 
     return out;
 }
+#endif
 
 Image<uint16_t> blur_halide(Image<uint16_t> in) {
     Image<uint16_t> out(in.width()-8, in.height()-2);
