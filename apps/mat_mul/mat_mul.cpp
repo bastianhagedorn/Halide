@@ -37,8 +37,8 @@ int main(int argc, char **argv) {
     int sched = atoi(argv[1]);
 
     if (sched == 0) {
-        prod.compute_root().parallel(y).vectorize(x);
-        prod.update().parallel(y).reorder(x, r.x).vectorize(x);
+        prod.compute_root().parallel(y).vectorize(x, 8);
+        prod.update().parallel(y).reorder(x, r.x).vectorize(x, 8);
     }
 
     Target target = get_target_from_environment();

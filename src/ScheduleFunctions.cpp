@@ -1216,6 +1216,9 @@ long long get_func_out_size(Function &f) {
     const vector<Type> &types = f.output_types();
     for(unsigned int i = 0; i < types.size(); i++)
         size += types[i].bytes();
+    if (size == 0)
+        // Hack to over come weirdness for inputs to the pipeline
+        size = 4;
     return size;
 }
 
@@ -1918,6 +1921,11 @@ long long region_size(map<string, Box> &regions, map<string, Function> &env,
             func_sizes[f.first] = size;
     }
 
+    for(auto &c: num_consumers) {
+        if (std::find(order.begin(), order.end(), c.first) == order.end())
+            curr_size += func_sizes[c.first];
+    }
+
     for(auto &f: order) {
         curr_size += func_sizes[f];
         working_set_size = std::max(curr_size, working_set_size);
@@ -1925,8 +1933,10 @@ long long region_size(map<string, Box> &regions, map<string, Function> &env,
         for(auto &p: prods) {
             if (num_consumers.find(p.first) != num_consumers.end())
                 num_consumers[p.first] -= 1;
-            if (num_consumers[p.first] == 0)
+            if (num_consumers[p.first] == 0) {
                 curr_size -= func_sizes[p.first];
+                assert(curr_size >= 0);
+            }
         }
     }
 
@@ -3161,8 +3171,14 @@ void Partitioner::evaluate_reuse(string group, vector<string> &group_inputs,
 
     mem_reg[group] = cons_box;
 
-    //long long inter_s = region_size(mem_reg, analy.env, analy.func_dep_regions);
+    disp_regions(mem_reg);
+    long long inter_s = region_size(mem_reg, analy.env, analy.func_dep_regions);
 
+    std::cout << "Config :[";
+    for (auto &s: tile_sizes)
+        std::cout << s << ",";
+    std::cout << "]" << std::endl;
+    std::cout << "Intermediate size:" << inter_s  << std::endl;
     /*
     long long input_reuse = 0;
     for (unsigned int i = 0; i < args.size(); i++) {
@@ -3210,7 +3226,44 @@ void Partitioner::reorder_for_input_locality() {
         // For the dimensions with reuse along multiple dimensions tile
         // the dimensions in such a way that the reuse is maximized and
         // the porition of inputs fit in fast memory
+        vector<int> size_variants = {256, 128, 64, 32, 16, 8, 4};
 
+        // If the pair has not been evaluated before create all the options
+        // and evaluate them
+
+        // Get the output function of the child group
+        Function output = analy.env[g.first];
+        const vector<string> &args = output.args();
+
+        bool invalid = false;
+        for(auto &in: group_inputs) {
+            vector<int> &dim_estimates_prod = func_dim_estimates[in];
+
+            const vector<string> &args_prod = analy.env[in].args();
+            for (unsigned int i = 0; i < args_prod.size(); i++) {
+                if (dim_estimates_prod[i] == -1) {
+                    // This option cannot be evaluated so discaring the option
+                    invalid = true;
+                }
+            }
+        }
+
+        if (!invalid) {
+            // From the outer to the inner most argument
+            for (int i = (int)args.size() - 1; i >= 0; i--) {
+                for(auto &s: size_variants) {
+                    vector<int> tile_sizes;
+
+                    for (int j = 0; j < i; j++)
+                        tile_sizes.push_back(-1);
+
+                    for (unsigned int j = i; j < args.size(); j++)
+                        tile_sizes.push_back(s);
+
+                    evaluate_reuse(g.first, group_inputs, tile_sizes);
+                }
+            }
+        }
     }
 
 
@@ -3872,7 +3925,6 @@ void schedule_advisor(const vector<Function> &outputs,
     auto_par = true;
 
     if (group) {
-
         // Dependence analysis
 
         // For each function compute all the regions of upstream functions
