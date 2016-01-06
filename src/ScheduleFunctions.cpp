@@ -2719,15 +2719,15 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l,
                 // If the dimension is too small do not tile it and set the
                 // extent of the bounds to that of the dimension estimate
                 opt.tile_sizes[i] = -1;
-                bounds.push_back(make_pair(0, dim_estimates_cons[i]));
+                bounds.push_back(make_pair(0, dim_estimates_cons[i] - 1));
                 tile_size = tile_size * (dim_estimates_cons[i]);
-                cons_box.push_back(Interval(0, dim_estimates_cons[i]));
+                cons_box.push_back(Interval(0, dim_estimates_cons[i] - 1));
             }
         }
         else {
-            bounds.push_back(make_pair(0, dim_estimates_cons[i]));
+            bounds.push_back(make_pair(0, dim_estimates_cons[i] - 1));
             tile_size = tile_size * (dim_estimates_cons[i]);
-            cons_box.push_back(Interval(0, dim_estimates_cons[i]));
+            cons_box.push_back(Interval(0, dim_estimates_cons[i] - 1));
         }
 
         eval.push_back(true);
@@ -3147,14 +3147,14 @@ pair<float, float>
             else {
                 // If the dimension is too small do not tile it and set the
                 // extent of the bounds to that of the dimension estimate
-                bounds.push_back(make_pair(0, dim_estimates[i]));
-                cons_box.push_back(Interval(0, dim_estimates[i]));
+                bounds.push_back(make_pair(0, dim_estimates[i] - 1));
+                cons_box.push_back(Interval(0, dim_estimates[i] - 1));
                 tile_size = tile_size * (dim_estimates[i]);
             }
         }
         else {
-            bounds.push_back(make_pair(0, dim_estimates[i]));
-            cons_box.push_back(Interval(0, dim_estimates[i]));
+            bounds.push_back(make_pair(0, dim_estimates[i] - 1));
+            cons_box.push_back(Interval(0, dim_estimates[i] - 1));
             tile_size = tile_size * (dim_estimates[i]);
         }
         eval.push_back(true);
@@ -3196,6 +3196,7 @@ pair<float, float>
         assert(unit.first < 1);
         unit_data = unit.second;
     } else {
+        std::cout << "Unit size:" << inter_s << std::endl;
         unit_data = inter_s;
     }
 
@@ -3941,11 +3942,10 @@ void schedule_advisor(const vector<Function> &outputs,
 
         DependenceAnalysis analy(env, func_val_bounds);
 
-        /*
         for (auto &reg: analy.func_dep_regions) {
             disp_regions(reg.second);
             std::cout << std::endl;
-        }*/
+        }
 
         bool bounds_avail = check_bounds_on_outputs(outputs);
         // std::cout << "output bounds:" << bounds_avail << std::endl;
