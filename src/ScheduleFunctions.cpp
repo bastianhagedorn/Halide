@@ -2453,8 +2453,8 @@ struct Partitioner {
     void update_function_costs();
     void evaluate_option(Option &opt, Partitioner::Level level, float penalty);
     void reorder_for_input_locality();
-    void evaluate_reuse(string, vector<string> &group_inputs,
-                        vector<int> tile_sizes);
+    pair<float, float> evaluate_reuse(string, vector<string> &group_inputs,
+                                      vector<int> tile_sizes);
 };
 
 void Partitioner::clear_schedules() {
@@ -3124,33 +3124,38 @@ Partitioner::Option Partitioner::choose_candidate(
     return best_opt;
 }
 
-void Partitioner::evaluate_reuse(string group, vector<string> &group_inputs,
-                                 vector<int> tile_sizes) {
+pair<float, float>
+    Partitioner::evaluate_reuse(string group, vector<string> &group_inputs,
+                                vector<int> tile_sizes) {
 
     const vector<string> &args = analy.env[group].args();
     vector<pair<int, int> > bounds;
     vector<bool> eval;
 
-    vector<int> &dims_estimates = func_dim_estimates[group];
+    vector<int> &dim_estimates = func_dim_estimates[group];
     Box cons_box;
 
+    long long tile_size = 1;
     for (unsigned int i = 0; i < args.size(); i++) {
         if (tile_sizes[i] != -1) {
             // Check if the bounds allow for tiling with the given tile size
-            if (dims_estimates[i] >= tile_sizes[i]) {
+            if (dim_estimates[i] >= tile_sizes[i]) {
                 bounds.push_back(make_pair(0, tile_sizes[i] - 1));
                 cons_box.push_back(Interval(0, tile_sizes[i] -1));
+                tile_size = tile_size * (tile_sizes[i]);
             }
             else {
                 // If the dimension is too small do not tile it and set the
                 // extent of the bounds to that of the dimension estimate
-                bounds.push_back(make_pair(0, dims_estimates[i]));
-                cons_box.push_back(Interval(0, dims_estimates[i]));
+                bounds.push_back(make_pair(0, dim_estimates[i]));
+                cons_box.push_back(Interval(0, dim_estimates[i]));
+                tile_size = tile_size * (dim_estimates[i]);
             }
         }
         else {
-            bounds.push_back(make_pair(0, dims_estimates[i]));
-            cons_box.push_back(Interval(0, dims_estimates[i]));
+            bounds.push_back(make_pair(0, dim_estimates[i]));
+            cons_box.push_back(Interval(0, dim_estimates[i]));
+            tile_size = tile_size * (dim_estimates[i]);
         }
         eval.push_back(true);
     }
@@ -3171,32 +3176,39 @@ void Partitioner::evaluate_reuse(string group, vector<string> &group_inputs,
 
     mem_reg[group] = cons_box;
 
-    disp_regions(mem_reg);
-    long long inter_s = region_size(mem_reg, analy.env, analy.func_dep_regions);
+    float inter_s = region_size(mem_reg, analy.env, analy.func_dep_regions);
 
-    std::cout << "Config :[";
-    for (auto &s: tile_sizes)
-        std::cout << s << ",";
-    std::cout << "]" << std::endl;
-    std::cout << "Intermediate size:" << inter_s  << std::endl;
-    /*
-    long long input_reuse = 0;
-    for (unsigned int i = 0; i < args.size(); i++) {
-        map<string, Box> &overlap = conc_overlaps[i];
-        input_reuse = region_size(mem_reg, analy.env, analy.func_dep_regions);
-        if (opt.tile_sizes[i] != -1) {
-            long long dir_red_work = overlap_cost(opt.cons_group,
-                    prods,
-                    conc_overlaps,
-                    func_cost, i);
-            if (dir_red_work != -1) {
-                red_work_tile += dir_red_work;
-            } else {
-                red_work_tile = -1;
-                break;
-            }
-        }
-    } */
+    float unit_data = 0;
+    // Evalute the intermediate storage for computing in unit tiles
+    if (tile_size > 1) {
+        disp_regions(mem_reg);
+        std::cout << "Config :[";
+        for (auto &s: tile_sizes)
+            std::cout << s << ",";
+        std::cout << "]" << std::endl;
+        std::cout << "Intermediate size:" << inter_s  << std::endl;
+        vector<int> unit_sizes;
+
+        for (unsigned int i = 0; i < args.size(); i++)
+            unit_sizes.push_back(1);
+        pair<float, float> unit = evaluate_reuse(group, group_inputs,
+                                                 unit_sizes);
+        assert(unit.first < 1);
+        unit_data = unit.second;
+    } else {
+        unit_data = inter_s;
+    }
+
+    float reuse = 0;
+    if (inter_s <= arch_params.fast_mem_size) {
+        // Compute the reuse within a tile
+        reuse = unit_data * tile_size - inter_s;
+    }
+
+    if (tile_size > 1)
+        std::cout << "Reuse:" << reuse << std::endl;
+
+    return make_pair(reuse, inter_s);
 }
 
 void Partitioner::reorder_for_input_locality() {
@@ -3439,10 +3451,7 @@ void Partitioner::reorder_for_input_locality() {
         opt.benefit = (saved_mem) * (arch_params.balance)
                                   - opt.redundant_work;
     } else {
-        if (inter_s <= arch_params.fast_mem_size) {
-            opt.benefit = (saved_mem) * (arch_params.balance)
-                           - opt.redundant_work;
-        }
+
         else if (inter_s <= 2 * arch_params.fast_mem_size) {
             float hit = (float)std::max(2 * arch_params.fast_mem_size - inter_s, 0LL)/inter_s;
             float loads_saved = hit * saved_mem;
@@ -3932,10 +3941,11 @@ void schedule_advisor(const vector<Function> &outputs,
 
         DependenceAnalysis analy(env, func_val_bounds);
 
+        /*
         for (auto &reg: analy.func_dep_regions) {
             disp_regions(reg.second);
             std::cout << std::endl;
-        }
+        }*/
 
         bool bounds_avail = check_bounds_on_outputs(outputs);
         // std::cout << "output bounds:" << bounds_avail << std::endl;
