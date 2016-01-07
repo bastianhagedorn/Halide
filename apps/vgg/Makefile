@@ -5,7 +5,7 @@ CXX=g++ -O3 -march=native -Wall -fopenmp -g
 
 .PHONY: clean
 
-vgg: vgg.cpp
+vgg: vgg.cpp layers.h
 	$(CXX) $(CXXFLAGS) vgg.cpp $(LIB_HALIDE) -o vgg -lpthread -ldl -lz \
 	$(PNGFLAGS) $(LDFLAGS) $(LLVM_SHARED_LIBS) -ltinfo
 

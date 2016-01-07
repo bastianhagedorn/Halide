@@ -1971,7 +1971,7 @@ long long data_from_group(string func, map<string, Function> &env,
 
 long long region_cost_inline(string func, vector<string> &inline_reg,
                              map<string, map<string, int> > &func_calls,
-                             map<string, pair<int, int> > &func_cost) {
+                             map<string, pair<long long, long long> > &func_cost) {
 
     map<string, int> calls;
     for (auto&c: func_calls[func])
@@ -1984,9 +1984,9 @@ long long region_cost_inline(string func, vector<string> &inline_reg,
         fixpoint = true;
         for (auto& p: inline_reg) {
             if (calls.find(p) != calls.end()) {
-                int num_calls = calls[p];
+                long long num_calls = calls[p];
                 assert(num_calls > 0);
-                int op_cost = func_cost[p].first;
+                long long op_cost = func_cost[p].first;
                 total_cost += num_calls * op_cost;
                 for (auto &c: func_calls[p]) {
                     if (calls.find(c.first) != calls.end())
@@ -1999,18 +1999,19 @@ long long region_cost_inline(string func, vector<string> &inline_reg,
             }
         }
     }
+    std::cout << func << " " << total_cost << std::endl;
     assert(total_cost >= 0);
     return total_cost;
 }
 
 long long region_cost(string func, Box &region,
-                      map<string, pair<int, int> > &func_cost) {
+                      map<string, pair<long long, long long> > &func_cost) {
     long long area = box_area(region);
     if (area < 0) {
         // Area could not be determined
         return -1;
     }
-    int op_cost = func_cost[func].first;
+    long long op_cost = func_cost[func].first;
 
     long long cost = area * (op_cost);
     assert(cost >= 0);
@@ -2018,7 +2019,7 @@ long long region_cost(string func, Box &region,
 }
 
 long long region_cost(map<string, Box> &regions,
-                      map<string, pair<int, int> > &func_cost) {
+                      map<string, pair<long long, long long> > &func_cost) {
 
     long long total_cost = 0;
     for(auto &f: regions) {
@@ -2034,7 +2035,7 @@ long long region_cost(map<string, Box> &regions,
 }
 
 long long overlap_cost(string cons, Function prod, vector<map<string, Box> > &overlaps,
-                       map<string, pair<int, int> > &func_cost, int dim=-1) {
+                       map<string, pair<long, long> > &func_cost, int dim=-1) {
     long long total_area = 0;
     assert((int)overlaps.size() > dim);
     for (unsigned int d = 0; d < overlaps.size(); d++) {
@@ -2049,20 +2050,20 @@ long long overlap_cost(string cons, Function prod, vector<map<string, Box> > &ov
                 return -1;
         }
     }
-    int op_cost = func_cost[prod.name()].first;
+    long long op_cost = func_cost[prod.name()].first;
     long long overlap_cost = total_area * (op_cost);
     return overlap_cost;
 }
 
 long long overlap_cost(string cons, vector<Function> &prods,
                        vector<map<string, Box> > &overlaps,
-                       map<string, pair<int, int> > &func_cost,
+                       map<string, pair<long, long> > &func_cost,
                        int dim=-1) {
 
     long long total_cost = 0;
     for(auto& p: prods) {
         if (p.name()!=cons) {
-            int cost = overlap_cost(cons, p, overlaps, func_cost, dim);
+            long long cost = overlap_cost(cons, p, overlaps, func_cost, dim);
             if (cost < 0)
                 // Cost could not be estimated
                 return -1;
@@ -2228,7 +2229,7 @@ struct Partitioner {
     map<string, Box> &pipeline_bounds;
     map<string, vector<string> > &inlines;
     DependenceAnalysis &analy;
-    map<string, pair<int, int> > &func_cost;
+    map<string, pair<long long, long long> > &func_cost;
 
     map<string, vector<Function> > groups;
     map<string, GroupSched> group_sched;
@@ -2245,7 +2246,7 @@ struct Partitioner {
 
     Partitioner(map<string, Box> &_pipeline_bounds,
                 map<string, vector<string> > &_inlines, DependenceAnalysis &_analy,
-                map<string, pair<int, int> > &_func_cost):
+                map<string, pair<long long, long long> > &_func_cost):
                 pipeline_bounds(_pipeline_bounds), inlines(_inlines),
                 analy(_analy), func_cost(_func_cost) {
 
@@ -2504,8 +2505,8 @@ void Partitioner::update_function_costs() {
             if (f.name() != g.first)
                 prod_funcs.push_back(f.name());
 
-        int work_per_ele = region_cost_inline(g.first, prod_funcs,
-                                              func_calls, func_cost);
+        long long work_per_ele = region_cost_inline(g.first, prod_funcs,
+                                                    func_calls, func_cost);
         assert(work_per_ele >= 0);
         func_cost[g.first].first += work_per_ele;
     }
@@ -2513,8 +2514,8 @@ void Partitioner::update_function_costs() {
         const vector<string> &args = f.second.args();
         long long size = 1;
         for (unsigned int i = 0; i < args.size(); i++) {
-            int estimate = get_extent_estimate(f.second,
-                                               pipeline_bounds, i);
+            long long  estimate = get_extent_estimate(f.second,
+                                                      pipeline_bounds, i);
             if (estimate != -1 && size != -1)
                 size *= estimate;
             else
@@ -3669,7 +3670,7 @@ void schedule_advisor(const vector<Function> &outputs,
     map<string, Box> pipeline_bounds;
 
     // TODO explain structure
-    std::map<string, pair<int, int> > func_cost;
+    std::map<string, pair<long long, long long> > func_cost;
     for (auto& kv : env) {
         //std::cout << kv.first << ":" << std::endl;
         assert(func_cost.find(kv.first) == func_cost.end());
@@ -3712,6 +3713,8 @@ void schedule_advisor(const vector<Function> &outputs,
                 for (auto &rvar: u.domain.domain()) {
                     b.push_back(Interval(simplify(rvar.min),
                                          simplify(rvar.min + rvar.extent - 1)));
+                    std::cout << rvar.min << std::endl;
+                    std::cout << rvar.min + rvar.extent - 1 << std::endl;
                 }
                 long long area = box_area(b);
                 // Fixed size RDom

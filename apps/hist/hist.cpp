@@ -22,7 +22,7 @@ int main(int argc, char **argv) {
 
     Func hist("hist");
     hist(x) = 0;
-    RDom r(0, in.width(), 0, in.height());
+    RDom r(0, 1536, 0, 2560);
     Expr bin = cast<uint8_t>(clamp(Y(r.x, r.y), 0, 255));
     hist(bin) += 1;
 
