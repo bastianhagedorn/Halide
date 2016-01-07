@@ -7,10 +7,10 @@ using namespace Halide;
 #include "benchmark.h"
 
 int main(int argc, char **argv) {
-
-    Image<float> A(2048, 2048);
-    Image<float> B(2048, 2048);
-    Image<float> C(2048, 2048);
+    int size = 2048;
+    Image<float> A(size, size);
+    Image<float> B(size, size);
+    Image<float> C(size, size);
 
     for (int y = 0; y < A.height(); y++) {
         for (int x = 0; x < A.width(); x++) {
@@ -27,12 +27,12 @@ int main(int argc, char **argv) {
     Var x, y;
 
     Func prod("prod");
-    RDom r(0, 1024);
+    RDom r(0, size);
 
     prod(x, y) = 0.0f;
     prod(x, y) += A(x, r.x) * B(r.x, y);
 
-    prod.bound(x, 0, 2048).bound(y, 0, 2048);
+    prod.bound(x, 0, size).bound(y, 0, size);
 
     int sched = atoi(argv[1]);
 
