@@ -447,7 +447,9 @@ class Convolutional: public Layer {
                 // be incompatible with some schedules. Have to investigate
                 // this more closely.
                 //f_in_bound.compute_at(forward, n);
-                f_in_bound.compute_at(forward, z_t);
+                f_in_bound.compute_at(forward, par);
+                //f_in_bound.compute_root().parallel(f_in_bound.args()[0]);
+                //f_in_bound.compute_root().parallel(f_in_bound.args()[1]);
             }
 
         }
