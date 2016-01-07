@@ -66,7 +66,9 @@ int main(int argc, char **argv) {
     if (sched == 0) {
        // blocking spatially with vectorization
        //f_in_bound.compute_at(f_conv, par);
-       f_in_bound.compute_at(f_conv, z_t);
+       //f_in_bound.compute_at(f_conv, z_t);
+       f_in_bound.compute_root().parallel(f_in_bound.args()[3]);
+       //f_in_bound.compute_root().parallel(f_in_bound.args()[2]);
        f_conv.compute_root();
        f_conv.fuse(z, n, par).parallel(par);
        f_conv.update().reorder(x, y, r.z);
