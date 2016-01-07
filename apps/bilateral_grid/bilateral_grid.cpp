@@ -28,6 +28,8 @@ int main(int argc, char **argv) {
     histogram(x, y, z, c) = 0.0f;
     histogram(x, y, zi, c) += select(c == 0, val, 1.0f);
 
+    histogram.bound(z, -2, 16);
+
     // Blur the grid using a five-tap filter
     Func blurx("blurx"), blury("blury"), blurz("blurz");
     blurz(x, y, z, c) = (histogram(x, y, z-2, c) +

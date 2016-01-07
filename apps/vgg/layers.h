@@ -1,5 +1,10 @@
 #include "Halide.h"
 using namespace Halide;
+Var par("par");
+Var in_dim("in_dim"), n("n"), unit_dim("unit_dim");
+Var x("x"), y("y"), z("z"), w("w");
+Var y_t("y_t"), z_t("z_t");
+
 class Layer {
     public:
         Layer(Layer* in) {
@@ -42,7 +47,6 @@ class Layer {
 
 class SoftMax: public Layer {
     public:
-        Var in_dim, n;
         int num_classes, num_samples;
         // Expects 2-dimensional input layer (num_classes x num_samples)
         SoftMax(Layer* in, int schedule = 1) : Layer(in) {
@@ -54,7 +58,7 @@ class SoftMax: public Layer {
             num_samples = in->out_dim_size(1);
 
             // Define forward
-            Func exp_max, expo, normalizer;
+            Func exp_max("exp_max"), expo("expo"), normalizer("normalizer");
             RDom r(0, num_classes);
             exp_max(n) = maximum(in_f(r.x, n));
             expo(in_dim, n) = exp(in_f(in_dim, n) - exp_max(n));
@@ -94,8 +98,7 @@ class SoftMax: public Layer {
             // Check if the dimensions make sense
             assert(labels.dimensions() == 1);
             // TODO Figure out if there is a scalar type
-            Var x;
-            Func loss_p;
+            Func loss_p("loss_p");
             RDom r(0, num_samples);
             loss_p(x) = cast(forward.output_types()[0], 0);
             // The clamp is necessary. Otherwise, halide will assume that the
@@ -120,13 +123,11 @@ class SoftMax: public Layer {
 
 class Affine: public Layer {
     public:
-        Var in_dim, n, unit_dim;
         // num_units is the number of units in the layer
         // num_inputs is the size of each input sample
         int num_units, num_samples, num_inputs;
         float reg;
         // parameters for scheduling
-        Var par;
         Affine(int _num_units, float _reg, Layer* in,
                int schedule = 1) : Layer(in) {
 
@@ -160,7 +161,7 @@ class Affine: public Layer {
             assert(dout.defined());
 
             if (!f_in_grad.defined()) {
-                Func dW, db;
+                Func dW("dW"), db("db");
 
                 Image<float> W = params[0];
                 Image<float> b = params[1];
@@ -218,7 +219,6 @@ class Affine: public Layer {
 
 class DropOut: public Layer {
     public:
-        Var x, y, z, w;
         // Threshold value between 0-1 representing the probability
         // with which a unit's output will be dropped
         float thresh;
@@ -296,7 +296,6 @@ class DropOut: public Layer {
 
 class ReLU: public Layer {
     public:
-        Var x, y, z, w;
         int vec_len = 8;
         ReLU(Layer* in, int schedule = 0) : Layer(in) {
             Func in_f = in_layer->forward;
@@ -379,7 +378,6 @@ class ReLU: public Layer {
 
 class Convolutional: public Layer {
     public:
-        Var x, y, z, n;
         // number of channels, height and width of the input to the layer
         int num_samples, in_ch, in_h, in_w;
         // number of filters, filter height, filter width, padding and stride
@@ -387,7 +385,6 @@ class Convolutional: public Layer {
         float reg;
         Func f_in_bound;
         // parameters for scheduling
-        Var y_t, z_t, par;
         int o_block_size = 16;
         int y_block_size = 32;
         int vec_len = 8;
@@ -456,7 +453,7 @@ class Convolutional: public Layer {
         void back_propagate(Func dout) {
             assert(dout.defined());
             if (!f_in_grad.defined()) {
-                Func dW, db;
+                Func dW("dW"), db("db");
 
                 int out_w = this->out_dim_size(0);
                 int out_h = this->out_dim_size(1);
@@ -527,9 +524,7 @@ class MaxPooling: public Layer {
         // height and width of the pool
         // stride at which the pooling is applied
         int p_h, p_w, stride;
-        Var x, y, z, n;
         // parameters for scheduling
-        Var par;
         int vec_len = 8;
         MaxPooling(int _p_w, int _p_h, int _stride, Layer* in,
                    int schedule = 1) : Layer(in) {
@@ -564,7 +559,7 @@ class MaxPooling: public Layer {
             assert(dout.defined());
             if (!f_in_grad.defined()) {
                 Func in_f = in_layer->forward;
-                Func pool_argmax;
+                Func pool_argmax("pool_argmax");
                 RDom r1(0, p_w, 0, p_h);
                 pool_argmax(x, y, z, n) = argmax(in_f(x * stride + r1.x,
                                                       y * stride + r1.y,
@@ -604,7 +599,6 @@ class MaxPooling: public Layer {
 class DataLayer: public Layer {
     public:
         int in_w, in_h, in_ch, num_samples;
-        Var x, y, z, n;
         DataLayer(int _in_w, int _in_h, int _in_ch, int _num_samples,
                   Image<float> &data) : Layer(0) {
                 in_w = _in_w; in_h = _in_w; in_ch = _in_ch;
@@ -635,7 +629,6 @@ class DataLayer: public Layer {
 
 class Flatten: public Layer {
     public:
-        Var x, y, z, n;
         int out_width;
         int num_samples;
         Flatten(Layer *in, int schedule = 1) : Layer(in) {

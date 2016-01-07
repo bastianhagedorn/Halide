@@ -8,8 +8,8 @@ using namespace Halide;
 
 int main(int argc, char **argv) {
 
-    Image<float> A(2048, 1024);
-    Image<float> B(1024, 2048);
+    Image<float> A(2048, 2048);
+    Image<float> B(2048, 2048);
     Image<float> C(2048, 2048);
 
     for (int y = 0; y < A.height(); y++) {
@@ -37,8 +37,14 @@ int main(int argc, char **argv) {
     int sched = atoi(argv[1]);
 
     if (sched == 0) {
+        Var xi, yi;
+        RVar ri;
         prod.compute_root().parallel(y).vectorize(x, 8);
         prod.update().parallel(y).reorder(x, r.x).vectorize(x, 8);
+        //prod.update().split(x, x, xi, 64).split(y, y, yi, 64).
+        //              split(r.x, r.x, ri, 64).parallel(y).reorder(xi,
+        //                      ri, yi, r.x, x, y).vectorize(xi);
+        //prod.print_loop_nest();
     }
 
     Target target = get_target_from_environment();
