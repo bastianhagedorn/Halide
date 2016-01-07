@@ -52,6 +52,7 @@ class SoftMax: public Layer {
         SoftMax(Layer* in, int schedule = 1) : Layer(in) {
             assert(in->out_dims() == 2);
 
+            forward = Func("softmax");
             Func in_f = in_layer->forward;
 
             num_classes = in->out_dim_size(0);
@@ -130,7 +131,7 @@ class Affine: public Layer {
         // parameters for scheduling
         Affine(int _num_units, float _reg, Layer* in,
                int schedule = 1) : Layer(in) {
-
+            forward = Func("Affine");
             Func in_f = in_layer->forward;
             num_units = _num_units;
             reg = _reg;
@@ -299,6 +300,7 @@ class ReLU: public Layer {
         int vec_len = 8;
         ReLU(Layer* in, int schedule = 0) : Layer(in) {
             Func in_f = in_layer->forward;
+            forward = Func("ReLU");
             // Define forward
             switch(in_layer->out_dims()) {
                 case 1:
@@ -392,7 +394,7 @@ class Convolutional: public Layer {
                       float _reg, Layer* in, int schedule=1) : Layer(in) {
 
             assert(in_layer->out_dims() == 4);
-
+            forward = Func("conv");
             num_samples = in_layer->out_dim_size(3);
             in_ch = in_layer->out_dim_size(2);
             in_h = in_layer->out_dim_size(1);
@@ -529,7 +531,7 @@ class MaxPooling: public Layer {
         MaxPooling(int _p_w, int _p_h, int _stride, Layer* in,
                    int schedule = 1) : Layer(in) {
             assert(in_layer->out_dims() == 4);
-
+            forward = Func("MaxPool");
             num_samples = in_layer->out_dim_size(3);
             in_ch = in_layer->out_dim_size(2);
             in_h = in_layer->out_dim_size(1);
@@ -633,6 +635,7 @@ class Flatten: public Layer {
         int num_samples;
         Flatten(Layer *in, int schedule = 1) : Layer(in) {
             assert(in->out_dims() >= 2 && in->out_dims() <= 4);
+            forward = Func("Flatten");
             num_samples = in_layer->out_dim_size(in_layer->out_dims() - 1);
             // Define forward
             if (in_layer->out_dims() == 2) {
