@@ -22,7 +22,7 @@ endif()
 # FIXME: Cannot use halide_add_generator_dependency() because
 # non_local_means doesn't handle the commandline args passed.
 add_custom_command(OUTPUT "${non_local_means_h}" "${non_local_means_obj}"
-                   COMMAND non_local_means 5 5
+                   COMMAND non_local_means 7 7
                    WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
                    COMMENT "Generating non_local_means"
                   )
