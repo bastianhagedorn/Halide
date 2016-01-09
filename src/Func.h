@@ -1308,6 +1308,11 @@ public:
      * to the version of compute_at that takes a Var. */
     EXPORT Func &compute_at(Func f, RVar var);
 
+   /** Schedule a function to be computed at the loop level given by
+    * an integer index into the consuming loop nest. 0 is equivalent
+    * to root, * 1 is the top-level consuming loop, etc. */
+   EXPORT Func &compute_at(int loop_level);
+
     /** Compute all of this function once ahead of time. Reusing
      * the example in \ref Func::compute_at :
      *
