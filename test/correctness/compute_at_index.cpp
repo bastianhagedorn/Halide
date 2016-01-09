@@ -15,7 +15,7 @@ int main(int argc, char **argv) {
     f.tile(x, y, xo, yo, xi, yi, 8, 8);
     f.compute_at(0);
     g.compute_at(2);
-    h.compute_at(3);
+    h.compute_at(99); // should become innermost
 
     f.print_loop_nest();
 

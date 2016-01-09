@@ -1041,12 +1041,20 @@ void validate_schedule(Function f, Stmt s, bool is_output) {
     
     if (store_at.is_index) {
         std::cerr << "Store: " << store_at << " -> ";
+        assert(store_at.index >= 0);
+        if (store_at.index >= (int)legal.sites_allowed.size()) {
+            store_at.index = legal.sites_allowed.size() - 1;
+        }
         store_at = legal.sites_allowed[store_at.index].loop_level;
         f.schedule().store_level() = store_at;
         std::cerr << store_at << std::endl;
     }
     if (compute_at.is_index) {
         std::cerr << "Compute: " << compute_at << " -> ";
+        assert(compute_at.index >= 0);
+        if (compute_at.index >= (int)legal.sites_allowed.size()) {
+            compute_at.index = legal.sites_allowed.size() - 1;
+        }
         compute_at = legal.sites_allowed[compute_at.index].loop_level;
         f.schedule().compute_level() = compute_at;
         std::cerr << compute_at << std::endl;
