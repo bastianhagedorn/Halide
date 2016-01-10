@@ -1425,9 +1425,9 @@ void simplify_box(Box& b) {
 
 /* Compute the regions of producers required to compute a region of the function
    'f' given symbolic sizes of the tile in each dimension. */
-map<string, Box> regions_required(Function f,
+map<string, Box> regions_required(Function f, const vector<string> &update_args,
                                   const vector< pair<Expr, Expr> > &sym_bounds,
-                                  map<string, Function> &env,
+                                  const map<string, Function> &env,
                                   const FuncValueBounds &func_val_bounds){
     // Define the bounds for each variable of the function
     std::vector<Interval> bounds;
@@ -1465,7 +1465,10 @@ map<string, Box> regions_required(Function f,
                     regions[reg.first] = reg.second;
                 else
                     merge_boxes(regions[reg.first], reg.second);
-                f_queue.push_back(make_pair(env[reg.first], reg.second.bounds));
+
+                if (env.find(reg.first) != env.end())
+                    f_queue.push_back(make_pair(env.at(reg.first),
+                                                reg.second.bounds));
             }
         }
         // Currently handling only a single update which covers simple
@@ -1509,7 +1512,10 @@ map<string, Box> regions_required(Function f,
                                 regions[reg.first] = reg.second;
                             else
                                 merge_boxes(regions[reg.first], reg.second);
-                            f_queue.push_back(make_pair(env[reg.first], reg.second.bounds));
+
+                            if (env.find(reg.first) != env.end())
+                                f_queue.push_back(make_pair(env.at(reg.first),
+                                                            reg.second.bounds));
                         }
                     }
                 }
@@ -1526,14 +1532,16 @@ map<string, Box> regions_required(Function f,
 /* Compute the redundant regions computed while computing a tile of the function
    'f' given sizes of the tile in each dimension. */
 map<string, Box> redundant_regions(Function f, int dir,
+                                   const vector<string> &update_args,
                                    const vector<pair<Expr, Expr>> &sym_bounds,
-                                   map<string, Function> &env,
+                                   const map<string, Function> &env,
                                    const FuncValueBounds &func_val_bounds){
-    map<string, Box> regions = regions_required(f, sym_bounds, env,
+
+    map<string, Box> regions = regions_required(f, update_args, sym_bounds, env,
                                                 func_val_bounds);
     vector<pair<Expr, Expr>> shifted_bounds;
-    int num_args = f.args().size();
-    for (int arg = 0; arg < num_args; arg++) {
+    int num_pure_args = f.args().size();
+    for (int arg = 0; arg < num_pure_args; arg++) {
         if (dir == arg) {
             Expr len = sym_bounds[arg].second - sym_bounds[arg].first + 1;
             pair<Expr, Expr> bounds = make_pair(sym_bounds[arg].first + len,
@@ -1544,7 +1552,20 @@ map<string, Box> redundant_regions(Function f, int dir,
             shifted_bounds.push_back(sym_bounds[arg]);
     }
 
-    map<string, Box> regions_shifted = regions_required(f, shifted_bounds,
+    int num_update_args = update_args.size();
+    for (int arg = 0; arg < num_update_args; arg++) {
+        int sym_index = num_pure_args - 1 + arg;
+        if (dir == sym_index) {
+            Expr len = sym_bounds[arg].second - sym_bounds[sym_index].first + 1;
+            pair<Expr, Expr> bounds = make_pair(sym_bounds[sym_index].first + len,
+                                                sym_bounds[sym_index].second + len);
+            shifted_bounds.push_back(bounds);
+        }
+        else
+            shifted_bounds.push_back(sym_bounds[sym_index]);
+    }
+
+    map<string, Box> regions_shifted = regions_required(f, update_args, shifted_bounds,
                                                         env, func_val_bounds);
 
     map<string, Box> overalps;
@@ -1557,7 +1578,7 @@ map<string, Box> redundant_regions(Function f, int dir,
             Box b_shifted = regions_shifted[reg.first];
             // The boxes should be of the same size
             assert(b.size() == b_shifted.size());
-            // The box used makes things complicated but ignoring it for now
+            // The box used makes things complicated ignoring it for now
             Box b_intersect;
             for (unsigned int i = 0 ; i < b.size(); i++)
                 b_intersect.push_back(interval_intersect(b[i], b_shifted[i]));
@@ -1742,6 +1763,19 @@ map<string, Box> sym_to_concrete_bounds(vector< pair<Var, Var> > &sym,
     return concrete_regions;
 }
 
+void disp_box(Box &b) {
+    for (unsigned int dim = 0; dim < b.size(); dim++)
+        std::cout << "(" << b[dim].min << "," << b[dim].max << ")";
+}
+
+void disp_regions(map<string, Box> &regions) {
+    for (auto& reg: regions) {
+        std::cout << reg.first;
+        disp_box(reg.second);
+        std::cout << std::endl;
+    }
+}
+
 struct DependenceAnalysis {
 
     map<string, Function> &env;
@@ -1749,14 +1783,20 @@ struct DependenceAnalysis {
     map<string, map<string, Box> > func_dep_regions;
     map<string, vector< map<string, Box> > > func_overlaps;
     map<string, vector< pair<Var, Var> > > func_sym;
+    set<string> &reductions;
+    map<string, vector<string> > &update_args;
 
     DependenceAnalysis(map<string, Function> &_env,
-                       const FuncValueBounds &_func_val_bounds):
-                       env(_env), func_val_bounds(_func_val_bounds) {
+                       const FuncValueBounds &_func_val_bounds,
+                       set<string> _reductions,
+                       map<string, vector<string> > &_update_args):
+                       env(_env), func_val_bounds(_func_val_bounds),
+                       reductions(_reductions), update_args(_update_args) {
         for (auto& kv : env) {
-            // For each argument create a variables which will server as the lower
+            // For each argument create a variables which will serve as the lower
             // and upper bounds of the interval corresponding to the argument
-            const vector<string>  &args = kv.second.args();
+            const vector<string> &args = kv.second.args();
+            assert(args.size() > 0);
             vector< pair<Expr, Expr> > sym_bounds;
             for (unsigned int arg = 0; arg < args.size(); arg++) {
                 Var lower = Var(args[arg] + "_l");
@@ -1767,30 +1807,30 @@ struct DependenceAnalysis {
                 sym_bounds.push_back(bounds);
             }
 
-            map<string, Box> regions = regions_required(kv.second, sym_bounds,
+            vector<string> u_args;
+            map<string, Box> regions = regions_required(kv.second, u_args, sym_bounds,
                                                         env, func_val_bounds);
             assert(func_dep_regions.find(kv.first) == func_dep_regions.end());
             func_dep_regions[kv.first] = regions;
 
-            /*
-               std::cout << "Function regions required for " << kv.first << ":" << std::endl;
-               disp_regions(regions);
-               std::cout << std::endl; */
+            std::cout << "Function regions required for " << kv.first << ":" << std::endl;
+            disp_regions(regions);
+            std::cout << std::endl;
 
             assert(func_overlaps.find(kv.first) == func_overlaps.end());
             for (unsigned int arg = 0; arg < args.size(); arg++) {
                 map<string, Box> overlaps = redundant_regions(kv.second, arg,
-                                                              sym_bounds, env,
+                                                              u_args, sym_bounds, env,
                                                               func_val_bounds);
                 func_overlaps[kv.first].push_back(overlaps);
 
-                /*
-                   std::cout << "Function region overlaps for var " <<
-                   kv.second.args()[arg]  << " " << kv.first << ":" << std::endl;
-                   disp_regions(overlaps);
-                   std::cout << std::endl; */
+                std::cout << "Function region overlaps for var " <<
+                          args[arg]  << " " << kv.first << ":" << std::endl;
+                disp_regions(overlaps);
+                std::cout << std::endl;
             }
         }
+        assert(0);
     }
 
     map<string, Box> concrete_dep_regions(string name, vector<bool> &eval,
@@ -2094,11 +2134,6 @@ void disp_children(map<string, set<string> > &children) {
             std::cout << c << ",";
         std::cout << std::endl;
     }
-}
-
-void disp_box(Box &b) {
-    for (unsigned int dim = 0; dim < b.size(); dim++)
-        std::cout << "(" << b[dim].min << "," << b[dim].max << ")";
 }
 
 int get_extent_estimate(Function &f, map<string, Box> &bounds, int dim) {
@@ -2632,14 +2667,6 @@ void Partitioner::group(Partitioner::Level level) {
         // Invalidate the option cache
         for (auto& key: invalid_keys)
             option_cache.erase(key);
-    }
-}
-
-void disp_regions(map<string, Box> &regions) {
-    for (auto& reg: regions) {
-        std::cout << reg.first;
-        disp_box(reg.second);
-        std::cout << std::endl;
     }
 }
 
@@ -3752,6 +3779,8 @@ void schedule_advisor(const vector<Function> &outputs,
 
     // TODO explain strcuture
     map<string, Box> pipeline_bounds;
+    map<string, vector<string> > update_args;
+    set<string> reductions;
 
     // TODO explain structure
     std::map<string, pair<long long, long long> > func_cost;
@@ -3762,34 +3791,56 @@ void schedule_advisor(const vector<Function> &outputs,
         func_cost[kv.first].first = 1;
         func_cost[kv.first].second = 0;
 
-        if (kv.second.is_boundary())
-            continue;
-
-        for (auto &e: kv.second.values()) {
-            ExprCostEarly cost_visitor;
-            e.accept(&cost_visitor);
-            func_cost[kv.first].first += cost_visitor.ops;
-            func_cost[kv.first].second += cost_visitor.loads;
+        if (!kv.second.is_boundary()) {
+            for (auto &e: kv.second.values()) {
+                ExprCostEarly cost_visitor;
+                e.accept(&cost_visitor);
+                func_cost[kv.first].first += cost_visitor.ops;
+                func_cost[kv.first].second += cost_visitor.loads;
+            }
         }
 
         // Estimating cost when reductions are involved
         // Only considering functions with a single update covers most of the
         // cases we want to tackle
         assert(kv.second.updates().size() <= 1);
-        for (auto &u: kv.second.updates()) {
-            int ops = 1;
-            int loads = 0;
+        if (!kv.second.is_pure()) {
+            const UpdateDefinition &u = kv.second.updates()[0];
+            bool reduction = true;
+
+            long long ops = 1;
+            long long loads = 0;
             for (auto &e: u.values) {
                 ExprCostEarly cost_visitor;
                 e.accept(&cost_visitor);
                 ops += cost_visitor.ops;
                 loads += cost_visitor.loads;
             }
+
+            vector<string> red_args;
+            int arg_pos = 0;
+
             for (auto &arg: u.args) {
+
                 ExprCostEarly cost_visitor;
                 arg.accept(&cost_visitor);
                 ops += cost_visitor.ops;
                 loads += cost_visitor.loads;
+
+                // Check for a pure variable
+                const Variable *v = arg.as<Variable>();
+                if (!v && v->name == kv.second.args()[arg_pos]) {
+                    reduction = false;
+                }
+                arg_pos++;
+            }
+
+            if (reduction) {
+                for (auto &rvar: u.domain.domain()) {
+                    red_args.push_back(rvar.var);
+                }
+                reductions.insert(kv.first);
+                update_args[kv.first] = red_args;
             }
 
             if (u.domain.defined()) {
@@ -3808,7 +3859,6 @@ void schedule_advisor(const vector<Function> &outputs,
             }
         }
     }
-
     // Make obvious inline decisions early
     map<string, vector<string> > inlines;
 
@@ -3854,7 +3904,7 @@ void schedule_advisor(const vector<Function> &outputs,
         // For each function compute all the regions of upstream functions
         // required to compute a region of the function
 
-        DependenceAnalysis analy(env, func_val_bounds);
+        DependenceAnalysis analy(env, func_val_bounds, reductions, update_args);
 
         for (auto &reg: analy.func_dep_regions) {
             disp_regions(reg.second);
