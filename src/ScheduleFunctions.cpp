@@ -1026,7 +1026,7 @@ void validate_schedule(Function f, Stmt s, bool is_output) {
     // Otherwise inspect the uses to see what's ok.
     ComputeLegalSchedules legal(f);
     s.accept(&legal);
-    
+
     std::cerr << "Legal sites for " << f.name() << ":\n";
     auto site = legal.sites_allowed.begin();
     while (site != legal.sites_allowed.end()) {
@@ -1038,7 +1038,7 @@ void validate_schedule(Function f, Stmt s, bool is_output) {
         site++;
     }
     std::cerr << "\n";
-    
+
     if (store_at.is_index) {
         std::cerr << "Store: " << store_at << " -> ";
         assert(store_at.index >= 0);
@@ -1954,20 +1954,23 @@ struct DependenceAnalysis {
         }
     }
 
-    map<string, Box> concrete_dep_regions(string name, vector<bool> &eval,
-                                          vector<pair<int, int> > &bounds) {
+    map<string, Box>
+        concrete_dep_regions(string name, vector<bool> &eval,
+                             map<string, map<string, Box> > &dep_regions,
+                             vector<pair<int, int> > &bounds) {
         return sym_to_concrete_bounds(func_sym[name], bounds, eval,
-                                      func_dep_regions[name], env);
+                                      dep_regions[name], env);
     }
 
-    vector< map<string, Box> > concrete_overlap_regions(
-                                             string name, vector<bool> &eval,
-                                             vector<pair<int, int> > &bounds) {
+    vector< map<string, Box> >
+        concrete_overlap_regions(string name, vector<bool> &eval,
+                                 map<string, vector< map<string, Box> > > &overlaps,
+                                 vector<pair<int, int> > &bounds) {
         vector< map<string, Box> > conc_overlaps;
-        for (auto & dir: func_overlaps[name]) {
+        for (auto & dir_overlap: overlaps[name]) {
             map<string, Box> conc_reg =
                 sym_to_concrete_bounds(func_sym[name], bounds, eval,
-                                       dir, env);
+                                       dir_overlap, env);
             conc_overlaps.push_back(conc_reg);
         }
         return conc_overlaps;
@@ -2898,7 +2901,8 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
 
     }
 
-    conc_reg = analy.concrete_dep_regions(opt.cons_group, eval, bounds);
+    conc_reg = analy.concrete_dep_regions(opt.cons_group, eval,
+                                          analy.func_dep_regions, bounds);
 
     //disp_regions(conc_reg);
 
@@ -3343,7 +3347,7 @@ pair<float, float>
     }
 
     map<string, Box> conc_reg =
-        analy.concrete_dep_regions(group, eval, bounds);
+        analy.concrete_dep_regions(group, eval, analy.func_dep_regions, bounds);
 
     map<string, Box> group_mem_reg;
     map<string, Box> input_mem_reg;
@@ -3501,7 +3505,8 @@ void Partitioner::reorder_for_input_locality() {
                 }
 
                 vector< map<string, Box> > conc_overlaps =
-                    analy.concrete_overlap_regions(g.first, eval, bounds);
+                    analy.concrete_overlap_regions(g.first, eval,
+                                                   analy.func_overlaps, bounds);
 
                 float input_overlap = 0;
                 for (auto &in: group_inputs) {
@@ -4059,7 +4064,8 @@ void schedule_advisor(const vector<Function> &outputs,
                 }
 
                 map<string, Box> regions =
-                        analy.concrete_dep_regions(out.name(), eval, bounds);
+                        analy.concrete_dep_regions(out.name(), eval,
+                                                   analy.func_dep_regions, bounds);
 
                 // Add the output region to the pipeline bounds as well
                 Box out_box;
