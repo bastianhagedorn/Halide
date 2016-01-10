@@ -3937,7 +3937,7 @@ void schedule_advisor(const vector<Function> &outputs,
         std::cout << std::endl;
         //part.disp_grouping();
 
-        part.reorder_for_input_locality();
+        //part.reorder_for_input_locality();
 
         int vec_len = part.arch_params.vec_len;
 
