@@ -1110,6 +1110,17 @@ Func &Func::compute_at(Func f, Var var) {
     return *this;
 }
 
+// TODO: refactor to DRY - common internal compute_at(LoopLevel)
+Func &Func::compute_at(int index) {
+    invalidate_cache();
+    LoopLevel loop_level(index);
+    func.schedule().compute_level() = loop_level;
+    if (func.schedule().store_level().is_inline()) {
+        func.schedule().store_level() = loop_level;
+    }
+    return *this;
+}
+
 Func &Func::compute_root() {
     invalidate_cache();
     func.schedule().compute_level() = LoopLevel::root();

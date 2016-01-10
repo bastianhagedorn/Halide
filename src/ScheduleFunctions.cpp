@@ -957,6 +957,17 @@ public:
     PrintUsesOfFunc(string f, std::ostream &s) : func(f), stream(s) {}
 };
 
+std::ostream &operator<<(std::ostream &stream, LoopLevel l) {
+    stream << "LoopLevel(";
+    if (l.is_index) {
+        stream << l.index;
+    } else {
+        stream << l.func << ", " << l.var;
+    }
+    stream << ")";
+    return stream;
+}
+
 void validate_schedule(Function f, Stmt s, bool is_output) {
 
     // If f is extern, check that none of its inputs are scheduled inline.
@@ -1015,6 +1026,39 @@ void validate_schedule(Function f, Stmt s, bool is_output) {
     // Otherwise inspect the uses to see what's ok.
     ComputeLegalSchedules legal(f);
     s.accept(&legal);
+    
+    std::cerr << "Legal sites for " << f.name() << ":\n";
+    auto site = legal.sites_allowed.begin();
+    while (site != legal.sites_allowed.end()) {
+        if (site->loop_level.var == "__outermost") {
+            site = legal.sites_allowed.erase(site);
+            continue;
+        }
+        std::cerr << site->loop_level << "\n";
+        site++;
+    }
+    std::cerr << "\n";
+    
+    if (store_at.is_index) {
+        std::cerr << "Store: " << store_at << " -> ";
+        assert(store_at.index >= 0);
+        if (store_at.index >= (int)legal.sites_allowed.size()) {
+            store_at.index = legal.sites_allowed.size() - 1;
+        }
+        store_at = legal.sites_allowed[store_at.index].loop_level;
+        f.schedule().store_level() = store_at;
+        std::cerr << store_at << std::endl;
+    }
+    if (compute_at.is_index) {
+        std::cerr << "Compute: " << compute_at << " -> ";
+        assert(compute_at.index >= 0);
+        if (compute_at.index >= (int)legal.sites_allowed.size()) {
+            compute_at.index = legal.sites_allowed.size() - 1;
+        }
+        compute_at = legal.sites_allowed[compute_at.index].loop_level;
+        f.schedule().compute_level() = compute_at;
+        std::cerr << compute_at << std::endl;
+    }
 
     bool store_at_ok = false, compute_at_ok = false;
     const vector<ComputeLegalSchedules::Site> &sites = legal.sites_allowed;

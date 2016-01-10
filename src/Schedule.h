@@ -18,17 +18,31 @@ namespace Internal {
  * in this loop nest. A LoopLevel identifies such a site. */
 struct LoopLevel {
     std::string func, var;
+    bool is_index;
+    int index;
 
     /** Identify the loop nest corresponding to some dimension of some function */
-    LoopLevel(std::string f, std::string v) : func(f), var(v) {}
+    LoopLevel(std::string f, std::string v) : func(f), var(v), is_index(false) {}
+
+    /** Identify the loop nest corresponding to some offset into the consuming loops */
+    LoopLevel(int idx) {
+        if (idx == 0) {
+            func = "";
+            var = "__root";
+            is_index = false;
+        } else {
+            is_index = true;
+            index = idx;
+        }
+    }
 
     /** Construct an empty LoopLevel, which is interpreted as
      * 'inline'. This is a special LoopLevel value that implies
      * that a function should be inlined away */
-    LoopLevel() {}
+    LoopLevel() : is_index(false) {}
 
     /** Test if a loop level corresponds to inlining the function */
-    bool is_inline() const {return var.empty();}
+    bool is_inline() const {return var.empty() && !is_index;}
 
     /** root is a special LoopLevel value which represents the
      * location outside of all for loops */
@@ -47,6 +61,7 @@ struct LoopLevel {
     }
 
     bool match(const LoopLevel &other) const {
+        assert(!is_index && !other.is_index);
         return (func == other.func &&
                 (var == other.var ||
                  ends_with(var, "." + other.var) ||
@@ -55,6 +70,7 @@ struct LoopLevel {
 
     /** Check if two loop levels are exactly the same. */
     bool operator==(const LoopLevel &other) const {
+        assert(!is_index && !other.is_index);
         return func == other.func && var == other.var;
     }
 
