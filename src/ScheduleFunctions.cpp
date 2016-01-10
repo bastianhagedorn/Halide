@@ -1027,6 +1027,7 @@ void validate_schedule(Function f, Stmt s, bool is_output) {
     ComputeLegalSchedules legal(f);
     s.accept(&legal);
 
+    /*
     std::cerr << "Legal sites for " << f.name() << ":\n";
     auto site = legal.sites_allowed.begin();
     while (site != legal.sites_allowed.end()) {
@@ -1059,6 +1060,7 @@ void validate_schedule(Function f, Stmt s, bool is_output) {
         f.schedule().compute_level() = compute_at;
         std::cerr << compute_at << std::endl;
     }
+    */
 
     bool store_at_ok = false, compute_at_ok = false;
     const vector<ComputeLegalSchedules::Site> &sites = legal.sites_allowed;
@@ -1483,7 +1485,7 @@ map<string, Box> regions_required(Function f, const vector<string> &update_args,
                                   sym_bounds[arg].second));
 
     for (unsigned int arg = 0; arg < num_update_args; arg++) {
-        unsigned int sym_index = num_args - 1 + arg;
+        unsigned int sym_index = num_args + arg;
         bounds.push_back(Interval(sym_bounds[sym_index].first,
                                   sym_bounds[sym_index].second));
     }
@@ -1625,7 +1627,7 @@ map<string, Box> redundant_regions(Function f, int dir,
 
     int num_update_args = update_args.size();
     for (int arg = 0; arg < num_update_args; arg++) {
-        int sym_index = num_pure_args - 1 + arg;
+        int sym_index = num_pure_args + arg;
         if (dir == sym_index) {
             Expr len = sym_bounds[arg].second - sym_bounds[sym_index].first + 1;
             pair<Expr, Expr> bounds = make_pair(sym_bounds[sym_index].first + len,
@@ -1799,6 +1801,7 @@ map<string, Box> sym_to_concrete_bounds(vector< pair<Var, Var> > &sym,
             replacements[sym[i].second.name()] = bounds[i].second;
         }
     }
+
     map<string, Box> concrete_regions;
     for (const auto &r: sym_regions) {
         Box concrete_box;
@@ -1811,19 +1814,22 @@ map<string, Box> sym_to_concrete_bounds(vector< pair<Var, Var> > &sym,
             // Use the bounds if the lower and upper bounds cannot be
             // determined
             if (!lower.as<IntImm>()) {
-                for (auto &b: env[r.first].schedule().bounds())
-                    if (b.var == env[r.first].args()[i])
+                for (auto &b: env[r.first].schedule().bounds()) {
+                    unsigned int num_pure_args = env[r.first].args().size();
+                    if (i < num_pure_args && b.var == env[r.first].args()[i])
                         lower = Expr(b.min.as<IntImm>()->value);
-
+                }
             }
 
             if (!upper.as<IntImm>()) {
-                for (auto &b: env[r.first].schedule().bounds())
-                    if (b.var == env[r.first].args()[i]) {
+                for (auto &b: env[r.first].schedule().bounds()) {
+                    unsigned int num_pure_args = env[r.first].args().size();
+                    if (i < num_pure_args && b.var == env[r.first].args()[i]) {
                         const IntImm * bmin = b.min.as<IntImm>();
                         const IntImm * bextent = b.extent.as<IntImm>();
                         upper = Expr(bmin->value + bextent->value - 1);
                     }
+                }
             }
 
             Interval concrete_bounds = Interval(lower, upper);
@@ -1861,7 +1867,7 @@ struct DependenceAnalysis {
 
     DependenceAnalysis(map<string, Function> &_env,
                        const FuncValueBounds &_func_val_bounds,
-                       set<string> _reductions,
+                       set<string> &_reductions,
                        map<string, vector<string> > &_update_args):
                        env(_env), func_val_bounds(_func_val_bounds),
                        reductions(_reductions), update_args(_update_args) {
@@ -1908,6 +1914,7 @@ struct DependenceAnalysis {
             }
 
             if (reductions.find(kv.first) != reductions.end()) {
+                std::cout << "Processing reduction " << kv.first << std::endl;
                 assert(update_args.find(kv.first) != update_args.end());
                 u_args = update_args[kv.first];
 
@@ -1966,8 +1973,10 @@ struct DependenceAnalysis {
         concrete_overlap_regions(string name, vector<bool> &eval,
                                  map<string, vector< map<string, Box> > > &overlaps,
                                  vector<pair<int, int> > &bounds) {
+        assert(eval.size() == bounds.size());
+        assert(overlaps.find(name) != overlaps.end());
         vector< map<string, Box> > conc_overlaps;
-        for (auto & dir_overlap: overlaps[name]) {
+        for (auto &dir_overlap: overlaps[name]) {
             map<string, Box> conc_reg =
                 sym_to_concrete_bounds(func_sym[name], bounds, eval,
                                        dir_overlap, env);
@@ -2266,9 +2275,8 @@ int get_extent_estimate(Function &f, map<string, Box> &bounds, int dim) {
     int estimate = -1;
     for (auto &b: f.schedule().bounds())
         if (b.var == vars[dim]) {
-            const IntImm * bmin = b.min.as<IntImm>();
             const IntImm * bextent = b.extent.as<IntImm>();
-            estimate = bmin->value + bextent->value - 1;
+            estimate = bextent->value;
         }
 
     if (bounds.find(f.name()) != bounds.end()) {
@@ -2333,6 +2341,29 @@ void disp_func_calls(map<string, map<string, int> > &func_calls) {
     }
 }
 
+map<string, int> get_dim_estimates(string f, map<string, Box> &pipeline_bounds,
+                                   map<string, Function> &env) {
+    map<string, int> dim_estimates;
+    const vector<string> &args = env[f].args();
+    vector<Dim> &dims = env[f].schedule().dims();
+    for (unsigned int i = 0; i < args.size(); i++) {
+        int estimate = get_extent_estimate(env[f], pipeline_bounds, i);
+        dim_estimates[dims[i].var] = estimate;
+    }
+    // Add the estimates for RDom dimensions
+    for (auto &u: env[f].updates()) {
+        if (u.domain.defined()) {
+            Box b;
+            for (auto &rvar: u.domain.domain()) {
+                Interval I = Interval(simplify(rvar.min),
+                                       simplify(rvar.min + rvar.extent - 1));
+                dim_estimates[rvar.var] = get_extent(I);
+            }
+        }
+    }
+    return dim_estimates;
+}
+
 struct Partitioner {
 
     struct Option {
@@ -2394,7 +2425,8 @@ struct Partitioner {
     map<string, GroupSched> group_sched;
     map<string, set<string> > children;
 
-    map<string, vector<int> > func_dim_estimates;
+    map<string, vector<int> > func_pure_dim_estimates;
+    map<string, map<string, int> > func_dim_estimates;
     map<string, long long > func_op;
     map<string, long long > func_size;
     map<string, map<string, int> > func_calls;
@@ -2511,8 +2543,9 @@ struct Partitioner {
             }
             func_op[f.first] = work;
             func_size[f.first] = size;
-            func_dim_estimates[f.first] = dim_estimates;
-
+            func_pure_dim_estimates[f.first] = dim_estimates;
+            func_dim_estimates[f.first] =
+                get_dim_estimates(f.first, pipeline_bounds, analy.env);
         }
 
         // Initialize machine params
@@ -2794,29 +2827,6 @@ void Partitioner::group(Partitioner::Level level) {
     }
 }
 
-map<string, int> get_dim_estimates(string f, map<string, Box> &pipeline_bounds,
-                                   map<string, Function> &env) {
-    map<string, int> dim_estimates;
-    const vector<string> &args = env[f].args();
-    vector<Dim> &dims = env[f].schedule().dims();
-    for (unsigned int i = 0; i < args.size(); i++) {
-        int estimate = get_extent_estimate(env[f], pipeline_bounds, i);
-        dim_estimates[dims[i].var] = estimate;
-    }
-    // Add the estimates for RDom dimensions
-    for (auto &u: env[f].updates()) {
-        if (u.domain.defined()) {
-            Box b;
-            for (auto &rvar: u.domain.domain()) {
-                Interval I = Interval(simplify(rvar.min),
-                                       simplify(rvar.min + rvar.extent - 1));
-                dim_estimates[rvar.var] = get_extent(I);
-            }
-        }
-    }
-    return dim_estimates;
-}
-
 void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
 
     std::cout << std::endl;
@@ -2846,7 +2856,7 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
     const vector<string> &args = analy.env[opt.cons_group].args();
     assert(opt.tile_sizes.size() == args.size());
 
-    vector<int> &dim_estimates_cons = func_dim_estimates[opt.cons_group];
+    vector<int> &dim_estimates_cons = func_pure_dim_estimates[opt.cons_group];
 
     long long out_size = 1;
     for (unsigned int i = 0; i < args.size(); i++) {
@@ -3216,7 +3226,7 @@ Partitioner::Option Partitioner::choose_candidate(
         const vector<string> &args = output.args();
 
         bool invalid = false;
-        vector<int> &dim_estimates_prod = func_dim_estimates[p.first];
+        vector<int> &dim_estimates_prod = func_pure_dim_estimates[p.first];
 
         const vector<string> &args_prod = analy.env[p.first].args();
         for (unsigned int i = 0; i < args_prod.size(); i++) {
@@ -3310,7 +3320,7 @@ pair<float, float>
     vector<pair<int, int> > bounds;
     vector<bool> eval;
 
-    vector<int> &dim_estimates = func_dim_estimates[group];
+    vector<int> &dim_estimates = func_pure_dim_estimates[group];
     Box cons_box;
 
     long long tile_size = 1;
@@ -3435,8 +3445,14 @@ void Partitioner::reorder_for_input_locality() {
             }
         }
 
-        if (tiled_grouping)
+        for (auto &red: analy.reductions)
+            std::cout << "Reduction " <<  red << std::endl;
+
+        if (tiled_grouping || (analy.reductions.find(g.first) ==
+                               analy.reductions.end())) {
+            std::cout << "Skipped " << g.first << std::endl;
             continue;
+        }
 
         vector<string> group_inputs;
         set<string> group_mem;
@@ -3471,7 +3487,7 @@ void Partitioner::reorder_for_input_locality() {
 
         bool invalid = false;
         for(auto &in: group_inputs) {
-            vector<int> &dim_estimates_prod = func_dim_estimates[in];
+            vector<int> &dim_estimates_prod = func_pure_dim_estimates[in];
 
             const vector<string> &args_prod = analy.env[in].args();
             for (unsigned int i = 0; i < args_prod.size(); i++) {
@@ -3485,30 +3501,49 @@ void Partitioner::reorder_for_input_locality() {
         if (!invalid) {
             // Find the dimensions with zero reuse/redundant work
             vector<float> reuse;
-            for (unsigned int i = 0; i < args.size(); i++)
+            vector<string> &u_args = analy.update_args[g.first];
+            unsigned int num_args = args.size() + u_args.size();
+            for (unsigned int i = 0; i < num_args; i++)
                 reuse.push_back(-1);
-            for (unsigned int i = 0; i < args.size(); i++) {
+            for (unsigned int i = 0; i < num_args; i++) {
 
                 vector<pair<int, int> > bounds;
                 vector<bool> eval;
 
-                vector<int> &dim_estimates = func_dim_estimates[g.first];
+                map<string, int> dim_estimates =
+                    get_dim_estimates(g.first, pipeline_bounds, analy.env);
 
-                for (unsigned int j = 0; j < args.size(); j++) {
+                for (unsigned int j = 0; j < num_args; j++) {
+                    string arg_name = "";
+                    if (j < args.size())
+                        arg_name = args[j];
+                    else
+                        arg_name = u_args[j - args.size()];
                     if (j==i) {
-                        bounds.push_back(make_pair(0, 1));
+                        bounds.push_back(make_pair(0, 0));
+                        std::cout << "Varying " <<  arg_name << std::endl;
                     }
                     else {
-                        bounds.push_back(make_pair(0, dim_estimates[i] - 1));
+                        assert(dim_estimates.find(arg_name) !=
+                                                        dim_estimates.end());
+                        std::cout << arg_name << ":"  << dim_estimates[arg_name]  << std::endl;
+                        bounds.push_back(make_pair(0, dim_estimates[arg_name] - 1));
                     }
                     eval.push_back(true);
                 }
 
                 vector< map<string, Box> > conc_overlaps =
                     analy.concrete_overlap_regions(g.first, eval,
-                                                   analy.func_overlaps, bounds);
+                                                   analy.func_partial_overlaps,
+                                                   bounds);
 
+                map<string, Box> conc_reg =
+                    analy.concrete_dep_regions(g.first, eval,
+                                               analy.func_partial_dep_regions,
+                                               bounds);
                 float input_overlap = 0;
+                disp_regions(conc_overlaps[i]);
+                disp_regions(analy.func_partial_dep_regions[g.first]);
                 for (auto &in: group_inputs) {
                     assert(conc_overlaps[i].find(in) != conc_overlaps[i].end());
                     float area = box_area(conc_overlaps[i][in]);
@@ -3519,8 +3554,13 @@ void Partitioner::reorder_for_input_locality() {
             }
 
             std::cout << "Analyzing dims for locality" << std::endl;
-            for (unsigned int i = 0; i < args.size(); i++) {
-                std::cout << args[i] << " Reuse " << reuse[i]
+            for (unsigned int i = 0; i < num_args; i++) {
+                string arg_name = "";
+                if (i < args.size())
+                    arg_name = args[i];
+                else
+                    arg_name = u_args[i - args.size()];
+                std::cout << arg_name << " Reuse " << reuse[i]
                           << std::endl;
             }
 
@@ -3955,13 +3995,14 @@ void schedule_advisor(const vector<Function> &outputs,
 
                 // Check for a pure variable
                 const Variable *v = arg.as<Variable>();
-                if (!v && v->name == kv.second.args()[arg_pos]) {
+                if (!v || v->name != kv.second.args()[arg_pos]) {
                     reduction = false;
                 }
                 arg_pos++;
             }
 
             if (reduction) {
+                std::cout << "Found reduction " << kv.first << std::endl;
                 for (auto &rvar: u.domain.domain()) {
                     red_args.push_back(rvar.var);
                 }
@@ -3985,6 +4026,7 @@ void schedule_advisor(const vector<Function> &outputs,
             }
         }
     }
+    // std::cout << "Num reductions:" << reductions.size() << std::endl;
     // Make obvious inline decisions early
     map<string, vector<string> > inlines;
 
@@ -4107,14 +4149,14 @@ void schedule_advisor(const vector<Function> &outputs,
         part.disp_costs();
         std::cout << std::endl;
 
-        part.initialize_groups_fast_mem();
-        part.group(Partitioner::FAST_MEM);
-        std::cout << std::endl << "Groups Fast Mem" << std::endl;
+        //part.initialize_groups_fast_mem();
+        //part.group(Partitioner::FAST_MEM);
+        //std::cout << std::endl << "Groups Fast Mem" << std::endl;
         part.disp_grouping();
         std::cout << std::endl;
         //part.disp_grouping();
 
-        //part.reorder_for_input_locality();
+        part.reorder_for_input_locality();
 
         int vec_len = part.arch_params.vec_len;
 
