@@ -1431,10 +1431,18 @@ map<string, Box> regions_required(Function f, const vector<string> &update_args,
                                   const FuncValueBounds &func_val_bounds){
     // Define the bounds for each variable of the function
     std::vector<Interval> bounds;
-    int num_args = f.args().size();
+    unsigned int num_args = f.args().size();
+    unsigned int num_update_args = update_args.size();
 
-    for (int arg = 0; arg < num_args; arg++)
-        bounds.push_back(Interval(sym_bounds[arg].first, sym_bounds[arg].second));
+    for (unsigned int arg = 0; arg < num_args; arg++)
+        bounds.push_back(Interval(sym_bounds[arg].first,
+                                  sym_bounds[arg].second));
+
+    for (unsigned int arg = 0; arg < num_update_args; arg++) {
+        unsigned int sym_index = num_args - 1 + arg;
+        bounds.push_back(Interval(sym_bounds[sym_index].first,
+                                  sym_bounds[sym_index].second));
+    }
 
     map<string, Box> regions;
     // Add the function and its region to the queue
@@ -1486,19 +1494,38 @@ map<string, Box> regions_required(Function f, const vector<string> &update_args,
                                                       simplify(curr_bounds[interval_index].max));
                     // Check for a pure variable
                     const Variable *v = arg.as<Variable>();
-                    if (!v)
+                    if (!v) {
                         // Need to evaluate boxes required on args that are not pure
                         // for potenial calls to other functions
                         exprs.push_back(arg);
-                    else
+                    } else {
                         curr_scope.push(v->name, simple_bounds);
+                    }
                     interval_index++;
                 }
 
                 if (update.domain.defined()) {
-                    for (auto &rvar: update.domain.domain()) {
-                        Interval simple_bounds = Interval(rvar.min, rvar.min + rvar.extent - 1);
-                        curr_scope.push(rvar.var, simple_bounds);
+                    // Partial analysis is only done for the output function f
+                    if (num_update_args > 0 && curr_f.name() == f.name()) {
+                        //std::cout << curr_f.name() << std::endl;
+                        assert(update.domain.domain().size() == num_update_args);
+                        //std::cout << curr_bounds.size() << " " << num_args << " "
+                        //          << num_update_args << std::endl;
+                        assert(curr_bounds.size() ==
+                                    num_update_args + num_args);
+                        for (auto &rvar: update.domain.domain()) {
+                            Interval simple_bounds =
+                                Interval(simplify(curr_bounds[interval_index].min),
+                                         simplify(curr_bounds[interval_index].max));
+                            curr_scope.push(rvar.var, simple_bounds);
+                            interval_index++;
+                        }
+                    } else {
+                        for (auto &rvar: update.domain.domain()) {
+                            Interval simple_bounds = Interval(rvar.min,
+                                                              rvar.min + rvar.extent - 1);
+                            curr_scope.push(rvar.var, simple_bounds);
+                        }
                     }
                 }
 
@@ -1781,7 +1808,9 @@ struct DependenceAnalysis {
     map<string, Function> &env;
     const FuncValueBounds &func_val_bounds;
     map<string, map<string, Box> > func_dep_regions;
+    map<string, map<string, Box> > func_partial_dep_regions;
     map<string, vector< map<string, Box> > > func_overlaps;
+    map<string, vector< map<string, Box> > > func_partial_overlaps;
     map<string, vector< pair<Var, Var> > > func_sym;
     set<string> &reductions;
     map<string, vector<string> > &update_args;
@@ -1813,9 +1842,11 @@ struct DependenceAnalysis {
             assert(func_dep_regions.find(kv.first) == func_dep_regions.end());
             func_dep_regions[kv.first] = regions;
 
+            /*
             std::cout << "Function regions required for " << kv.first << ":" << std::endl;
             disp_regions(regions);
             std::cout << std::endl;
+            */
 
             assert(func_overlaps.find(kv.first) == func_overlaps.end());
             for (unsigned int arg = 0; arg < args.size(); arg++) {
@@ -1824,13 +1855,59 @@ struct DependenceAnalysis {
                                                               func_val_bounds);
                 func_overlaps[kv.first].push_back(overlaps);
 
+                /*
                 std::cout << "Function region overlaps for var " <<
                           args[arg]  << " " << kv.first << ":" << std::endl;
                 disp_regions(overlaps);
                 std::cout << std::endl;
+                */
+            }
+
+            if (reductions.find(kv.first) != reductions.end()) {
+                assert(update_args.find(kv.first) != update_args.end());
+                u_args = update_args[kv.first];
+
+                // Append the required symbolic bounds
+                for (unsigned int arg = 0; arg < u_args.size(); arg++) {
+                    Var lower = Var(u_args[arg] + "_l");
+                    Var upper = Var(u_args[arg] + "_u");
+                    pair<Var, Var> sym = make_pair(lower, upper);
+                    pair<Expr, Expr> bounds = make_pair(Expr(lower), Expr(upper));
+                    func_sym[kv.first].push_back(sym);
+                    sym_bounds.push_back(bounds);
+                }
+
+                map<string, Box> regions = regions_required(kv.second, u_args, sym_bounds,
+                                                            env, func_val_bounds);
+                assert(func_partial_dep_regions.find(kv.first) ==
+                       func_partial_dep_regions.end());
+                func_partial_dep_regions[kv.first] = regions;
+
+                /*
+                   std::cout << "Function regions required for " << kv.first << ":" << std::endl;
+                   disp_regions(regions);
+                   std::cout << std::endl;
+                 */
+
+                assert(func_partial_overlaps.find(kv.first) ==
+                       func_partial_overlaps.end());
+
+                unsigned int num_args = u_args.size() + args.size();
+                for (unsigned int arg = 0; arg < num_args; arg++) {
+                    map<string, Box> overlaps = redundant_regions(kv.second, arg,
+                                                                  u_args, sym_bounds, env,
+                                                                  func_val_bounds);
+                    func_partial_overlaps[kv.first].push_back(overlaps);
+
+                    /*
+                       std::cout << "Function region overlaps for var " <<
+                       args[arg]  << " " << kv.first << ":" << std::endl;
+                       disp_regions(overlaps);
+                       std::cout << std::endl;
+                     */
+                }
             }
         }
-        assert(0);
     }
 
     map<string, Box> concrete_dep_regions(string name, vector<bool> &eval,
