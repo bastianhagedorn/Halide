@@ -3265,7 +3265,7 @@ pair<float, float>
     }
 
     if (tile_size > 1)
-        std::cout << "Reuse:" << reuse << std::endl << std::endl;
+        std::cout << "Reuse:" << realized_reuse << std::endl << std::endl;
 
     return make_pair(realized_reuse, input_inter);
 }
@@ -3342,14 +3342,12 @@ void Partitioner::reorder_for_input_locality() {
 
                 vector<int> &dim_estimates = func_dim_estimates[g.first];
 
-                //long long tile_size = 1;
                 for (unsigned int j = 0; j < args.size(); j++) {
                     if (j==i) {
                         bounds.push_back(make_pair(0, 1));
                     }
                     else {
                         bounds.push_back(make_pair(0, dim_estimates[i] - 1));
-                        //tile_size = tile_size * (dim_estimates[i]);
                     }
                     eval.push_back(true);
                 }
@@ -3362,14 +3360,14 @@ void Partitioner::reorder_for_input_locality() {
                     assert(conc_overlaps[i].find(in) != conc_overlaps[i].end());
                     float area = box_area(conc_overlaps[i][in]);
                     assert(area >= 0);
-                    input_overlap += area;
+                    input_overlap += area * get_func_out_size(analy.env[in]);
                 }
                 reuse[i] = input_overlap;
             }
 
             std::cout << "Analyzing dims for locality" << std::endl;
             for (unsigned int i = 0; i < args.size(); i++) {
-                std::cout << args[i] << " Reuse/Redundant Work " << reuse[i]
+                std::cout << args[i] << " Reuse " << reuse[i]
                           << std::endl;
             }
 
@@ -3380,11 +3378,25 @@ void Partitioner::reorder_for_input_locality() {
                 for(auto &s: size_variants) {
                     vector<int> tile_sizes;
 
-                    for (int j = 0; j < i; j++)
-                        tile_sizes.push_back(-1);
+                    for (int j = 0; j < i; j++) {
+                        if (reuse[j] > arch_params.fast_mem_size || j == 0)
+                            tile_sizes.push_back(-1);
+                        else
+                            tile_sizes.push_back(1);
+                    }
 
-                    for (unsigned int j = i; j < args.size(); j++)
-                        tile_sizes.push_back(s);
+                    for (unsigned int j = i; j < args.size(); j++) {
+                        int curr_size;
+                        if (reuse[j] > arch_params.fast_mem_size || j == 0)
+                            curr_size = s;
+                        else
+                            curr_size = 1;
+
+                        if (j == 0)
+                            tile_sizes.push_back(std::max(curr_size, 64));
+                        else
+                            tile_sizes.push_back(curr_size);
+                    }
 
                     pair<float, float>  eval;
                     eval = evaluate_reuse(g.first, group_inputs, tile_sizes,
@@ -4032,17 +4044,29 @@ void schedule_advisor(const vector<Function> &outputs,
                     vectorize_update(g_out, i, out_up_estimates, vec_len,
                                      par_vars);
 
+                    int curr_par = 1;
                     for (int i = (int)dims.size() - 2; i > 0 ; i--) {
                         bool dim_par = can_parallelize_rvar(dims[i].var,
                                                             g_out.name(), u);
                         dim_par = dim_par ||
                                   (par_vars.find(dims[i].var) != par_vars.end());
+                        if (dim_par) {
+                            curr_par = curr_par * out_up_estimates[dims[i].var];
+                            parallelize_dim(s, i);
+                            if (curr_par > parallelism)
+                                break;
+                        } else {
+                            break;
+                        }
+
+                        /*
                         if (dim_par && out_up_estimates[dims[i].var] > parallelism) {
                             move_dim_to_outermost(s, i);
                             int outer_dim = dims.size() - 2;
                             parallelize_dim(s, outer_dim);
                             break;
                         }
+                        */
                     }
                 }
             }
