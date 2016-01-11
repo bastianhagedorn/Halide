@@ -5,8 +5,8 @@
 int main(int argc, char **argv) {
 
     int N = 4; // number of samples/batch_size
-    int d_w = 128; // data width
-    int d_h = 128; // data height
+    int d_w = 129; // data width
+    int d_h = 129; // data height
     int ch = 64; // number of channels
 
     Image<float> data(d_w, d_h, ch, N);
@@ -53,7 +53,10 @@ int main(int argc, char **argv) {
                                       y + r.y - pad,
                                       r.z, n);
 
-    f_conv.bound(x, 0, conv->out_dim_size(0)).
+    Func f_ReLU("ReLU");
+    f_ReLU(x, y, z, n) = max(0, f_conv(x, y, z, n));
+
+    f_ReLU.bound(x, 0, conv->out_dim_size(0)).
            bound(y, 0, conv->out_dim_size(1)).
            bound(z, 0, conv->out_dim_size(2)).
            bound(n, 0, conv->out_dim_size(3));
@@ -83,17 +86,17 @@ int main(int argc, char **argv) {
        //f_conv.update().fuse(z, n, par).parallel(par);
        //f_conv.update().fuse(y, par, par).parallel(par);
        //f_conv.update().parallel(z);
-       f_conv.print_loop_nest();
+       //f_conv.print_loop_nest();
     }
 
     Target target = get_target_from_environment();
     if (sched == -1)
-        f_conv.compile_jit(target, true);
+        f_ReLU.compile_jit(target, true);
     else
-        f_conv.compile_jit(target, false);
+        f_ReLU.compile_jit(target, false);
 
     std::vector<Func> simple_outs;
     simple_outs.push_back(f_conv);
-    double best = benchmark(3, 1, [&]() { f_conv.realize(conv_out); });
+    double best = benchmark(3, 1, [&]() { f_ReLU.realize(conv_out); });
     std::cerr << best * 1e3 << std::endl;
 }
