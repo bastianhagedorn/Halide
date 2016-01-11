@@ -83,7 +83,7 @@ int main(int argc, char **argv) {
        //f_conv.update().fuse(z, n, par).parallel(par);
        //f_conv.update().fuse(y, par, par).parallel(par);
        //f_conv.update().parallel(z);
-       //f_conv.print_loop_nest();
+       f_conv.print_loop_nest();
     }
 
     Target target = get_target_from_environment();

@@ -38,7 +38,8 @@ int main(int argc, char **argv) {
 
     // Compute the weights from the patch differences.
     Func w("w");
-    RDom channels(input.min(2), input.extent(2));
+    //RDom channels(input.min(2), input.extent(2));
+    RDom channels(0, 3);
     w(x, y, dx, dy) = fast_exp(-sum(blur_d(x, y, dx, dy, channels))*inv_sigma_sq);
 
     // Define a reduction domain for the search area.
@@ -59,14 +60,16 @@ int main(int argc, char **argv) {
     // Require 3 channels for input and output.
     input.set_min(2, 0).set_extent(2, 3);
     non_local_means.output_buffer().set_min(2, 0).set_extent(2, 3);
+    non_local_means.bound(x, 0, 192).bound(y, 0, 320).bound(c, 0, 3);
 
+    /*
     d.compute_root();
     blur_d_y.compute_root();
     blur_d.compute_root();
     non_local_means.compute_root();
+    */
 
-    non_local_means.compile_to_file("non_local_means", {sigma, input},
-                                    target);
+    non_local_means.compile_to_file("non_local_means", {sigma, input}, target, true);
 
     return 0;
 }

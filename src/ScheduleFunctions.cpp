@@ -1474,7 +1474,8 @@ void simplify_box(Box& b) {
 map<string, Box> regions_required(Function f, const vector<string> &update_args,
                                   const vector< pair<Expr, Expr> > &sym_bounds,
                                   const map<string, Function> &env,
-                                  const FuncValueBounds &func_val_bounds){
+                                  const FuncValueBounds &func_val_bounds,
+                                  bool include_self = false){
     // Define the bounds for each variable of the function
     std::vector<Interval> bounds;
     unsigned int num_args = f.args().size();
@@ -1589,6 +1590,11 @@ map<string, Box> regions_required(Function f, const vector<string> &update_args,
                             if (env.find(reg.first) != env.end())
                                 f_queue.push_back(make_pair(env.at(reg.first),
                                                             reg.second.bounds));
+                        } else if (include_self) {
+                            if (regions.find(reg.first) == regions.end())
+                                regions[reg.first] = reg.second;
+                            else
+                                merge_boxes(regions[reg.first], reg.second);
                         }
                     }
                 }
@@ -1611,7 +1617,7 @@ map<string, Box> redundant_regions(Function f, int dir,
                                    const FuncValueBounds &func_val_bounds){
 
     map<string, Box> regions = regions_required(f, update_args, sym_bounds, env,
-                                                func_val_bounds);
+                                                func_val_bounds, true);
     vector<pair<Expr, Expr>> shifted_bounds;
     int num_pure_args = f.args().size();
     for (int arg = 0; arg < num_pure_args; arg++) {
@@ -1639,7 +1645,8 @@ map<string, Box> redundant_regions(Function f, int dir,
     }
 
     map<string, Box> regions_shifted = regions_required(f, update_args, shifted_bounds,
-                                                        env, func_val_bounds);
+                                                        env, func_val_bounds,
+                                                        true);
 
     map<string, Box> overalps;
     for (auto& reg: regions) {
@@ -3316,48 +3323,69 @@ pair<float, float>
     Partitioner::evaluate_reuse(string group, vector<string> &group_inputs,
                                 vector<int> &tile_sizes, bool check_cache) {
 
-    const vector<string> &args = analy.env[group].args();
+    const vector<string> &pure_args = analy.env[group].args();
+    unsigned int num_pure_args = pure_args.size();
+
     vector<pair<int, int> > bounds;
     vector<bool> eval;
 
-    vector<int> &dim_estimates = func_pure_dim_estimates[group];
+    map<string, int> &dim_estimates = func_dim_estimates[group];
     Box cons_box;
 
     long long tile_size = 1;
-    for (unsigned int i = 0; i < args.size(); i++) {
+    for (unsigned int i = 0; i < tile_sizes.size(); i++) {
+        string arg_name = "";
+        if (i < num_pure_args) {
+            arg_name = pure_args[i];
+        } else {
+            vector<string> &u_args = analy.update_args[group];
+            int u_index = (int)i - num_pure_args;
+            arg_name = u_args[u_index];
+        }
+        assert(dim_estimates.find(arg_name) != dim_estimates.end());
         if (tile_sizes[i] != -1) {
             // Check if the bounds allow for tiling with the given tile size
-            if (dim_estimates[i] >= tile_sizes[i]) {
+            if (dim_estimates[arg_name] >= tile_sizes[i]) {
                 bounds.push_back(make_pair(0, tile_sizes[i] - 1));
-                cons_box.push_back(Interval(0, tile_sizes[i] -1));
+                if (i < num_pure_args)
+                    cons_box.push_back(Interval(0, tile_sizes[i] -1));
                 tile_size = tile_size * (tile_sizes[i]);
-            }
-            else {
+            } else {
                 // If the dimension is too small do not tile it and set the
                 // extent of the bounds to that of the dimension estimate
                 tile_sizes[i] = -1;
-                bounds.push_back(make_pair(0, dim_estimates[i] - 1));
-                cons_box.push_back(Interval(0, dim_estimates[i] - 1));
-                tile_size = tile_size * (dim_estimates[i]);
+                bounds.push_back(make_pair(0, dim_estimates[arg_name] - 1));
+                if (i < num_pure_args)
+                    cons_box.push_back(Interval(0, dim_estimates[arg_name] - 1));
+                tile_size = tile_size * (dim_estimates[arg_name]);
             }
-        }
-        else {
-            bounds.push_back(make_pair(0, dim_estimates[i] - 1));
-            cons_box.push_back(Interval(0, dim_estimates[i] - 1));
-            tile_size = tile_size * (dim_estimates[i]);
+        } else {
+            bounds.push_back(make_pair(0, dim_estimates[arg_name] - 1));
+            if (i < num_pure_args)
+                cons_box.push_back(Interval(0, dim_estimates[arg_name] - 1));
+            tile_size = tile_size * (dim_estimates[arg_name]);
         }
         eval.push_back(true);
     }
 
     // Count the number of tiles
     long long estimate_tiles = 1;
-    for (unsigned int i = 0; i < args.size(); i++) {
+    for (unsigned int i = 0; i < tile_sizes.size(); i++) {
+        string arg_name = "";
+        if (i < num_pure_args) {
+            arg_name = pure_args[i];
+        } else {
+            vector<string> &u_args = analy.update_args[group];
+            int u_index = (int)i - num_pure_args;
+            arg_name = u_args[u_index];
+        }
         if (tile_sizes[i] != -1)
-            estimate_tiles *= std::ceil((float)dim_estimates[i]/tile_sizes[i]);
+            estimate_tiles *= std::ceil((float)dim_estimates[arg_name]/tile_sizes[i]);
     }
 
     map<string, Box> conc_reg =
-        analy.concrete_dep_regions(group, eval, analy.func_dep_regions, bounds);
+        analy.concrete_dep_regions(group, eval,
+                                   analy.func_partial_dep_regions, bounds);
 
     map<string, Box> group_mem_reg;
     map<string, Box> input_mem_reg;
@@ -3404,7 +3432,7 @@ pair<float, float>
         std::cout << "Input intermediate size:" << input_inter  << std::endl;
         vector<int> unit_sizes;
 
-        for (unsigned int i = 0; i < args.size(); i++)
+        for (unsigned int i = 0; i < tile_sizes.size(); i++)
             unit_sizes.push_back(1);
         pair<float, float> unit = evaluate_reuse(group, group_inputs,
                                                  unit_sizes, true);
@@ -3550,6 +3578,12 @@ void Partitioner::reorder_for_input_locality() {
                     assert(area >= 0);
                     input_overlap += area * get_func_out_size(analy.env[in]);
                 }
+                // Account for reuse of the reduction output buffer
+                if (conc_overlaps[i].find(g.first) != conc_overlaps[i].end()) {
+                    float area = box_area(conc_overlaps[i][g.first]);
+                    assert(area >= 0);
+                    input_overlap += area * get_func_out_size(analy.env[g.first]);
+                }
                 reuse[i] = input_overlap;
             }
 
@@ -3567,7 +3601,7 @@ void Partitioner::reorder_for_input_locality() {
             // From the outer to the inner most argument
             float best_reuse = 0;
             vector<int> best_tiling;
-            for (int i = (int)args.size() - 1; i >= 0; i--) {
+            for (int i = (int)num_args - 1; i >= 0; i--) {
                 for(auto &s: size_variants) {
                     vector<int> tile_sizes;
 
@@ -3578,7 +3612,7 @@ void Partitioner::reorder_for_input_locality() {
                             tile_sizes.push_back(1);
                     }
 
-                    for (unsigned int j = i; j < args.size(); j++) {
+                    for (unsigned int j = i; j < num_args; j++) {
                         int curr_size;
                         if (reuse[j] > arch_params.fast_mem_size || j == 0)
                             curr_size = s;
@@ -3586,7 +3620,7 @@ void Partitioner::reorder_for_input_locality() {
                             curr_size = 1;
 
                         if (j == 0)
-                            tile_sizes.push_back(std::max(curr_size, 64));
+                            tile_sizes.push_back(std::max(curr_size, 128));
                         else
                             tile_sizes.push_back(curr_size);
                     }
@@ -3603,6 +3637,11 @@ void Partitioner::reorder_for_input_locality() {
 
             if (best_reuse > 0) {
                 group_sched[g.first].tile_sizes = best_tiling;
+            } else {
+               vector<int> tile_sizes;
+               for (unsigned int i = 0; i < num_args; i++)
+                   tile_sizes.push_back(-1);
+                group_sched[g.first].tile_sizes = tile_sizes;
             }
         }
     }
@@ -4167,16 +4206,16 @@ void schedule_advisor(const vector<Function> &outputs,
 
             assert(inlines.find(g_out.name()) == inlines.end());
             // The dimension names that will be tiled
-            vector<string> vars;
+            vector<string> pure_vars;
             vector<Dim> &dims = g_out.schedule().dims();
 
             Partitioner::GroupSched sched = part.group_sched[g.first];
 
-            map<string, int> tile_sizes;
+            map<string, int> tile_sizes_pure;
             for(int i = 0; i < (int)dims.size() - 1; i++) {
                 if (sched.tile_sizes[i] != -1) {
-                    vars.push_back(dims[i].var);
-                    tile_sizes[dims[i].var] = sched.tile_sizes[i];
+                    pure_vars.push_back(dims[i].var);
+                    tile_sizes_pure[dims[i].var] = sched.tile_sizes[i];
                 }
             }
 
@@ -4187,19 +4226,20 @@ void schedule_advisor(const vector<Function> &outputs,
 
             // Realizing the tiling and updating the dimension estimates
             int num_tile_dims = 0;
-            for(auto &v: vars) {
+            for(auto &v: pure_vars) {
                 int index = -1;
-                for (int i = 0; i < (int)dims.size() - 1; i++)
+                for (int i = 0; i < (int)dims.size() - 1; i++) {
                     if (dims[i].var == v) {
                         index = i;
                         break;
                     }
+                }
                 assert(index!=-1);
-                if (tile_sizes[v] > 1) {
-                    split_dim(g_out.schedule(), index, tile_sizes[v],
+                if (tile_sizes_pure[v] > 1) {
+                    split_dim(g_out.schedule(), index, tile_sizes_pure[v],
                               out_estimates, "tile", false);
                     move_dim_to_outermost(g_out.schedule(), index + 1);
-                } else if (tile_sizes[v] == 1) {
+                } else if (tile_sizes_pure[v] == 1) {
                     move_dim_to_outermost(g_out.schedule(), index);
                 }
                 num_tile_dims++;
@@ -4234,19 +4274,47 @@ void schedule_advisor(const vector<Function> &outputs,
                     Schedule &s = g_out.update_schedule(i);
                     vector<Dim> &dims = s.dims();
 
-                    // Use the same tiling as the pure dimensions
                     const UpdateDefinition &u = g_out.updates()[i];
+
+                    // Tiling now includes reduction dimensions
+                    map<string, int> tile_sizes_update;
+                    vector<string> update_vars;
+
+                    unsigned int num_pure_dims = g_out.args().size();
+                    unsigned int num_red_dims = (dims.size() - 1) - num_pure_dims;
+                    for(unsigned int i = 0; i < num_red_dims; i++) {
+                        if (sched.tile_sizes[num_pure_dims + i] != -1) {
+                            update_vars.push_back(dims[i].var);
+                            tile_sizes_update[dims[i].var] =
+                                            sched.tile_sizes[num_pure_dims + i];
+                            //std::cout << dims[i].var << " "
+                            //          << sched.tile_sizes[num_pure_dims + i]
+                            //          << std::endl;
+                        }
+                    }
+
+                    for(unsigned int i = 0; i < num_pure_dims; i++) {
+                        if (sched.tile_sizes[i] != -1) {
+                            update_vars.push_back(dims[num_red_dims + i].var);
+                            tile_sizes_update[dims[num_red_dims + i].var]
+                                                        = sched.tile_sizes[i];
+                            //std::cout << dims[num_red_dims + i].var << " "
+                            //          << sched.tile_sizes[i] << std::endl;
+                        }
+                    }
+
                     set<string> par_vars;
-                    for(auto &v: vars) {
+                    for(auto &v: update_vars) {
                         int index = -1;
-                        for (int i = 0; i < (int)dims.size() - 1; i++)
+                        for (int i = 0; i < (int)dims.size() - 1; i++) {
                             if (dims[i].var == v) {
                                 index = i;
                                 break;
                             }
+                        }
                         assert(index!=-1);
-                        if (tile_sizes[v] > 1) {
-                            split_dim(s, index, tile_sizes[v],
+                        if (tile_sizes_update[v] > 1) {
+                            split_dim(s, index, tile_sizes_update[v],
                                       out_up_estimates, "tile", false);
                             move_dim_to_outermost(s, index + 1);
                             if (can_parallelize_rvar(v, g_out.name(), u)) {
@@ -4254,16 +4322,19 @@ void schedule_advisor(const vector<Function> &outputs,
                                 par_vars.insert(s.dims()[o_dim].var);
                                 par_vars.insert(s.dims()[index].var);
                             }
-                        } else if (tile_sizes[v] == 1) {
+                        } else if (tile_sizes_update[v] == 1) {
                             move_dim_to_outermost(s, index);
                         }
                     }
 
                     // Vectorization of update definitions
-                    vectorize_update(g_out, i, out_up_estimates, vec_len,
-                                     par_vars);
+                    if(auto_vec) {
+                        vectorize_update(g_out, i, out_up_estimates, vec_len,
+                                         par_vars);
+                    }
 
                     int curr_par = 1;
+                    // Exploiting nested parallelism
                     for (int i = (int)dims.size() - 2; i > 0 ; i--) {
                         bool dim_par = can_parallelize_rvar(dims[i].var,
                                                             g_out.name(), u);

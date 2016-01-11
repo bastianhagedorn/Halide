@@ -5,7 +5,7 @@ CXXFLAGS += -g -Wall
 .PHONY: clean
 
 lens_blur: lens_blur.cpp
-	$(CXX) $(CXXFLAGS) lens_blur.cpp $(LIB_HALIDE) -o lens_blur -lpthread -ldl -lz \
+	$(CXX) $(CXXFLAGS) lens_blur.cpp $(LIB_HALIDE) -o lens_blur -lpthread -ldl -lz -ltinfo \
 	$(PNGFLAGS) $(LDFLAGS) $(LLVM_SHARED_LIBS)
 
 out.png: lens_blur

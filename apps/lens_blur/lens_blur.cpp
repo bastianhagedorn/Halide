@@ -175,33 +175,39 @@ int main(int argc, char **argv) {
     Func final;
     final(x, y, c) = output(x, y, c) / output(x, y, 3);
 
-    // Blindly compute-root everything
-    left.compute_root();
-    right.compute_root();
-    cost.compute_root();
-    cost_confidence.compute_root();
-    for (int i = 0; i < 8; i++) {
-        cost_pyramid_push[i].compute_root();
-        cost_pyramid_pull[i].compute_root();
-    }
-    filtered_cost.compute_root();
-    depth.compute_root();
-    bokeh_radius.compute_root();
-    bokeh_radius_squared.compute_root();
-    output.compute_root();
-    //sample_locations.compute_root(); If you compute-root this, you can't use lots of aperture samples. Just leave it inline.
-    final.compute_root();
-    input_with_alpha.compute_root();
-    worst_case_bokeh_radius_y.compute_root();
-    worst_case_bokeh_radius.compute_root();
-
-    // Run it
     Image<uint8_t> in_l = load_image(argv[1]);
     Image<uint8_t> in_r = load_image(argv[2]);
+    final.bound(x, 0, in_l.width()).bound(y, 0, in_l.height()).bound(c, 0, 3);
+    // Blindly compute-root everything
+    /*
+    left.compute_root();//.vectorize(x, 8);
+    right.compute_root();//.vectorize(x, 8);
+    cost.compute_root().vectorize(x, 8).parallel(y);
+    cost_confidence.compute_root().vectorize(x, 8).parallel(y);
+    for (int i = 0; i < 8; i++) {
+        cost_pyramid_push[i].compute_root().vectorize(x, 8).parallel(y);
+        cost_pyramid_pull[i].compute_root().vectorize(x, 8).parallel(y);
+    }
+    filtered_cost.compute_root().vectorize(x, 8).parallel(y);
+    depth.compute_root().vectorize(x, 8).parallel(y);
+    bokeh_radius.compute_root().vectorize(x, 8).parallel(y);
+    bokeh_radius_squared.compute_root().vectorize(x, 8).parallel(y);
+    output.compute_root().vectorize(x, 8).parallel(y);
+    //sample_locations.compute_root(); If you compute-root this, you can't use lots of aperture samples. Just leave it inline.
+    final.compute_root().vectorize(x, 8).parallel(y);
+    input_with_alpha.compute_root().vectorize(x, 8).parallel(y);
+    worst_case_bokeh_radius_y.compute_root().vectorize(x, 8).parallel(y);
+    worst_case_bokeh_radius.compute_root().vectorize(x, 8).parallel(y);
+    */
+
+    // Run it
+
     left_im.set(in_l);
     right_im.set(in_r);
     Image<float> out(in_l.width(), in_l.height(), 3);
-    final.realize(out);
+    Target target = get_target_from_environment();
+    final.compile_jit(target, true);
+    //final.compile_jit(target);
 
     std::cout << "Running... " << std::endl;
     double best = benchmark(1, 1, [&]() { final.realize(out); });
