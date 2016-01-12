@@ -2861,11 +2861,13 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
     vector<string> prod_funcs;
     if (opt.prod_group != "") {
         for (auto &f: groups[opt.prod_group])
-            if (!f.is_lambda())
+            if (!(f.is_lambda() && func_size[f.name()] < 0))
                 prod_funcs.push_back(f.name());
     }
+
     for (auto &f: groups[opt.cons_group]) {
-        if (f.name() != opt.cons_group && !f.is_lambda())
+        if (f.name() != opt.cons_group &&
+            !(f.is_lambda() && func_size[f.name()] < 0))
             prod_funcs.push_back(f.name());
     }
 
@@ -3007,16 +3009,21 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
 
     vector<string> out_of_cache_prods;
     for (auto &p: prod_funcs) {
-        if(func_size[p] > arch_params.fast_mem_size || l == Partitioner::INLINE)
+        if (func_size[p] < 0) {
+            // This option cannot be evaluated so discaring the option
+            opt.benefit = -1;
+            opt.redundant_work = -1;
+            return;
+        }
+        if (func_size[p] > arch_params.fast_mem_size || l == Partitioner::INLINE)
             out_of_cache_prods.push_back(p);
     }
 
     for (auto &f: prod_funcs) {
-        if (func_op[f] != -1) {
-            long long data = data_from_group(f, analy.env, func_calls,
-                                             func_size, out_of_cache_prods);
-            saved_mem += data;
-        }
+        long long data = data_from_group(f, analy.env, func_calls,
+                func_size, out_of_cache_prods);
+        assert(data >= 0);
+        saved_mem += data;
     }
 
     //float total_work = work_per_tile * partial_tiles;
@@ -3025,12 +3032,11 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
     // and computing a full tile.
     float total_work = work_per_tile * estimate_tiles;
 
-    if (saved_mem != -1) {
-        long long data = data_from_group(opt.cons_group, analy.env,
-                                         func_calls, func_size,
-                                         out_of_cache_prods);
-        saved_mem += data;
-    }
+    long long data = data_from_group(opt.cons_group, analy.env,
+                                     func_calls, func_size,
+                                     out_of_cache_prods);
+    assert(data >= 0);
+    saved_mem += data;
 
     disp_regions(prod_comp);
 
@@ -4147,10 +4153,12 @@ void schedule_advisor(const vector<Function> &outputs,
 
         DependenceAnalysis analy(env, func_val_bounds, reductions, update_args);
 
+        /*
         for (auto &reg: analy.func_dep_regions) {
             disp_regions(reg.second);
             std::cout << std::endl;
         }
+        */
 
         bool bounds_avail = check_bounds_on_outputs(outputs);
         std::cout << "output bounds:" << bounds_avail << std::endl;
@@ -4238,7 +4246,7 @@ void schedule_advisor(const vector<Function> &outputs,
         for (auto& g: part.groups) {
             // Create a tiled traversal for the output of the group
             Function &g_out = env[g.first];
-            std::cout << "Start scheduling "  <<  g_out.name() << std::endl;
+            // std::cout << "Start scheduling "  <<  g_out.name() << std::endl;
 
             assert(inlines.find(g_out.name()) == inlines.end());
             // The dimension names that will be tiled
@@ -4288,9 +4296,7 @@ void schedule_advisor(const vector<Function> &outputs,
             int num_fused_dims = 0;
             int parallelism = part.arch_params.parallelism;
 
-            for (auto &e: out_estimates)
-                std::cout << e.first << " " << e.second << std::endl;
-            std::cout << "Start vectorization pure dims "  <<  g_out.name() << std::endl;
+            //std::cout << "Start vectorization pure dims "  <<  g_out.name() << std::endl;
             {
                 // Vectorize first
                 Schedule &s = g_out.schedule();
@@ -4307,7 +4313,7 @@ void schedule_advisor(const vector<Function> &outputs,
                     parallelize_dim(g_out.schedule(), outer_dim);
             }
 
-            std::cout << "Finished pure dims "  <<  g_out.name() << std::endl;
+            //std::cout << "Finished pure dims "  <<  g_out.name() << std::endl;
             if (!g_out.is_pure()) {
 
                 int num_updates = g_out.updates().size();
@@ -4420,7 +4426,7 @@ void schedule_advisor(const vector<Function> &outputs,
                 }
             }
 
-            std::cout << "Finished updates "  <<  g_out.name() << std::endl;
+            // std::cout << "Finished updates "  <<  g_out.name() << std::endl;
             for (auto &m: g.second) {
                 int outer_dim = dims.size() - 2;
                 map<string, int> org_mem_estimates =
@@ -4452,7 +4458,7 @@ void schedule_advisor(const vector<Function> &outputs,
                     }
                 }
             }
-            std::cout << "Finished group members "  <<  g_out.name() << std::endl;
+            // std::cout << "Finished group members "  <<  g_out.name() << std::endl;
         }
     }
     // TODO Method for reordering and unrolling based on reuse across iterations
