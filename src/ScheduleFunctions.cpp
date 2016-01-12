@@ -2666,7 +2666,7 @@ void Partitioner::clear_schedules_fast_mem() {
         s.second.benefit = s.second.saved_mem * arch_params.balance;
         s.second.redundant_work = 0;
         s.second.saved_mem = 0;
-        s.second.fusion = true;
+        s.second.fusion = false;
         s.second.locality = false;
 
         for (unsigned int i = 0; i < s.second.tile_sizes.size(); i++)
@@ -3089,7 +3089,6 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
             assert(!group_sched[opt.prod_group].fusion);
             assert(!group_sched[opt.prod_group].locality);
         } else {
-            assert(group_sched[opt.prod_group].fusion);
             assert(!group_sched[opt.prod_group].locality);
         }
 
@@ -3108,7 +3107,6 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
         assert(!group_sched[opt.cons_group].fusion);
         assert(!group_sched[opt.cons_group].locality);
     } else {
-        assert(group_sched[opt.cons_group].fusion);
         assert(!group_sched[opt.cons_group].locality);
     }
 
