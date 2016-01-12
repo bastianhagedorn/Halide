@@ -150,8 +150,8 @@ class Affine: public Layer {
                 in_f(r.x, n) * W(r.x, unit_dim);
 
             if (schedule) {
-                forward.compute_root().fuse(unit_dim, n, par).parallel(par);                    
-                forward.update().fuse(unit_dim, n, par).parallel(par);                    
+                forward.compute_root().fuse(unit_dim, n, par).parallel(par);
+                forward.update().fuse(unit_dim, n, par).parallel(par);
             }
 
         }
@@ -411,10 +411,9 @@ class Convolutional: public Layer {
             // Boundary condition
             // This creates a padded input and avoids checking boundary
             // conditions while computing the actual convolution
-            f_in_bound = BoundaryConditions::constant_exterior(
-                                    in_layer->forward, 0,
-                                    0, in_w,
-                                    0, in_h);
+            f_in_bound =
+                BoundaryConditions::repeat_edge(in_layer->forward,
+                                                0, in_w, 0, in_h);
 
             // Create parameters
             Image<float> W(f_w, f_h, in_ch, num_f), b(num_f);
@@ -435,11 +434,11 @@ class Convolutional: public Layer {
                 //f_in_bound.compute_at(f_simple, n);
                 forward.compute_root();
                 forward.fuse(z, n, par).parallel(par);
-                forward.update().reorder(x, y, r.z); 
+                forward.update().reorder(x, y, r.z);
                 forward.update().split(y, y, y_t, y_block_size);
                 forward.update().split(z, z, z_t, o_block_size);
-                forward.update().reorder(y_t, z_t, y, r.z, z); 
-                forward.update().vectorize(x, vec_len);          
+                forward.update().reorder(y_t, z_t, y, r.z, z);
+                forward.update().vectorize(x, vec_len);
                 forward.update().fuse(z, n, par).parallel(par);
                 //forward.update().fuse(y, par, par).parallel(par);
                 forward.update().unroll(r.x);
@@ -531,7 +530,7 @@ class MaxPooling: public Layer {
         // parameters for scheduling
         Var par;
         int vec_len = 8;
-        MaxPooling(int _p_w, int _p_h, int _stride, Layer* in, 
+        MaxPooling(int _p_w, int _p_h, int _stride, Layer* in,
                    int schedule = 1) : Layer(in) {
             assert(in_layer->out_dims() == 4);
 
@@ -552,7 +551,7 @@ class MaxPooling: public Layer {
             forward(x, y, z, n) = maximum(in_f(x * stride + r.x,
                                                y * stride + r.y,
                                                z, n));
-         
+
             if (schedule) {
                 forward.vectorize(x, vec_len);
                 forward.compute_root().fuse(z, n, par).parallel(par);
@@ -607,7 +606,7 @@ class DataLayer: public Layer {
         Var x, y, z, n;
         DataLayer(int _in_w, int _in_h, int _in_ch, int _num_samples,
                   Image<float> &data) : Layer(0) {
-                in_w = _in_w; in_h = _in_w; in_ch = _in_ch;
+                in_w = _in_w; in_h = _in_h; in_ch = _in_ch;
                 num_samples = _num_samples;
                 // Define forward
                 forward(x, y, z, n) = data(x, y, z, n);
@@ -657,7 +656,7 @@ class Flatten: public Layer {
                 out_width = w * h * c;
                 forward(x, n) = in_layer->forward(x%w, (x/w)%h, x/(w*h), n);
             }
-            // schedule 
+            // schedule
             if (schedule) {
                 forward.compute_root().parallel(n);
             }

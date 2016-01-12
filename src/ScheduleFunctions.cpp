@@ -3554,18 +3554,14 @@ void Partitioner::reorder_for_input_locality() {
     for(auto &g: groups) {
 
         // Skip something that has been tiled for fusion
-        if (group_sched[g.first].fusion)
-            continue;
-
-        // TODO Reason about instances where things have been inlined
-
         // Skip functions that are not reductions
-        if ((analy.reductions.find(g.first) ==
-                               analy.reductions.end())) {
+        if (group_sched[g.first].fusion || (analy.reductions.find(g.first) ==
+                                            analy.reductions.end())) {
             std::cout << "Skipped " << g.first << std::endl;
             continue;
         }
 
+        // TODO Reason about instances where things have been inlined
         vector<string> group_inputs;
         set<string> group_mem;
         for(auto &f: g.second)
@@ -4274,9 +4270,9 @@ void schedule_advisor(const vector<Function> &outputs,
         std::cout << std::endl << "Groups Fast Mem" << std::endl;
         part.disp_grouping();
         std::cout << std::endl;
-        //part.disp_grouping();
+        part.disp_grouping();
 
-        //part.reorder_for_input_locality();
+        part.reorder_for_input_locality();
 
         int vec_len = part.arch_params.vec_len;
 

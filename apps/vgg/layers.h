@@ -410,8 +410,8 @@ class Convolutional: public Layer {
             // Boundary condition
             // This creates a padded input and avoids checking boundary
             // conditions while computing the actual convolution
-            f_in_bound = BoundaryConditions::constant_exterior(
-                                    in_layer->forward, 0,
+            f_in_bound = BoundaryConditions::repeat_edge(
+                                    in_layer->forward,
                                     0, in_w,
                                     0, in_h);
 
@@ -605,7 +605,7 @@ class DataLayer: public Layer {
         int in_w, in_h, in_ch, num_samples;
         DataLayer(int _in_w, int _in_h, int _in_ch, int _num_samples,
                   Image<float> &data) : Layer(0) {
-                in_w = _in_w; in_h = _in_w; in_ch = _in_ch;
+                in_w = _in_w; in_h = _in_h; in_ch = _in_ch;
                 num_samples = _num_samples;
                 // Define forward
                 forward(x, y, z, n) = data(x, y, z, n);

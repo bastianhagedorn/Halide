@@ -5,8 +5,8 @@
 int main(int argc, char **argv) {
 
     int N = 4; // number of samples/batch_size
-    int d_w = 129; // data width
-    int d_h = 129; // data height
+    int d_w = 128; // data width
+    int d_h = 128; // data height
     int ch = 64; // number of channels
 
     Image<float> data(d_w, d_h, ch, N);
@@ -29,9 +29,8 @@ int main(int argc, char **argv) {
                                                 conv->out_dim_size(2),
                                                 conv->out_dim_size(3));
     Func f_in_bound;
-    f_in_bound = BoundaryConditions::constant_exterior(
-                                    d_layer->forward, 0,
-                                    0, d_w, 0, d_h);
+    f_in_bound = BoundaryConditions::repeat_edge(d_layer->forward, 0, d_w,
+                                                 0, d_h);
 
     Image<float> conv_out(conv->out_dim_size(0),
                           conv->out_dim_size(1),
@@ -95,8 +94,6 @@ int main(int argc, char **argv) {
     else
         f_ReLU.compile_jit(target, false);
 
-    std::vector<Func> simple_outs;
-    simple_outs.push_back(f_conv);
     double best = benchmark(3, 1, [&]() { f_ReLU.realize(conv_out); });
     std::cerr << best * 1e3 << std::endl;
 }
