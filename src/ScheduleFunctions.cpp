@@ -3021,7 +3021,7 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
 
     for (auto &f: prod_funcs) {
         long long data = data_from_group(f, analy.env, func_calls,
-                func_size, out_of_cache_prods);
+                                         func_size, out_of_cache_prods);
         assert(data >= 0);
         saved_mem += data;
     }
@@ -3154,6 +3154,12 @@ pair<float, vector<Partitioner::Option> >
             cand_opt.prod_group = p.first;
             cand_opt.cons_group = c;
 
+            // Weird to inline into boundary conditions
+            if (output.is_boundary()) {
+                overall_benefit = -1;
+                break;
+            }
+
             // Check if the pair has been evaluated before
             pair<string, string> key = make_pair(p.first, c);
             if (option_cache.find(key) != option_cache.end()) {
@@ -3177,6 +3183,21 @@ pair<float, vector<Partitioner::Option> >
                 overall_benefit = -1;
                 break;
             } else {
+                float prod_size = func_size[cand_opt.prod_group] *
+                                  get_func_out_size(analy.env[cand_opt.prod_group]);
+                float prod_data = func_size[cand_opt.prod_group] *
+                                  func_cost[cand_opt.prod_group].second;
+
+                // Check if the prod_group is a reduction. If it is a reduction
+                // then by inlining it we can no longer schedule the individual
+                // dimensions effectively.
+                // The number of loads saved is relatively insignificant
+                if (prod_size < 0.01 * prod_data) {
+                    std::cout << "Inlining avoided " <<  cand_opt.prod_group
+                              << " " << cand_opt.cons_group << std::endl;
+                    overall_benefit = -1;
+                    break;
+                }
                 options.push_back(cand_opt);
                 overall_benefit += cand_opt.benefit;
             }
@@ -3279,6 +3300,25 @@ Partitioner::Option Partitioner::choose_candidate(
             }
         }
 
+        // Weird to fuse into boundary conditions
+        if (output.is_boundary() || !output.is_pure()) {
+            invalid = true;
+        }
+
+        float prod_size = func_size[p.first] *
+                          get_func_out_size(analy.env[p.first]);
+        float prod_data = func_size[p.first] * func_cost[p.first].second;
+
+        // Check if the prod_group is a reduction. If it is a reduction
+        // then by grouping it we can no longer schedule the individual
+        // dimensions effectively.
+        // The number of loads saved is relatively insignificant
+        if (prod_size < 0.01 * prod_data) {
+            std::cout << "Grouping avoided " <<  p.first
+                      << " " << p.second << std::endl;
+            invalid = true;
+        }
+
         cand_best_opt.prod_group = p.first;
         cand_best_opt.cons_group = p.second;
 
@@ -3305,7 +3345,6 @@ Partitioner::Option Partitioner::choose_candidate(
                 std::cout << args[i] << " Reuse/Redundant Work " << reuse[i]
                           << std::endl;
             }
-
 
             // From the outer to the inner most argument
             //for (int i = (int)args.size() - 1; i >= 1; i--) {
@@ -3340,9 +3379,9 @@ Partitioner::Option Partitioner::choose_candidate(
                     else
                         evaluate_option(opt, Partitioner::FAST_MEM);
 
-
-                    if (cand_best_opt.benefit < opt.benefit)
+                    if (cand_best_opt.benefit < opt.benefit) {
                         cand_best_opt = opt;
+                    }
                 }
             }
         }
@@ -4224,7 +4263,6 @@ void schedule_advisor(const vector<Function> &outputs,
         std::cout << std::endl << "Groups Inlining" << std::endl;
         part.disp_grouping();
 
-        //std::cout << std::endl;
         //Clear the option cache
 
         std::cout << std::endl << "Function costs post Inlining" << std::endl;
