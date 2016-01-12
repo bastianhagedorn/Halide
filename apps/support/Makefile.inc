@@ -3,6 +3,8 @@ HALIDE_SRC_PATH ?= ../..
 
 CXX ?= g++
 GXX ?= g++
+CXX += -O3 -march=native -Wall -fopenmp -g
+THREADS_TO_TEST ?= 1 2 4 8
 
 CFLAGS += -I $(HALIDE_BIN_PATH)/include/ -I $(HALIDE_SRC_PATH)/tools/ -I $(HALIDE_SRC_PATH)/apps/support/
 CXXFLAGS += -std=c++11 -I $(HALIDE_BIN_PATH)/include/ -I $(HALIDE_SRC_PATH)/tools/ -I $(HALIDE_SRC_PATH)/apps/support/

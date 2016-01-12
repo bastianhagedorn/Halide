@@ -7,7 +7,6 @@ else
 endif
 
 #CXX=icpc -O3 -march=native -ansi-alias -Wall -openmp -g
-CXX=g++ -O3 -march=native -Wall -fopenmp -g
 
 camera_pipe: ../../ camera_pipe.cpp
 	#$(MAKE) -C $(LIB_HALIDE)

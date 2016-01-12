@@ -1,7 +1,7 @@
 include ../support/Makefile.inc
 
 #CXX=icpc -O3 -march=native -ansi-alias -Wall -openmp -g
-CXX=g++ -O3 -march=native -Wall -fopenmp -g -Werror -ffast-math
+#CXX=g++ -O3 -march=native -Wall -fopenmp -g -Werror -ffast-math
 
 hist: hist.cpp
 	$(CXX) $(CXXFLAGS) hist.cpp $(LIB_HALIDE) -o \
@@ -23,14 +23,14 @@ filter_ref: hist_ref filter.cpp
 
 bench_ref: filter_ref
 	rm -rf ref_perf.txt
-	for t in 1 2 4 8 ; do \
+	for t in $(THREADS_TO_TEST) ; do \
         OMP_NUM_THREADS=$$t HL_NUM_THREADS=$$t ./filter_ref ../images/rgb.png \
 												out.png >> ref_perf.txt;\
     done
 
 bench_auto: filter_auto
 	rm -rf auto_perf.txt
-	for t in 1 2 4 8 ; do \
+	for t in $(THREADS_TO_TEST) ; do \
         OMP_NUM_THREADS=$$t HL_NUM_THREADS=$$t ./filter_auto ../images/rgb.png \
 												out.png >> auto_perf.txt;\
     done

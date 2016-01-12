@@ -1,7 +1,7 @@
 include ../support/Makefile.inc
 
 #CXX=icpc -O3 -march=native -ansi-alias -Wall -openmp -g
-CXX=g++ -O2 -march=native -Wall -fopenmp -g
+#CXX=g++ -O2 -march=native -Wall -fopenmp -g
 
 local_laplacian_gen: local_laplacian_gen.cpp
 	$(CXX) $(CXXFLAGS) local_laplacian_gen.cpp $(LIB_HALIDE) -o local_laplacian_gen -lpthread -ldl -lz \
@@ -26,14 +26,14 @@ out.png: process_ref
 
 bench_ref: process_ref
 	rm -rf ref_perf.txt
-	for t in 1 2 4 8 ; do \
+	for t in $(THREADS_TO_TEST) ; do \
         OMP_NUM_THREADS=$$t HL_NUM_THREADS=$$t \
 		./process_ref ../images/rgb.png 8 1 1 10 out.png >> ref_perf.txt;\
     done
 
 bench_auto: process_auto
 	rm -rf auto_perf.txt
-	for t in 1 2 4 8 ; do \
+	for t in $(THREADS_TO_TEST) ; do \
         OMP_NUM_THREADS=$$t HL_NUM_THREADS=$$t \
 		./process_auto ../images/rgb.png 8 1 1 10 out.png >> auto_perf.txt;\
     done
