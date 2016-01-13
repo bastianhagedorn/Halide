@@ -2387,6 +2387,8 @@ struct Partitioner {
         float redundant_work;
         // Estimate of mem accesses saved
         float saved_mem;
+        // Reuse
+        vector<float> reuse;
 
         Option() {
             prod_group = "";
@@ -2412,6 +2414,9 @@ struct Partitioner {
         bool fusion;
         // Has the group been tiled for locality
         bool locality;
+        // Reuse estimates
+        vector<float> reuse;
+
         GroupSched() {
             benefit = 0;
             redundant_work = 0;
@@ -2490,8 +2495,10 @@ struct Partitioner {
             GroupSched sched;
 
             // From the outer to the inner most argument
-            for (int i = (int)args.size() - 1; i >= 0; i --)
+            for (int i = (int)args.size() - 1; i >= 0; i --) {
                 sched.tile_sizes.push_back(-1);
+                sched.reuse.push_back(-1);
+            }
 
             group_sched[g.first] = sched;
         }
@@ -2669,8 +2676,10 @@ void Partitioner::clear_schedules_fast_mem() {
         s.second.fusion = false;
         s.second.locality = false;
 
-        for (unsigned int i = 0; i < s.second.tile_sizes.size(); i++)
+        for (unsigned int i = 0; i < s.second.tile_sizes.size(); i++) {
             s.second.tile_sizes[i] = -1;
+            s.second.reuse[i] = -1;
+        }
     }
 }
 
@@ -2683,8 +2692,10 @@ void Partitioner::initialize_groups_inline() {
         Function output = analy.env[g.first];
         const vector<string> &args = output.args();
 
-        for (unsigned int i = 0; i < args.size(); i++)
+        for (unsigned int i = 0; i < args.size(); i++) {
             opt.tile_sizes.push_back(1);
+            opt.reuse.push_back(-1);
+        }
 
         evaluate_option(opt, Partitioner::INLINE);
 
@@ -2693,6 +2704,7 @@ void Partitioner::initialize_groups_inline() {
         sched.redundant_work = opt.redundant_work;
         sched.benefit = opt.benefit;
         sched.tile_sizes = opt.tile_sizes;
+        sched.reuse = opt.reuse;
         sched.fusion = false;
         sched.locality = false;
 
@@ -2787,6 +2799,7 @@ void Partitioner::group(Partitioner::Level level) {
                     GroupSched sched;
 
                     sched.tile_sizes = best.second[i].tile_sizes;
+                    sched.reuse = best.second[i].reuse;
                     sched.benefit = best.second[i].benefit;
                     sched.redundant_work = best.second[i].redundant_work;
                     assert(best.second[i].saved_mem >= 0);
@@ -2827,6 +2840,7 @@ void Partitioner::group(Partitioner::Level level) {
 
                 GroupSched sched;
                 sched.tile_sizes = best.tile_sizes;
+                sched.reuse = best.reuse;
                 sched.benefit = best.benefit;
                 sched.redundant_work = best.redundant_work;
                 assert(best.saved_mem >= 0);
@@ -3344,13 +3358,61 @@ Partitioner::Option Partitioner::choose_candidate(
                           << std::endl;
             }
 
+            /*
+            vector<int> new_variants = {1, 4, 8, 16, 32, 64, 128, 256};
+            // Reuse based tiling
+            for (unsigned int i = 0; i < args.size(); i++) {
+                for (auto &s: new_variants) {
+                    vector<int> tile_sizes(args.size());
+                    Option opt;
+                    opt.prod_group = p.first;
+                    opt.cons_group = p.second;
+                    for (unsigned int j = 0; j < args.size(); j++) {
+                        unsigned int rank = 0;
+                        for (unsigned int k = 0; k < args.size(); k++) {
+                            // Count up the number of dimensions with reuse
+                            // greater than that of j
+                            if (k!=j) {
+                                if (reuse[k] > reuse[j] ||
+                                        (reuse[k] == reuse[j] && k < j))
+                                rank++;
+                            }
+                        }
+                        if (rank < i)
+                           // All the dimensions ranked < i in the reuse order
+                           // get max tile size
+                            tile_sizes[j] = new_variants[new_variants.size() - 1];
+                        else if (rank == i)
+                            // Vary tile sizes for dimension ranked <=i
+                            tile_sizes[j] = s;
+                        else
+                            // All the dimensions ranked > i in the reuse order
+                            // get min tile size
+                            tile_sizes[j] = new_variants[0];
+
+                        if (j == 0)
+                            tile_sizes[j] = std::min(64, s);
+
+                        std::cout << args[j] << " tile size " << tile_sizes[j]
+                                  << std::endl;
+                    }
+
+                    opt.tile_sizes = tile_sizes;
+                    evaluate_option(opt, Partitioner::FAST_MEM);
+
+                    if (cand_best_opt.benefit < opt.benefit) {
+                        cand_best_opt = opt;
+                    }
+                }
+            }*/
+
             // From the outer to the inner most argument
-            //for (int i = (int)args.size() - 1; i >= 1; i--) {
             for (int i = (int)args.size() - 1; i >= 0; i--) {
                 for (auto s: size_variants) {
                     Option opt;
                     opt.prod_group = p.first;
                     opt.cons_group = p.second;
+                    opt.reuse = reuse;
 
                     for (int j = 0; j < i; j++) {
                         if (reuse[j] > 0 || j == 0)
@@ -3372,10 +3434,7 @@ Partitioner::Option Partitioner::choose_candidate(
                             opt.tile_sizes.push_back(curr_size);
                     }
 
-                    if (i == 0)
-                        evaluate_option(opt, Partitioner::FAST_MEM);
-                    else
-                        evaluate_option(opt, Partitioner::FAST_MEM);
+                    evaluate_option(opt, Partitioner::FAST_MEM);
 
                     if (cand_best_opt.benefit < opt.benefit) {
                         cand_best_opt = opt;
@@ -3676,9 +3735,60 @@ void Partitioner::reorder_for_input_locality() {
                           << std::endl;
             }
 
-            // From the outer to the inner most argument
             float best_reuse = 0;
             vector<int> best_tiling;
+            /*
+            vector<int> new_variants = {1, 4, 8, 16, 32, 64, 128, 256};
+            // Reuse based tiling
+            for (unsigned int i = 0; i < num_args; i++) {
+                for (auto &s: new_variants) {
+                    vector<int> tile_sizes(num_args);
+                    for (unsigned int j = 0; j < num_args; j++) {
+                        unsigned int rank = 0;
+                        for (unsigned int k = 0; k < num_args; k++) {
+                            // Count up the number of dimensions with reuse
+                            // greater than that of j
+                            if (k!=j) {
+                                if (reuse[k] > reuse[j] ||
+                                        (reuse[k] == reuse[j] && k < j))
+                                rank++;
+                            }
+                        }
+                        if (rank < i)
+                           // All the dimensions ranked < i in the reuse order
+                           // get max tile size
+                            tile_sizes[j] = new_variants[new_variants.size() - 1];
+                        else if (rank == i)
+                            // Vary tile sizes for dimension ranked <=i
+                            tile_sizes[j] = s;
+                        else
+                            // All the dimensions ranked > i in the reuse order
+                            // get min tile size
+                            tile_sizes[j] = new_variants[0];
+
+                        if (j == 0)
+                            tile_sizes[j] = -1 ;
+
+                        string arg_name = "";
+                        if (j < args.size())
+                            arg_name = args[j];
+                        else
+                            arg_name = u_args[j - args.size()];
+                        std::cout << arg_name << " tile size " << tile_sizes[j]
+                                  << std::endl;
+                    }
+
+                    pair<float, float>  eval;
+                    eval = evaluate_reuse(g.first, group_inputs, tile_sizes,
+                                          true);
+                    if (eval.first > best_reuse) {
+                        best_reuse = eval.first;
+                        best_tiling = tile_sizes;
+                    }
+                }
+            }*/
+
+            // From the outer to the inner most argument
             for (int i = (int)num_args - 1; i >= 0; i--) {
                 for(auto &s: size_variants) {
                     vector<int> tile_sizes;
@@ -3713,10 +3823,15 @@ void Partitioner::reorder_for_input_locality() {
                 }
             }
 
+            std::cout << "Best Tiling:" << "[";
+            for (auto &t: best_tiling)
+                std::cout << t << ",";
+            std::cout <<  "]" << std::endl;
             if (best_reuse > 0) {
                 group_sched[g.first].tile_sizes = best_tiling;
                 assert(!group_sched[g.first].fusion);
                 group_sched[g.first].locality = true;
+                group_sched[g.first].reuse = reuse;
             } else {
                 assert(!group_sched[g.first].fusion);
                 group_sched[g.first].locality = false;
@@ -3799,6 +3914,11 @@ void parallelize_dim(Schedule &sched, int dim) {
     dims[dim].for_type = ForType::Parallel;
 }
 
+void unroll_dim(Schedule &sched, int dim) {
+    vector<Dim> &dims = sched.dims();
+    dims[dim].for_type = ForType::Unrolled;
+}
+
 void move_dim_to_outermost(Schedule &sched, int dim) {
     vector<Dim> &dims = sched.dims();
     dims.insert(dims.end() - 1, dims[dim]);
@@ -3808,6 +3928,13 @@ void move_dim_to_outermost(Schedule &sched, int dim) {
 void move_dim_to_innermost(Schedule &sched, int dim) {
     vector<Dim> &dims = sched.dims();
     dims.insert(dims.begin(), dims[dim]);
+    dims.erase(dims.begin() + dim + 1);
+}
+
+void move_dim_before_innermost(Schedule &sched, int dim) {
+    vector<Dim> &dims = sched.dims();
+    assert(dims.size() > 2);
+    dims.insert(dims.begin() + 1, dims[dim]);
     dims.erase(dims.begin() + dim + 1);
 }
 
@@ -3927,6 +4054,12 @@ bool check_dim_size(Schedule &sched, int dim, int min_size,
     if (extent >= 0)
         can_vec = extent >= min_size;
     return can_vec;
+}
+
+int get_dim_size(Schedule &sched, int dim, map<string, int> &dim_estimates) {
+    vector<Dim> &dims = sched.dims();
+    int extent = dim_estimates[dims[dim].var];
+    return extent;
 }
 
 void simple_vectorize(Function &func, map<string, int> &dim_estimates,
@@ -4289,20 +4422,47 @@ void schedule_advisor(const vector<Function> &outputs,
 
             assert(!(sched.locality && sched.fusion));
 
+            // Get estimates of pipeline bounds
+            map<string, int> org_out_estimates =
+                          get_dim_estimates(g_out.name(), pipeline_bounds, env);
+            map<string, int> out_estimates = org_out_estimates;
+
             map<string, int> tile_sizes_pure;
             if (sched.locality || sched.fusion) {
+                std::cout << g_out.name() << " final tile sizes and reuse" << std::endl;
+                std::cout << "[";
                 for(int i = 0; i < (int)dims.size() - 1; i++) {
+                    std::cout << "("  << dims[i].var  << "," << sched.tile_sizes[i] << ","
+                              << sched.reuse[i] << ")" << ",";
                     if (sched.tile_sizes[i] != -1) {
                         pure_vars.push_back(dims[i].var);
                         tile_sizes_pure[dims[i].var] = sched.tile_sizes[i];
                     }
                 }
+                std::cout << "]" << std::endl;
+
+                // Reordering by reuse
+                for(int i = (int)dims.size() - 1; i >= 0; i--) {
+                    // Find the variable with ith most reuse and move to innermost
+                    for(int j = 0; j < (int)dims.size() - 1; j++) {
+                        int rank = 0;
+                        for (int k = 0; k < (int)dims.size() - 1; k++) {
+                            // Count up the number of dimensions with reuse
+                            // greater than that of j
+                            if (k!=j) {
+                                if (sched.reuse[k] > sched.reuse[j] ||
+                                        (sched.reuse[k] == sched.reuse[j] && k < j))
+                                    rank++;
+                            }
+                        }
+                        if (rank == i)
+                            move_dim_before_innermost(g_out.schedule(), j);
+                    }
+                }
             }
 
-            // Get estimates of pipeline bounds
-            map<string, int> org_out_estimates =
-                          get_dim_estimates(g_out.name(), pipeline_bounds, env);
-            map<string, int> out_estimates = org_out_estimates;
+            for (auto &e: out_estimates)
+                std::cout << e.first << " " << e.second << std::endl;
 
             // Realizing the tiling and updating the dimension estimates
             int num_tile_dims = 0;
@@ -4333,8 +4493,25 @@ void schedule_advisor(const vector<Function> &outputs,
                 // Vectorize first
                 Schedule &s = g_out.schedule();
                 if (auto_vec) {
-                    if (check_dim_size(s, 0, vec_len, out_estimates))
-                        simple_vectorize(g_out, out_estimates, 0, vec_len);
+                    int vec_dim = 0;
+                    int can_vec = true;
+                    while (can_vec && (vec_dim < (int)dims.size() - 1)) {
+                        can_vec = false;
+                        if (check_dim_size(s, vec_dim, vec_len, out_estimates)){
+                            simple_vectorize(g_out, out_estimates, vec_dim, vec_len);
+                            break;
+                        }
+                        else {
+                            int dim_size = get_dim_size(s, vec_dim, out_estimates);
+                            if(dim_size < vec_len) {
+                                // unroll
+                                unroll_dim(s, vec_dim);
+                                can_vec = true;
+                                vec_dim++;
+                            }
+                        }
+
+                    }
                 }
                 int outer_dim = -1;
                 bool can_par = pick_dim_to_parallelize(g_out, out_estimates,
