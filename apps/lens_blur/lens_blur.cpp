@@ -86,8 +86,12 @@ int main(int argc, char **argv) {
     Func cost_pyramid_push[8];
     cost_pyramid_push[0](x, y, z, c) =
         select(c == 0, cost(x, y, z) * cost_confidence(x, y), cost_confidence(x, y));
+    Expr w = left_im.width(), h = left_im.height();
     for (int i = 1; i < 8; i++) {
-        cost_pyramid_push[i] = downsample(cost_pyramid_push[i-1]);
+        cost_pyramid_push[i](x, y, z, c) = downsample(cost_pyramid_push[i-1])(x, y, z, c);
+        w /= 2;
+        h /= 2;
+        cost_pyramid_push[i] = BoundaryConditions::repeat_edge(cost_pyramid_push[i], {{0, w}, {0, h}});
     }
 
     Func cost_pyramid_pull[8];
@@ -146,8 +150,8 @@ int main(int argc, char **argv) {
     sample_locations(x, y, z) = {sample_u, sample_v};
 
     RDom s(0, aperture_samples);
-    sample_u = sample_locations(x, y, s)[0];
-    sample_v = sample_locations(x, y, s)[1];
+    sample_u = sample_locations(x, y, z)[0];
+    sample_v = sample_locations(x, y, z)[1];
     Expr sample_x = x + sample_u, sample_y = y + sample_v;
     Expr r_squared = sample_u * sample_u + sample_v * sample_v;
 
@@ -163,13 +167,16 @@ int main(int argc, char **argv) {
     Expr sample_is_in_front_of_this_pixel =
         depth(sample_x, sample_y) < depth(x, y);
 
-    Expr sample_weight =
+    Func sample_weight;
+    sample_weight(x, y, z) =
         select((sample_is_within_bokeh_of_this_pixel ||
                 sample_is_in_front_of_this_pixel) &&
                this_pixel_is_within_bokeh_of_sample,
                1.0f, 0.0f);
 
-    output(x, y, c) += sample_weight * input_with_alpha(sample_x, sample_y, c);
+    sample_x = x + sample_locations(x, y, s)[0];
+    sample_y = y + sample_locations(x, y, s)[1];
+    output(x, y, c) += sample_weight(x, y, s) * input_with_alpha(sample_x, sample_y, c);
 
     // Normalize
     Func final;
@@ -178,27 +185,21 @@ int main(int argc, char **argv) {
     Image<uint8_t> in_l = load_image(argv[1]);
     Image<uint8_t> in_r = load_image(argv[2]);
     final.bound(x, 0, in_l.width()).bound(y, 0, in_l.height()).bound(c, 0, 3);
-    // Blindly compute-root everything
-    /*
-    left.compute_root();//.vectorize(x, 8);
-    right.compute_root();//.vectorize(x, 8);
-    cost.compute_root().vectorize(x, 8).parallel(y);
-    cost_confidence.compute_root().vectorize(x, 8).parallel(y);
-    for (int i = 0; i < 8; i++) {
-        cost_pyramid_push[i].compute_root().vectorize(x, 8).parallel(y);
-        cost_pyramid_pull[i].compute_root().vectorize(x, 8).parallel(y);
+
+    int schedule = atoi(argv[4]);
+    switch(schedule) {
+    case 0:
+    {
+        // Write down time and runtime here. I ran with 16 threads on my z620.
     }
-    filtered_cost.compute_root().vectorize(x, 8).parallel(y);
-    depth.compute_root().vectorize(x, 8).parallel(y);
-    bokeh_radius.compute_root().vectorize(x, 8).parallel(y);
-    bokeh_radius_squared.compute_root().vectorize(x, 8).parallel(y);
-    output.compute_root().vectorize(x, 8).parallel(y);
-    //sample_locations.compute_root(); If you compute-root this, you can't use lots of aperture samples. Just leave it inline.
-    final.compute_root().vectorize(x, 8).parallel(y);
-    input_with_alpha.compute_root().vectorize(x, 8).parallel(y);
-    worst_case_bokeh_radius_y.compute_root().vectorize(x, 8).parallel(y);
-    worst_case_bokeh_radius.compute_root().vectorize(x, 8).parallel(y);
-    */
+    case 1:
+    {
+        // ...
+    }
+    break;
+    default:
+        break;
+    }
 
     // Run it
 
@@ -206,11 +207,14 @@ int main(int argc, char **argv) {
     right_im.set(in_r);
     Image<float> out(in_l.width(), in_l.height(), 3);
     Target target = get_target_from_environment();
-    final.compile_jit(target, true);
-    //final.compile_jit(target);
+    if (schedule == -1) {
+        final.compile_jit(target, true);
+    } else {
+        final.compile_jit(target);
+    }
 
     std::cout << "Running... " << std::endl;
-    double best = benchmark(1, 1, [&]() { final.realize(out); });
+    double best = benchmark(5, 5, [&]() { final.realize(out); });
     std::cout << " took " << best * 1e3 << " msec." << std::endl;
 
     save_image(out, argv[3]);
