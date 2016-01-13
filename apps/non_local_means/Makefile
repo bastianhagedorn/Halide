@@ -7,7 +7,7 @@ non_local_means: non_local_means.cpp
 	$(LLVM_SHARED_LIBS)
 
 non_local_means.o: non_local_means
-	./non_local_means 7 7
+	./non_local_means 7 7 0
 
 filter: non_local_means.o filter.cpp
 	$(CXX) $(CXXFLAGS) -O3 -ffast-math -Wall -Werror filter.cpp non_local_means.o -lpthread -ldl -o filter  $(PNGFLAGS)
@@ -17,4 +17,3 @@ out.png: filter
 
 clean:
 	rm -f non_local_means non_local_means.o non_local_means.h filter
-
