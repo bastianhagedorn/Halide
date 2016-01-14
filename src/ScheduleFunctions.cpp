@@ -4584,7 +4584,6 @@ void schedule_advisor(const vector<Function> &outputs,
                         }
                     }
 
-                    /*
                     if (sched.locality) {
                         for(int i = (int)dims.size() - 1; i >= 0; i--) {
                             // Find the variable with ith most reuse and move to innermost
@@ -4603,7 +4602,7 @@ void schedule_advisor(const vector<Function> &outputs,
                                     move_dim_before_innermost(s, j);
                             }
                         }
-                    }*/
+                    }
 
                     set<string> par_vars;
                     for(auto &v: update_vars) {
