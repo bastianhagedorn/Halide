@@ -63,7 +63,7 @@ AUTO_BENCHES=$(patsubst %,bench_auto.%.txt,$(THREADS_TO_TEST))
 bench_%.txt: $(TESTS)
 	$(eval NTHREADS := $(word 2,$(subst ., ,$@)))
 	$(eval VER := $(word 2,$(subst _, ,$(word 1,$(subst ., ,$@)))))
-	OMP_NUM_THREADS=$(NTHREADS) HL_NUM_THREADS=$(NTHREADS) ./test.sh $(VER) > $@
+	OMP_NUM_THREADS=$(NTHREADS) HL_NUM_THREADS=$(NTHREADS) ./test.sh $(VER) | tail -n1 > $@
 
 ref_perf.txt: $(REF_BENCHES)
 	cat $^ > $@
