@@ -3940,7 +3940,8 @@ void reorder_dims(Schedule &sched, vector<string> &var_order) {
 }
 
 void reorder_by_reuse(Schedule &sched, map<string, float> &reuse,
-                      string innermost_storage_dim) {
+                      string innermost_storage_dim,
+                      map<string, int> &dim_estimates, int vec_len) {
     vector<string> var_order;
     vector<Dim> &dims = sched.dims();
     assert(reuse.size() + 1 == dims.size());
@@ -3950,10 +3951,10 @@ void reorder_by_reuse(Schedule &sched, map<string, float> &reuse,
             int rank = 0;
             for (int k = 0; k < (int)dims.size() - 1; k++) {
                 // Count up the number of dimensions with reuse
-                // less than that of j
+                // significantly less than that of j
                 if (k!=j) {
-                    if (reuse[ dims[j].var] > reuse[dims[k].var] ||
-                            (reuse[dims[j].var] == reuse[dims[k].var] && j < k))
+                    if (reuse[dims[j].var] > 2 * reuse[dims[k].var] ||
+                            (j < k))
                         rank++;
                 }
             }
@@ -3966,8 +3967,20 @@ void reorder_by_reuse(Schedule &sched, map<string, float> &reuse,
             }
         }
     }
-    // Insert the innermost storage dim at the front of the order
-    var_order.insert(var_order.begin(), innermost_storage_dim);
+
+    // Insert the innermost storage dim at a position where all the inner loops
+    // can be unrolled
+    int vector_dim = 0;
+    for (unsigned int i = 0; i < var_order.size(); i++) {
+        if (dim_estimates[var_order[i]] < vec_len)
+            vector_dim++;
+        else
+            break;
+
+    }
+
+    var_order.insert(var_order.begin() + vector_dim, innermost_storage_dim);
+
     std::cout << "Reuse order :";
     for (auto &v: var_order)
         std::cout << v << ",";
@@ -4154,30 +4167,6 @@ void vectorize_update(Function &func, int stage,
     const UpdateDefinition &u = func.updates()[stage];
     vector<Dim> &dims = s.dims();
 
-    // If the update definition is pure in the dimension corresponding
-    // to the innermost storage dimension, vectorize that to get a
-    // dense vector store instead of a scatter.
-    string innermost_storage_dim = func.schedule().storage_dims()[0];
-    for (Split split : s.splits()) {
-        if (split.is_split() && split.old_var == innermost_storage_dim) {
-            innermost_storage_dim = split.inner;
-        }
-        // TODO: consider fuse and rename?
-    }
-
-    for (unsigned int dim = 0; dim < dims.size(); dim++) {
-        if (dims[dim].var == innermost_storage_dim) {
-            if (check_dim_size(s, dim, vec_len, dim_estimates)) {
-                vectorize_dim(s, dim_estimates, dim, vec_len);
-                // TODO: I don't understand what par_vars is about
-                return;
-            }
-            break;
-        }
-    }
-
-
-    // Otherwise, vectorize the inner most loop that can be vectorized
     for (unsigned int dim = 0; dim < dims.size(); dim++) {
         bool dim_par = can_parallelize_rvar(dims[dim].var, func.name(), u);
         dim_par = dim_par || (par_vars.find(dims[dim].var) != par_vars.end());
@@ -4674,7 +4663,8 @@ void schedule_advisor(const vector<Function> &outputs,
 
                     if (sched.locality) {
                         reorder_by_reuse(s, var_reuse,
-                                         g_out.schedule().storage_dims()[0]);
+                                         g_out.schedule().storage_dims()[0],
+                                         out_up_estimates, vec_len);
                     }
 
                     set<string> par_vars;
