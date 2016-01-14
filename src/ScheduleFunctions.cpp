@@ -4090,10 +4090,39 @@ void simple_vectorize(Function &func, map<string, int> &dim_estimates,
 void vectorize_update(Function &func, int stage,
                       map<string, int> &dim_estimates, int vec_len,
                       set<string> &par_vars) {
+    if (func.dimensions() == 0) {
+        // Can't vectorize a reduction onto a scalar.
+        return;
+    }
+
     Schedule &s = func.update_schedule(stage);
     const UpdateDefinition &u = func.updates()[stage];
     vector<Dim> &dims = s.dims();
-    // Vectorize the inner most loop that can be vectorized
+    
+    // If the update definition is pure in the dimension corresponding
+    // to the innermost storage dimension, vectorize that to get a
+    // dense vector store instead of a scatter.
+    string innermost_storage_dim = func.schedule().storage_dims()[0];
+    for (Split split : s.splits()) {
+        if (split.is_split() && split.old_var == innermost_storage_dim) {
+            innermost_storage_dim = split.inner;
+        }
+        // TODO: consider fuse and rename?
+    }
+
+    for (unsigned int dim = 0; dim < dims.size(); dim++) {
+        if (dims[dim].var == innermost_storage_dim) {
+            if (check_dim_size(s, dim, vec_len, dim_estimates)) {
+                vectorize_dim(s, dim_estimates, dim, vec_len);
+                // TODO: I don't understand what par_vars is about
+                return;
+            }
+            break;
+        }
+    }
+
+    
+    // Otherwise, vectorize the inner most loop that can be vectorized
     for (unsigned int dim = 0; dim < dims.size(); dim++) {
         bool dim_par = can_parallelize_rvar(dims[dim].var, func.name(), u);
         dim_par = dim_par || (par_vars.find(dims[dim].var) != par_vars.end());
