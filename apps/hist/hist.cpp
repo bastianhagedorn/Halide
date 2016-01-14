@@ -1,6 +1,7 @@
 #include "Halide.h"
 #include <stdio.h>
 using namespace Halide;
+#include "../support/auto_build.h"
 
 int main(int argc, char **argv) {
 
@@ -57,10 +58,7 @@ int main(int argc, char **argv) {
         color.parallel(y).vectorize(x, 8);
     }
 
-    if (schedule == -1)
-        color.compile_to_file("hist", {in}, target, true);
-    else
-        color.compile_to_file("hist", {in}, target);
+    auto_build(color, "hist", {in}, target, (schedule == -1));
 
     return 0;
 }
