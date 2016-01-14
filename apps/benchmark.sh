@@ -7,4 +7,4 @@ for app in cost_function_test overlap_test split_test tile_vs_inline_test \
     make clean; make bench_ref; make bench_auto;
     cd ../;
 done
-python benchmark.py
+#python benchmark.py
