@@ -4,25 +4,10 @@ from pandas import DataFrame
 import os.path
 import math
 
-apps = [ \
-"bilateral_grid", \
-"blur", \
-"camera_pipe", \
-"conv_layer", \
-"cost_function_test", \
-"harris", \
-"hist", \
-"interpolate", \
-"large_window_test", \
-"local_laplacian", \
-"mat_mul", \
-"overlap_test", \
-"parallel_test", \
-"split_test", \
-"tile_vs_inline_test", \
-"unsharp", \
-"vgg" \
-]
+disabled_apps = ['local_laplacian']
+apps = open('apps.txt').read().split()
+apps+= open('tests.txt').read().split()
+apps = filter(lambda a: a not in disabled_apps, apps)
 
 times_ref = []
 times_auto = []
