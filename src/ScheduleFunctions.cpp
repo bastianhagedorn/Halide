@@ -3920,6 +3920,26 @@ void unroll_dim(Schedule &sched, int dim) {
     dims[dim].for_type = ForType::Unrolled;
 }
 
+void reorder_dims(Schedule &sched, vector<string> &var_order) {
+    vector<Dim> &dims = sched.dims();
+    vector<Dim> new_dims;
+    for (auto &v: var_order) {
+        for (int i = 0; i < (int)dims.size() - 1; i++)
+            if (v == dims[i].var)
+                new_dims.push_back(dims[i]);
+    }
+    for (unsigned int i = 0; i < dims.size(); i++) {
+        if (find(var_order.begin(), var_order.end(), dims[i].var) ==
+            var_order.end()) {
+            new_dims.push_back(dims[i]);
+        }
+    }
+    dims.clear();
+    for (unsigned int i = 0; i < new_dims.size(); i++) {
+        dims.push_back(new_dims[i]);
+    }
+}
+
 void move_dim_to_outermost(Schedule &sched, int dim) {
     vector<Dim> &dims = sched.dims();
     dims.insert(dims.end() - 1, dims[dim]);
@@ -4098,7 +4118,7 @@ void vectorize_update(Function &func, int stage,
     Schedule &s = func.update_schedule(stage);
     const UpdateDefinition &u = func.updates()[stage];
     vector<Dim> &dims = s.dims();
-    
+
     // If the update definition is pure in the dimension corresponding
     // to the innermost storage dimension, vectorize that to get a
     // dense vector store instead of a scatter.
@@ -4121,7 +4141,7 @@ void vectorize_update(Function &func, int stage,
         }
     }
 
-    
+
     // Otherwise, vectorize the inner most loop that can be vectorized
     for (unsigned int dim = 0; dim < dims.size(); dim++) {
         bool dim_par = can_parallelize_rvar(dims[dim].var, func.name(), u);
@@ -4614,23 +4634,29 @@ void schedule_advisor(const vector<Function> &outputs,
                     }
 
                     if (sched.locality) {
-                        for(int i = (int)dims.size() - 1; i >= 0; i--) {
+                        vector<string> var_order;
+                        for(int i = 0; i < (int)dims.size() - 1; i++) {
                             // Find the variable with ith most reuse and move to innermost
                             for(int j = 0; j < (int)dims.size() - 1; j++) {
                                 int rank = 0;
                                 for (int k = 0; k < (int)dims.size() - 1; k++) {
                                     // Count up the number of dimensions with reuse
-                                    // greater than that of j
+                                    // less than that of j
                                     if (k!=j) {
-                                        if (sched.reuse[k] > sched.reuse[j] ||
-                                                (sched.reuse[k] == sched.reuse[j] && k < j))
+                                        if (sched.reuse[j] > sched.reuse[k] ||
+                                                (sched.reuse[k] == sched.reuse[j] && j < k))
                                             rank++;
                                     }
                                 }
-                                if (rank == i)
-                                    move_dim_before_innermost(s, j);
+                                if (rank == i) {
+                                    var_order.push_back(dims[i].var);
+                                }
                             }
                         }
+
+                        for (auto &v: var_order)
+                            std::cout << v << std::endl;
+                        reorder_dims(s, var_order);
                     }
 
                     set<string> par_vars;
