@@ -125,7 +125,8 @@ public:
     EXPORT void compile_to(const Outputs &output_files,
                            const std::vector<Argument> &args,
                            const std::string &fn_name,
-                           const Target &target);
+                           const Target &target,
+                           const bool auto_schedule = false);
 
     /** Statically compile a pipeline to llvm bitcode, with the given
      * filename (which should probably end in .bc), type signature,

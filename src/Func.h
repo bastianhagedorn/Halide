@@ -532,7 +532,8 @@ public:
     EXPORT void compile_to(const Outputs &output_files,
                            const std::vector<Argument> &args,
                            const std::string &fn_name,
-                           const Target &target = get_target_from_environment());
+                           const Target &target = get_target_from_environment(),
+                           const bool auto_schedule = false);
 
     /** Eagerly jit compile the function to machine code. This
      * normally happens on the first call to realize. If you're

@@ -146,7 +146,8 @@ vector<Func> Pipeline::outputs() {
 void Pipeline::compile_to(const Outputs &output_files,
                           const vector<Argument> &args,
                           const string &fn_name,
-                          const Target &target) {
+                          const Target &target,
+                          const bool auto_schedule) {
     user_assert(defined()) << "Can't compile undefined Pipeline.\n";
 
     for (Function f : contents.ptr->outputs) {
@@ -154,7 +155,7 @@ void Pipeline::compile_to(const Outputs &output_files,
             << "Can't compile undefined Func.\n";
     }
 
-    Module m = compile_to_module(args, fn_name, target);
+    Module m = compile_to_module(args, fn_name, target, auto_schedule);
 
     llvm::LLVMContext context;
     llvm::Module *llvm_module = compile_module_to_llvm_module(m, context);
