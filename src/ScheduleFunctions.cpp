@@ -2437,6 +2437,7 @@ struct Partitioner {
     map<string, vector<string> > &inlines;
     DependenceAnalysis &analy;
     map<string, pair<long long, long long> > &func_cost;
+    map<string, vector<float> > input_reuse;
 
     map<string, vector<Function> > groups;
     map<string, GroupSched> group_sched;
@@ -2662,7 +2663,9 @@ struct Partitioner {
     void initialize_groups_inline();
     void update_function_costs();
     void evaluate_option(Option &opt, Partitioner::Level level);
-    void reorder_for_input_locality();
+    void tile_for_input_locality();
+    void compute_input_reuse_pipeline();
+    vector<float> get_input_reuse(Function f, vector<string> &inputs);
     pair<float, float> evaluate_reuse(string, vector<string> &group_inputs,
                                       vector<int> &tile_sizes, bool check_cache);
 };
@@ -2958,8 +2961,6 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
     // ratio of load from fast memory vs slow memory is encoded in the machine
     // parameters.
 
-    // Computing the cost the function regions required for the group that are
-    // not computed within the group are considered as loads from slow memory.
     // We compute the size of the intermediate buffers that are required to
     // compute the output of the group.
 
@@ -3254,9 +3255,7 @@ Partitioner::Option Partitioner::choose_candidate(
     // example, if the group can be split into 10 tiles and there are 4 cores the
     // latency of the entire pipeline is 3 tiles. So either the number of tiles
     // have to a multiple of the cores or large in number to avoid the load
-    // imbalance. Till this point I have not noticed the collapse being
-    // particularly useful it might be an issue with Halide task scheduling. I
-    // need experiments confirming this obsevation.
+    // imbalance.
     //
     // 4) Does the fusion limit vectorization. Reordering function dimensions
     // and modifying data layout have significant interactions with
@@ -3358,7 +3357,6 @@ Partitioner::Option Partitioner::choose_candidate(
                           << std::endl;
             }
 
-            /*
             vector<int> new_variants = {1, 4, 8, 16, 32, 64, 128, 256};
             // Reuse based tiling
             for (unsigned int i = 0; i < args.size(); i++) {
@@ -3404,7 +3402,7 @@ Partitioner::Option Partitioner::choose_candidate(
                         cand_best_opt = opt;
                     }
                 }
-            }*/
+            }
 
             // From the outer to the inner most argument
             for (int i = (int)args.size() - 1; i >= 0; i--) {
@@ -3480,7 +3478,8 @@ pair<float, float>
             // Check if the bounds allow for tiling with the given tile size
             if (dim_estimates[arg_name] >= tile_sizes[i]) {
                 if (is_update) {
-                    // Make the tile size the smallest multiple of
+                    // Make the tile size the smallest multiple of dimension
+                    // less than the tile size
                     if (dim_estimates[arg_name]%tile_sizes[i] != 0) {
                         for (int s = tile_sizes[i] - 1; s > 0; s--) {
                             if (dim_estimates[arg_name]%s == 0) {
@@ -3605,7 +3604,77 @@ pair<float, float>
     return make_pair(realized_reuse, input_inter);
 }
 
-void Partitioner::reorder_for_input_locality() {
+vector<float>
+Partitioner::get_input_reuse(Function f, vector<string> &inputs) {
+
+    const vector<string> &args = f.args();
+    vector<string> &u_args = analy.update_args[f.name()];
+    vector<float> reuse;
+
+    unsigned int num_args = args.size() + u_args.size();
+    for (unsigned int i = 0; i < num_args; i++)
+        reuse.push_back(-1);
+    for (unsigned int i = 0; i < num_args; i++) {
+
+        vector<pair<int, int> > bounds;
+        vector<bool> eval;
+
+        map<string, int> dim_estimates =
+                        get_dim_estimates(f.name(), pipeline_bounds, analy.env);
+
+        for (unsigned int j = 0; j < num_args; j++) {
+            string arg_name = "";
+            if (j < args.size())
+                arg_name = args[j];
+            else
+                arg_name = u_args[j - args.size()];
+            if (j==i) {
+                bounds.push_back(make_pair(0, 0));
+                //std::cout << "Varying " <<  arg_name << std::endl;
+            }
+            else {
+                assert(dim_estimates.find(arg_name) != dim_estimates.end());
+                //std::cout << arg_name << ":"  << dim_estimates[arg_name]  << std::endl;
+                bounds.push_back(make_pair(0, dim_estimates[arg_name] - 1));
+            }
+            eval.push_back(true);
+        }
+
+        vector< map<string, Box> > conc_overlaps =
+                        analy.concrete_overlap_regions(f.name(), eval,
+                                                       analy.func_partial_overlaps,
+                                                       bounds);
+        /*
+        map<string, Box> conc_reg =
+                        analy.concrete_dep_regions(f.name(), eval,
+                                                   analy.func_partial_dep_regions,
+                                                   bounds); */
+
+        float input_overlap = 0;
+        //disp_regions(conc_overlaps[i]);
+        //disp_regions(analy.func_partial_dep_regions[f.name()]);
+        for (auto &in: inputs) {
+            assert(conc_overlaps[i].find(in) != conc_overlaps[i].end());
+            float area = box_area(conc_overlaps[i][in]);
+            assert(area >= 0);
+            input_overlap += area * get_func_out_size(analy.env[in]);
+        }
+        // Account for reuse of the reduction output buffer
+        if (conc_overlaps[i].find(f.name()) != conc_overlaps[i].end()) {
+            float area = box_area(conc_overlaps[i][f.name()]);
+            assert(area >= 0);
+            input_overlap += area * get_func_out_size(analy.env[f.name()]);
+        }
+        reuse[i] = input_overlap;
+    }
+    return reuse;
+}
+
+void Partitioner::compute_input_reuse_pipeline() {
+    // TODO compute the reuse for each individual function in the pipeline
+}
+
+void Partitioner::tile_for_input_locality() {
 
     // Do this for each of the groups
     for(auto &g: groups) {
@@ -3664,66 +3733,11 @@ void Partitioner::reorder_for_input_locality() {
         }
 
         if (!invalid) {
-            // Find the dimensions with zero reuse/redundant work
-            vector<float> reuse;
+            vector<float> reuse = get_input_reuse(analy.env[g.first],
+                                                  group_inputs);
+
             vector<string> &u_args = analy.update_args[g.first];
             unsigned int num_args = args.size() + u_args.size();
-            for (unsigned int i = 0; i < num_args; i++)
-                reuse.push_back(-1);
-            for (unsigned int i = 0; i < num_args; i++) {
-
-                vector<pair<int, int> > bounds;
-                vector<bool> eval;
-
-                map<string, int> dim_estimates =
-                    get_dim_estimates(g.first, pipeline_bounds, analy.env);
-
-                for (unsigned int j = 0; j < num_args; j++) {
-                    string arg_name = "";
-                    if (j < args.size())
-                        arg_name = args[j];
-                    else
-                        arg_name = u_args[j - args.size()];
-                    if (j==i) {
-                        bounds.push_back(make_pair(0, 0));
-                        //std::cout << "Varying " <<  arg_name << std::endl;
-                    }
-                    else {
-                        assert(dim_estimates.find(arg_name) !=
-                                                        dim_estimates.end());
-                        //std::cout << arg_name << ":"  << dim_estimates[arg_name]  << std::endl;
-                        bounds.push_back(make_pair(0, dim_estimates[arg_name] - 1));
-                    }
-                    eval.push_back(true);
-                }
-
-                vector< map<string, Box> > conc_overlaps =
-                    analy.concrete_overlap_regions(g.first, eval,
-                                                   analy.func_partial_overlaps,
-                                                   bounds);
-
-                map<string, Box> conc_reg =
-                    analy.concrete_dep_regions(g.first, eval,
-                                               analy.func_partial_dep_regions,
-                                               bounds);
-                float input_overlap = 0;
-                //disp_regions(conc_overlaps[i]);
-                //disp_regions(analy.func_partial_dep_regions[g.first]);
-                for (auto &in: group_inputs) {
-                    assert(conc_overlaps[i].find(in) != conc_overlaps[i].end());
-                    float area = box_area(conc_overlaps[i][in]);
-                    assert(area >= 0);
-                    input_overlap += area * get_func_out_size(analy.env[in]);
-                }
-                // Account for reuse of the reduction output buffer
-                if (conc_overlaps[i].find(g.first) != conc_overlaps[i].end()) {
-                    float area = box_area(conc_overlaps[i][g.first]);
-                    assert(area >= 0);
-                    input_overlap += area * get_func_out_size(analy.env[g.first]);
-                }
-                reuse[i] = input_overlap;
-            }
-
             std::cout << "Analyzing dims for locality" << std::endl;
             for (unsigned int i = 0; i < num_args; i++) {
                 string arg_name = "";
@@ -4481,7 +4495,7 @@ void schedule_advisor(const vector<Function> &outputs,
         std::cout << std::endl;
         part.disp_grouping();
 
-        part.reorder_for_input_locality();
+        part.tile_for_input_locality();
 
         int vec_len = part.arch_params.vec_len;
 
