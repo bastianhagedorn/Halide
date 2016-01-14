@@ -16,6 +16,7 @@
 #include "CodeGen_GPU_Dev.h"
 #include "RealizationOrder.h"
 
+#include <cstdlib>
 #include <algorithm>
 #include <limits>
 
@@ -2454,7 +2455,8 @@ struct Partitioner {
 
     Partitioner(map<string, Box> &_pipeline_bounds,
                 map<string, vector<string> > &_inlines, DependenceAnalysis &_analy,
-                map<string, pair<long long, long long> > &_func_cost):
+                map<string, pair<long long, long long> > &_func_cost,
+                int random_seed):
                 pipeline_bounds(_pipeline_bounds), inlines(_inlines),
                 analy(_analy), func_cost(_func_cost) {
 
@@ -2567,14 +2569,46 @@ struct Partitioner {
                 get_dim_estimates(f.first, pipeline_bounds, analy.env);
         }
 
-        // Initialize machine params
+        // TODO: get these args from env vars optionally too
         arch_params.parallelism = 8;
         arch_params.vec_len = 8;
-        arch_params.balance = 10;
-        arch_params.fast_mem_size = 32 * 1024 * 8;
-        // L1 = 32K
-        // L2 = 256K
-        // L3 = 8192K
+        if (!random_seed) {
+            // Initialize machine params
+            arch_params.balance = 10;
+            arch_params.fast_mem_size = 32 * 1024 * 8;
+            // L1 = 32K
+            // L2 = 256K
+            // L3 = 8192K
+            
+            char *var;
+            var = getenv("HL_AUTO_PARALLELISM");
+            if (var) {
+                arch_params.parallelism = atoi(var);
+            }
+            var = getenv("HL_AUTO_VEC_LEN");
+            if (var) {
+                arch_params.vec_len = atoi(var);
+            }
+            var = getenv("HL_AUTO_BALANCE");
+            if (var) {
+                arch_params.balance = atoi(var);
+            }
+            var = getenv("HL_AUTO_FAST_MEM_SIZE");
+            if (var) {
+                arch_params.fast_mem_size = atoi(var);
+            }
+        } else {
+            vector<int> balance = { 2,4,6,8,10,12,14,16,18,20 };
+            vector<int> fast_mem_kb = { 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192 };
+            int balance_idx = rand() % balance.size();
+            int fast_mem_kb_idx = rand() % fast_mem_kb.size();
+            
+            arch_params.balance = balance[balance_idx];
+            arch_params.fast_mem_size = fast_mem_kb[fast_mem_kb_idx]*1024*8;
+        }
+        
+        fprintf(stderr, "auto_params: par = %d, vec = %d, balance = %d, fast_mem_size = %lld\n",
+                arch_params.parallelism, arch_params.vec_len, arch_params.balance, arch_params.fast_mem_size);
     }
 
     void merge_groups(string cand_group, string child_group) {
@@ -4248,6 +4282,14 @@ void schedule_advisor(const vector<Function> &outputs,
                       bool root_default, bool auto_inline,
                       bool auto_par, bool auto_vec) {
 
+    const char *random_seed_var = getenv("HL_AUTO_RANDOM_SEED");
+    int random_seed = 0;
+    if (random_seed_var) {
+        fprintf(stderr, "HL_AUTO_RANDOM_SEED: %s\n", random_seed_var);
+        random_seed = atoi(random_seed_var);
+        srand(random_seed);
+    }
+
     if (root_default) {
         // Changing the default to compute root. This does not completely clear
         // the user schedules since the splits are already part of the domain. I
@@ -4455,7 +4497,7 @@ void schedule_advisor(const vector<Function> &outputs,
         disp_regions(pipeline_bounds);
 
         // Grouping
-        Partitioner part(pipeline_bounds, inlines, analy, func_cost);
+        Partitioner part(pipeline_bounds, inlines, analy, func_cost, random_seed);
         std::cout << std::endl << "Function costs pre Inlining" << std::endl;
         part.disp_costs();
         std::cout << std::endl;
