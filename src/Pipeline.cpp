@@ -146,7 +146,8 @@ vector<Func> Pipeline::outputs() {
 void Pipeline::compile_to(const Outputs &output_files,
                           const vector<Argument> &args,
                           const string &fn_name,
-                          const Target &target) {
+                          const Target &target,
+                          const bool auto_schedule) {
     user_assert(defined()) << "Can't compile undefined Pipeline.\n";
 
     for (Function f : contents.ptr->outputs) {
@@ -154,7 +155,7 @@ void Pipeline::compile_to(const Outputs &output_files,
             << "Can't compile undefined Func.\n";
     }
 
-    Module m = compile_to_module(args, fn_name, target);
+    Module m = compile_to_module(args, fn_name, target, auto_schedule);
 
     llvm::LLVMContext context;
     llvm::Module *llvm_module = compile_module_to_llvm_module(m, context);
@@ -175,6 +176,9 @@ void Pipeline::compile_to(const Outputs &output_files,
     }
     if (!output_files.bitcode_name.empty()) {
         compile_llvm_module_to_llvm_bitcode(llvm_module, output_files.bitcode_name);
+    }
+    if (!output_files.header_name.empty()) {
+        compile_module_to_c_header(m, output_files.header_name);
     }
 
     delete llvm_module;
@@ -217,9 +221,9 @@ void Pipeline::compile_to_c(const string &filename,
     compile_module_to_c_source(compile_to_module(args, fn_name, target, false, true), filename);
 }
 
-void Pipeline::print_loop_nest() {
+void Pipeline::print_loop_nest(std::ostream &s) {
     user_assert(defined()) << "Can't print loop nest of undefined Pipeline.\n";
-    std::cerr << Halide::Internal::print_loop_nest(contents.ptr->outputs);
+    s << Halide::Internal::print_loop_nest(contents.ptr->outputs);
 }
 
 void Pipeline::compile_to_lowered_stmt(const string &filename,

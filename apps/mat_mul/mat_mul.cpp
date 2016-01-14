@@ -54,10 +54,10 @@ int main(int argc, char **argv) {
         out.compile_jit(target, false);
 
     target.set_features({Target::NoAsserts, Target::NoRuntime, Target::NoBoundsQuery});
-    //out.compile_to_assembly("/dev/stdout", {A, B}, target);
+    out.compile_to_assembly("/dev/stdout", {A, B}, target);
 
     std::vector<Func> outs;
     outs.push_back(out);
     double best = benchmark(3, 1, [&]() { out.realize(C); });
-    std::cerr << best * 1e3 << std::endl;
+    std::cout << best * 1e3 << std::endl;
 }

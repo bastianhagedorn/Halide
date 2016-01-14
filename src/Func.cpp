@@ -1601,8 +1601,9 @@ Module Func::compile_to_module(const vector<Argument> &args, const std::string &
 void Func::compile_to(const Outputs &output_files,
                       const vector<Argument> &args,
                       const string &fn_name,
-                      const Target &target) {
-    pipeline().compile_to(output_files, args, fn_name, target);
+                      const Target &target,
+                      const bool auto_schedule) {
+    pipeline().compile_to(output_files, args, fn_name, target, auto_schedule);
 }
 
 void Func::compile_to_bitcode(const string &filename, const vector<Argument> &args, const string &fn_name,
@@ -1642,8 +1643,8 @@ void Func::compile_to_lowered_stmt(const string &filename,
     pipeline().compile_to_lowered_stmt(filename, args, fmt, target);
 }
 
-void Func::print_loop_nest() {
-    pipeline().print_loop_nest();
+void Func::print_loop_nest(std::ostream &s) {
+    pipeline().print_loop_nest(s);
 }
 
 void Func::compile_to_file(const string &filename_prefix,

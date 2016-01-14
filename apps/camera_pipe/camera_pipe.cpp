@@ -1,5 +1,6 @@
 #include "Halide.h"
 #include <stdint.h>
+#include "../support/auto_build.h"
 
 using namespace Halide;
 
@@ -330,10 +331,7 @@ int main(int argc, char **argv) {
 
     std::vector<Argument> args = {color_temp, gamma, contrast, input, matrix_3200, matrix_7000};
     Target target = get_target_from_environment();
-    if (schedule == -1)
-        processed.compile_to_file("curved", args, target, true);
-    else
-        processed.compile_to_file("curved", args);
+    auto_build(processed, "curved", args, target, (schedule == -1));
     //processed.compile_to_assembly("curved.s", args);
     //processed.compile_to_c("cam_c.cpp", args, "camc");
     //processed.compile_to_header("cam_c.h", args, "camc");

@@ -1,5 +1,6 @@
 #include "Halide.h"
 using namespace Halide;
+#include "../support/auto_build.h"
 
 int main(int argc, char **argv) {
 
@@ -42,10 +43,7 @@ int main(int argc, char **argv) {
     }
 
     Target target = get_target_from_environment();
-    if (schedule == -1)
-        up[num_levels - 1].compile_to_file("overlap", {input}, target, true);
-    else
-        up[num_levels - 1].compile_to_file("overlap", {input});
+    auto_build(up[num_levels - 1], "overlap", {input}, target, (schedule == -1));
 
     return 0;
 }

@@ -275,5 +275,5 @@ int main(int argc, char **argv) {
         test.compile_jit(target, false);
 
     double best = benchmark(3, 1, [&]() { test.realize({loss, scores}); });
-    std::cerr << best * 1e3 << std::endl;
+    std::cout << best * 1e3 << std::endl;
 }

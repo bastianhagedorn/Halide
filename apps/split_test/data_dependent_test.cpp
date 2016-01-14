@@ -1,5 +1,6 @@
 #include "Halide.h"
 using namespace Halide;
+#include "../support/auto_build.h"
 
 int main(int argc, char **argv) {
 
@@ -34,10 +35,7 @@ int main(int argc, char **argv) {
     Pipeline test(outs);
 
     Target target = get_target_from_environment();
-    if (schedule == -1)
-        test.compile_to_file("data_dep", {input}, target, true);
-    else
-        test.compile_to_file("data_dep", {input});
+    auto_build(test, "data_dep", {input}, target, (schedule == -1));
 
     return 0;
 }

@@ -1,4 +1,5 @@
 #include "Halide.h"
+#include "../support/auto_build.h"
 using namespace Halide;
 
 int main(int argc, char **argv) {
@@ -24,10 +25,7 @@ int main(int argc, char **argv) {
     }
 
     Target target = get_target_from_environment();
-    if (schedule == -1)
-        blur_y.compile_to_file("halide_blur", {input}, target, true);
-    else
-        blur_y.compile_to_file("halide_blur", {input});
+    auto_build(blur_y, "halide_blur", {input}, target, (schedule == -1));
 
     /*
     blur_y.split(y, y, yi, 4).split(x, x, xi, 64).reorder(xi, yi, x, y).

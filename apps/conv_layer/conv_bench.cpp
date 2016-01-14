@@ -11,7 +11,7 @@ int main(int argc, char **argv) {
 
     Image<float> data(d_w, d_h, ch, N);
     DataLayer * d_layer = new DataLayer(d_h, d_w, ch, N, data);
-    printf("data out size %d x %d x %d x %d\n", d_layer->out_dim_size(0),
+    fprintf(stderr, "data out size %d x %d x %d x %d\n", d_layer->out_dim_size(0),
                                                 d_layer->out_dim_size(1),
                                                 d_layer->out_dim_size(2),
                                                 d_layer->out_dim_size(3));
@@ -24,7 +24,7 @@ int main(int argc, char **argv) {
     float reg = 0.1;
     Convolutional * conv  = new Convolutional(n_f, f_w, f_h, pad,
                                               stride, reg, d_layer);
-    printf("conv out size %d x %d x %d x %d\n", conv->out_dim_size(0),
+    fprintf(stderr, "conv out size %d x %d x %d x %d\n", conv->out_dim_size(0),
                                                 conv->out_dim_size(1),
                                                 conv->out_dim_size(2),
                                                 conv->out_dim_size(3));
@@ -95,5 +95,5 @@ int main(int argc, char **argv) {
         f_ReLU.compile_jit(target, false);
 
     double best = benchmark(3, 1, [&]() { f_ReLU.realize(conv_out); });
-    std::cerr << best * 1e3 << std::endl;
+    std::cout << best * 1e3 << std::endl;
 }

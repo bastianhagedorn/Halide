@@ -65,6 +65,10 @@ struct Outputs {
      * output is desired. */
     std::string bitcode_name;
 
+   /** The name of the emitted header file. Empty if no header file
+    * output is desired. */
+   std::string header_name;
+
     /** Make a new Outputs struct that emits everything this one does
      * and also an object file with the given name. */
     Outputs object(const std::string &object_name) {
@@ -88,6 +92,14 @@ struct Outputs {
         updated.bitcode_name = bitcode_name;
         return updated;
     }
+    
+   /** Make a new Outputs struct that emits everything this one does
+    * and also a header file with the given name. */
+   Outputs header(const std::string &header_name) {
+       Outputs updated = *this;
+       updated.header_name = header_name;
+       return updated;
+   }
 };
 
 struct JITExtern;
@@ -125,7 +137,8 @@ public:
     EXPORT void compile_to(const Outputs &output_files,
                            const std::vector<Argument> &args,
                            const std::string &fn_name,
-                           const Target &target);
+                           const Target &target,
+                           const bool auto_schedule = false);
 
     /** Statically compile a pipeline to llvm bitcode, with the given
      * filename (which should probably end in .bc), type signature,
@@ -187,7 +200,7 @@ public:
     /** Write out the loop nests specified by the schedule for this
      * Pipeline's Funcs. Helpful for understanding what a schedule is
      * doing. */
-    EXPORT void print_loop_nest();
+    EXPORT void print_loop_nest(std::ostream &s = std::cerr);
 
     /** Compile to object file and header pair, with the given
      * arguments. Also names the C function to match the filename

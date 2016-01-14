@@ -1,6 +1,7 @@
 #include "Halide.h"
 #include <stdio.h>
 using namespace Halide;
+#include "../support/auto_build.h"
 
 int main(int argc, char **argv) {
 
@@ -61,10 +62,7 @@ int main(int argc, char **argv) {
         unsharp.vectorize(x, 8).parallel(y).reorder(x, c, y);
     }
 
-    if (schedule == -1)
-        unsharp.compile_to_file("unsharp", {in}, target, true);
-    else
-        unsharp.compile_to_file("unsharp", {in}, target);
+    auto_build(unsharp, "unsharp", {in}, target, (schedule == -1));
 
     return 0;
 }
