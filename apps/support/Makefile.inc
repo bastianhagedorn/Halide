@@ -4,7 +4,6 @@ HALIDE_SRC_PATH ?= ../..
 CXX ?= g++
 GXX ?= g++
 CXX += -O3 -march=native -Wall -fopenmp -g
-THREADS_TO_TEST ?= 1 2 4 8
 
 CFLAGS += -I $(HALIDE_BIN_PATH)/include/ -I $(HALIDE_SRC_PATH)/tools/ -I $(HALIDE_SRC_PATH)/apps/support/
 CXXFLAGS += -std=c++11 -I $(HALIDE_BIN_PATH)/include/ -I $(HALIDE_SRC_PATH)/tools/ -I $(HALIDE_SRC_PATH)/apps/support/
@@ -51,3 +50,21 @@ endif
 ifneq (, $(findstring opengl,$(HL_TARGET)))
   OPENGL_LDFLAGS=$(PLATFORM_OPENGL_LDFLAGS)
 endif
+
+# BENCHMARKING
+THREADS_TO_TEST ?= 1 2 4 8
+REF_BENCHES=$(patsubst %,bench_ref.%.txt,$(THREADS_TO_TEST))
+AUTO_BENCHES=$(patsubst %,bench_auto.%.txt,$(THREADS_TO_TEST))
+
+bench_%.txt: $(TESTS)
+	$(eval NTHREADS := $(word 2,$(subst ., ,$@)))
+	$(eval VER := $(word 2,$(subst _, ,$(word 1,$(subst ., ,$@)))))
+	OMP_NUM_THREADS=$(NTHREADS) HL_NUM_THREADS=$(NTHREADS) ./test.sh $(VER) > $@
+
+ref_perf.txt: $(REF_BENCHES)
+	cat $^ > $@
+bench_ref: ref_perf.txt
+auto_perf.txt: $(AUTO_BENCHES)
+	cat $^ > $@
+bench_auto: auto_perf.txt
+bench: bench_ref bench_auto

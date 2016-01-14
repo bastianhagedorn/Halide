@@ -330,10 +330,17 @@ int main(int argc, char **argv) {
 
     std::vector<Argument> args = {color_temp, gamma, contrast, input, matrix_3200, matrix_7000};
     Target target = get_target_from_environment();
-    if (schedule == -1)
-        processed.compile_to_file("curved", args, target, true);
-    else
-        processed.compile_to_file("curved", args);
+    Outputs o;
+    o = o.header("curved.h");
+    bool auto_schedule;
+    if (schedule == -1) {
+        o = o.object("curved_auto.o");
+        auto_schedule = true;
+    } else {
+        o = o.object("curved_ref.o");
+        auto_schedule = false;
+    }
+    processed.compile_to(o, args, "curved", target, auto_schedule);
     //processed.compile_to_assembly("curved.s", args);
     //processed.compile_to_c("cam_c.cpp", args, "camc");
     //processed.compile_to_header("cam_c.h", args, "camc");
