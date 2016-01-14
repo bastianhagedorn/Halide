@@ -25,7 +25,7 @@ int main(int argc, char **argv) {
     }
 
     Target target = get_target_from_environment();
-    auto_build(stencils[num_stencils - 1], "data_dep", {input}, target, (schedule == -1));
+    auto_build(g, "data_dep", {input}, target, (schedule == -1));
 
     return 0;
 }
