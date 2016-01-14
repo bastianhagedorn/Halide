@@ -3737,6 +3737,7 @@ void Partitioner::reorder_for_input_locality() {
 
             float best_reuse = 0;
             vector<int> best_tiling;
+
             /*
             vector<int> new_variants = {1, 4, 8, 16, 32, 64, 128, 256};
             // Reuse based tiling
@@ -4102,6 +4103,10 @@ void vectorize_update(Function &func, int stage,
             vectorize_dim(s, dim_estimates, dim, vec_len);
             par_vars.insert(dims[dim+1].var);
             break;
+        } else {
+            int dim_size = get_dim_size(s, dim, dim_estimates);
+            if (dim_size < vec_len)
+                unroll_dim(s, dim);
         }
     }
 }
@@ -4442,6 +4447,7 @@ void schedule_advisor(const vector<Function> &outputs,
                 std::cout << "]" << std::endl;
 
                 // Reordering by reuse
+                /*
                 for(int i = (int)dims.size() - 1; i >= 0; i--) {
                     // Find the variable with ith most reuse and move to innermost
                     for(int j = 0; j < (int)dims.size() - 1; j++) {
@@ -4458,7 +4464,7 @@ void schedule_advisor(const vector<Function> &outputs,
                         if (rank == i)
                             move_dim_before_innermost(g_out.schedule(), j);
                     }
-                }
+                }*/
             }
 
             for (auto &e: out_estimates)
@@ -4492,6 +4498,9 @@ void schedule_advisor(const vector<Function> &outputs,
             {
                 // Vectorize first
                 Schedule &s = g_out.schedule();
+                if (check_dim_size(s, 0, vec_len, out_estimates))
+                    simple_vectorize(g_out, out_estimates, 0, vec_len);
+                /*
                 if (auto_vec) {
                     int vec_dim = 0;
                     int can_vec = true;
@@ -4512,7 +4521,7 @@ void schedule_advisor(const vector<Function> &outputs,
                         }
 
                     }
-                }
+                } */
                 int outer_dim = -1;
                 bool can_par = pick_dim_to_parallelize(g_out, out_estimates,
                                                        parallelism, num_tile_dims,
@@ -4575,6 +4584,27 @@ void schedule_advisor(const vector<Function> &outputs,
                         }
                     }
 
+                    /*
+                    if (sched.locality) {
+                        for(int i = (int)dims.size() - 1; i >= 0; i--) {
+                            // Find the variable with ith most reuse and move to innermost
+                            for(int j = 0; j < (int)dims.size() - 1; j++) {
+                                int rank = 0;
+                                for (int k = 0; k < (int)dims.size() - 1; k++) {
+                                    // Count up the number of dimensions with reuse
+                                    // greater than that of j
+                                    if (k!=j) {
+                                        if (sched.reuse[k] > sched.reuse[j] ||
+                                                (sched.reuse[k] == sched.reuse[j] && k < j))
+                                            rank++;
+                                    }
+                                }
+                                if (rank == i)
+                                    move_dim_before_innermost(s, j);
+                            }
+                        }
+                    }*/
+
                     set<string> par_vars;
                     for(auto &v: update_vars) {
                         int index = -1;
@@ -4606,13 +4636,14 @@ void schedule_advisor(const vector<Function> &outputs,
                     }
 
                     if(auto_par) {
-                        int curr_par = 1;
+                        //int curr_par = 1;
                         // Exploiting nested parallelism
                         for (int i = (int)dims.size() - 2; i > 0 ; i--) {
                             bool dim_par = can_parallelize_rvar(dims[i].var,
                                     g_out.name(), u);
                             dim_par = dim_par ||
                                 (par_vars.find(dims[i].var) != par_vars.end());
+                            /*
                             if (dim_par) {
                                 curr_par = curr_par * out_up_estimates[dims[i].var];
                                 parallelize_dim(s, i);
@@ -4620,16 +4651,14 @@ void schedule_advisor(const vector<Function> &outputs,
                                     break;
                             } else {
                                 break;
-                            }
+                            }*/
 
-                            /*
-                               if (dim_par && out_up_estimates[dims[i].var] > parallelism) {
-                               move_dim_to_outermost(s, i);
-                               int outer_dim = dims.size() - 2;
-                               parallelize_dim(s, outer_dim);
-                               break;
-                               }
-                               */
+                            if (dim_par && out_up_estimates[dims[i].var] > parallelism) {
+                                move_dim_to_outermost(s, i);
+                                int outer_dim = dims.size() - 2;
+                                parallelize_dim(s, outer_dim);
+                                break;
+                            }
                         }
                     }
                 }
