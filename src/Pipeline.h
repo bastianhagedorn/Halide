@@ -65,6 +65,10 @@ struct Outputs {
      * output is desired. */
     std::string bitcode_name;
 
+   /** The name of the emitted header file. Empty if no header file
+    * output is desired. */
+   std::string header_name;
+
     /** Make a new Outputs struct that emits everything this one does
      * and also an object file with the given name. */
     Outputs object(const std::string &object_name) {
@@ -88,6 +92,14 @@ struct Outputs {
         updated.bitcode_name = bitcode_name;
         return updated;
     }
+    
+   /** Make a new Outputs struct that emits everything this one does
+    * and also a header file with the given name. */
+   Outputs header(const std::string &header_name) {
+       Outputs updated = *this;
+       updated.header_name = header_name;
+       return updated;
+   }
 };
 
 struct JITExtern;

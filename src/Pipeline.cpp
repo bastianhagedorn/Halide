@@ -177,6 +177,9 @@ void Pipeline::compile_to(const Outputs &output_files,
     if (!output_files.bitcode_name.empty()) {
         compile_llvm_module_to_llvm_bitcode(llvm_module, output_files.bitcode_name);
     }
+    if (!output_files.header_name.empty()) {
+        compile_module_to_c_header(m, output_files.header_name);
+    }
 
     delete llvm_module;
 }
