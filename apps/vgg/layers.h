@@ -149,7 +149,7 @@ class Affine: public Layer {
             forward(unit_dim, n) = b(unit_dim);
             // Dot product
             forward(unit_dim, n) +=
-                in_f(r.x, n) * W(r.x, unit_dim);
+                in_f(r.x, n) * W(r.x, clamp(unit_dim, 0, num_units - 1));
 
             if (schedule == 1) {
                 forward.compute_root().fuse(unit_dim, n, par).parallel(par);
@@ -608,7 +608,8 @@ class DataLayer: public Layer {
                 in_w = _in_w; in_h = _in_h; in_ch = _in_ch;
                 num_samples = _num_samples;
                 // Define forward
-                forward(x, y, z, n) = data(x, y, z, n);
+                forward =
+                    BoundaryConditions::repeat_edge(data, 0, in_w, 0, in_h);
         }
         // Nothing to propagate
         void back_propagate(Func dout) { assert(dout.defined()); return; }

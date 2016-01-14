@@ -54,7 +54,7 @@ int main(int argc, char **argv) {
         out.compile_jit(target, false);
 
     target.set_features({Target::NoAsserts, Target::NoRuntime, Target::NoBoundsQuery});
-    out.compile_to_assembly("/dev/stdout", {A, B}, target);
+    //out.compile_to_assembly("/dev/stdout", {A, B}, target);
 
     std::vector<Func> outs;
     outs.push_back(out);
