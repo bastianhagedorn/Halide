@@ -57,10 +57,11 @@ print-%:
 # BENCHMARKING
 TESTS ?= test_ref test_auto # overload before include if desired!
 THREADS_TO_TEST ?= 1 2 4 8
-REF_BENCHES=$(patsubst %,bench_ref.%.txt,$(THREADS_TO_TEST))
-AUTO_BENCHES=$(patsubst %,bench_auto.%.txt,$(THREADS_TO_TEST))
+REF_BENCHES=$(patsubst %,.bench_ref.%.txt,$(THREADS_TO_TEST))
+AUTO_BENCHES=$(patsubst %,.bench_auto.%.txt,$(THREADS_TO_TEST))
+BENCHES=$(REF_BENCHES) $(AUTO_BENCHES)
 
-bench_%.txt: $(TESTS)
+.bench_%.txt: $(TESTS)
 	$(eval NTHREADS := $(word 2,$(subst ., ,$@)))
 	$(eval VER := $(word 2,$(subst _, ,$(word 1,$(subst ., ,$@)))))
 	OMP_NUM_THREADS=$(NTHREADS) HL_NUM_THREADS=$(NTHREADS) ./test.sh $(VER) | tail -n1 > $@
@@ -72,3 +73,6 @@ auto_perf.txt: $(AUTO_BENCHES)
 	cat $^ > $@
 bench_auto: auto_perf.txt
 bench: bench_ref bench_auto
+
+clean_bench:
+	rm -f $(BENCHES) auto_perf.txt ref_perf.txt

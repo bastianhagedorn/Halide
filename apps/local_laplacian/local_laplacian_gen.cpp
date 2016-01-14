@@ -1,5 +1,6 @@
 #include "Halide.h"
 using namespace Halide;
+#include "../support/auto_build.h"
 
 Var x, y;
 
@@ -193,12 +194,9 @@ int main(int argc, char **argv) {
         output.print_loop_nest();
     }
 
-    if (schedule == -1)
-        output.compile_to_file("local_laplacian", {levels, alpha, beta, input},
-                                target, true);
-    else
-        output.compile_to_file("local_laplacian", {levels, alpha, beta, input},
-                                target);
+    auto_build(output, "local_laplacian", {levels, alpha, beta, input},
+                            target, (schedule == -1));
+
     //output.compile_to_c("local_laplacian_c.cpp", {levels, alpha, beta, input}, "llc", target);
     //output.compile_to_header("local_laplacian_c.h", {levels, alpha, beta, input}, "llc", target);
     return 0;

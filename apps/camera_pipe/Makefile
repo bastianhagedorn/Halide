@@ -33,6 +33,6 @@ out.png: process_ref
 camera_pipe.avi: camera_pipe.cpp viz.sh $(HALIDE_TRACE_VIZ) ../../util/HalideTraceViz
 	bash viz.sh
 
-clean:
-	rm -f out.png process_ref process_auto curved_ref.o curved_auto.o \
-		camera_pipe fcam/*.o ref_perf.txt auto_perf.txt bench_*.txt curved.s curved.h
+clean: clean_bench
+	rm -f out.png process_ref process_auto curved*.o \
+		camera_pipe fcam/*.o curved.s curved.h

@@ -10,5 +10,5 @@ interpolate: interpolate.cpp
 out.png: interpolate
 	./interpolate ../images/rgba.png out.png
 
-clean:
-	rm -f interpolate interpolate.h out.png ref_perf.txt auto_perf.txt
+clean: clean_bench
+	rm -f interpolate out.png

@@ -12,6 +12,6 @@ data_dependent_test_auto.o: data_dependent_test
 test_%: test.cpp data_dependent_test_%
 	$(CXX) $(CXXFLAGS) $^ -o $@ -lpthread -ldl $(PNGFLAGS)
 
-clean:
-	rm -f test data_dependent_test data_dep.h data_dep.o ref_perf.txt auto_perf.txt test_ref \
+clean: clean_bench
+	rm -f test data_dependent_test data_dep.h data_dep*.o test_ref \
     test_auto

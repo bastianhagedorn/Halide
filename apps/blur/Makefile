@@ -12,6 +12,6 @@ halide_blur_auto.o: halide_blur
 test_%: test.cpp halide_blur_%.o
 	$(CXX) $(CXXFLAGS) $^ -o $@ -lpthread -ldl $(PNGFLAGS)
 
-clean:
-	rm -f test halide_blur halide_blur.h halide_blur.o ref_perf.txt auto_perf.txt test_ref \
+clean: clean_bench
+	rm -f test halide_blur halide_blur.h halide_blur*.o test_ref \
     test_auto

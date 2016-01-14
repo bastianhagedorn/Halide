@@ -2,8 +2,8 @@
 *_auto
 ref_perf.txt
 auto_perf.txt
-bench_ref.*.txt
-bench_auto.*.txt
+.bench_ref.*.txt
+.bench_auto.*.txt
 benchmarks-*.png
 cost_function_test/cost.h
 cost_function_test/cost_function_test
