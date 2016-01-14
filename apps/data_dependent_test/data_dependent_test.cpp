@@ -1,5 +1,6 @@
 #include "Halide.h"
 using namespace Halide;
+#include "../support/auto_build.h"
 
 int main(int argc, char **argv) {
 
@@ -24,10 +25,7 @@ int main(int argc, char **argv) {
     }
 
     Target target = get_target_from_environment();
-    if (schedule == -1)
-        g.compile_to_file("data_dep", {input}, target, true);
-    else
-        g.compile_to_file("data_dep", {input});
+    auto_build(stencils[num_stencils - 1], "data_dep", {input}, target, (schedule == -1));
 
     return 0;
 }

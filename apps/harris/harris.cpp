@@ -1,6 +1,7 @@
 #include "Halide.h"
 #include <stdio.h>
 using namespace Halide;
+#include "../support/auto_build.h"
 
 Expr sum3x3(Func f, Var x, Var y) {
     return f(x-1, y-1) + f(x-1, y) + f(x-1, y+1) +
@@ -80,10 +81,7 @@ int main(int argc, char **argv) {
         shifted.print_loop_nest();
     }
 
-    if (schedule == -1)
-        shifted.compile_to_file("harris", {in}, target, true);
-    else
-        shifted.compile_to_file("harris", {in}, target);
+    auto_build(shifted, "harris", {in}, target, (schedule == -1));
 
     return 0;
 }
