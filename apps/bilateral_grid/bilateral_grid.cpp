@@ -1,5 +1,6 @@
 #include "Halide.h"
 #include <stdio.h>
+#include "../support/auto_build.h"
 
 using namespace Halide;
 
@@ -111,12 +112,7 @@ int main(int argc, char **argv) {
         blury.compute_root().reorder(c, x, y, z).parallel(z).vectorize(x, 8).unroll(c);
         bilateral_grid.compute_root().parallel(y).vectorize(x, 8);
     }
-    if (schedule == -1)
-        bilateral_grid.compile_to_file("bilateral_grid", {r_sigma, input},
-                                        target, true);
-    else
-        bilateral_grid.compile_to_file("bilateral_grid", {r_sigma, input},
-                                        target);
-
+    auto_build(bilateral_grid, "bilateral_grid", {r_sigma, input},
+                                    target, (schedule == -1));
     return 0;
 }

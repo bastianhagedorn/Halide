@@ -51,7 +51,11 @@ ifneq (, $(findstring opengl,$(HL_TARGET)))
   OPENGL_LDFLAGS=$(PLATFORM_OPENGL_LDFLAGS)
 endif
 
+print-%:
+	@echo '$*=$($*)'
+
 # BENCHMARKING
+TESTS ?= test_ref test_auto # overload before include if desired!
 THREADS_TO_TEST ?= 1 2 4 8
 REF_BENCHES=$(patsubst %,bench_ref.%.txt,$(THREADS_TO_TEST))
 AUTO_BENCHES=$(patsubst %,bench_auto.%.txt,$(THREADS_TO_TEST))
