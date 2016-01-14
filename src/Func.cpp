@@ -1643,8 +1643,8 @@ void Func::compile_to_lowered_stmt(const string &filename,
     pipeline().compile_to_lowered_stmt(filename, args, fmt, target);
 }
 
-void Func::print_loop_nest() {
-    pipeline().print_loop_nest();
+void Func::print_loop_nest(std::ostream &s) {
+    pipeline().print_loop_nest(s);
 }
 
 void Func::compile_to_file(const string &filename_prefix,

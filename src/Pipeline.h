@@ -200,7 +200,7 @@ public:
     /** Write out the loop nests specified by the schedule for this
      * Pipeline's Funcs. Helpful for understanding what a schedule is
      * doing. */
-    EXPORT void print_loop_nest();
+    EXPORT void print_loop_nest(std::ostream &s = std::cerr);
 
     /** Compile to object file and header pair, with the given
      * arguments. Also names the C function to match the filename

@@ -221,9 +221,9 @@ void Pipeline::compile_to_c(const string &filename,
     compile_module_to_c_source(compile_to_module(args, fn_name, target, false, true), filename);
 }
 
-void Pipeline::print_loop_nest() {
+void Pipeline::print_loop_nest(std::ostream &s) {
     user_assert(defined()) << "Can't print loop nest of undefined Pipeline.\n";
-    std::cerr << Halide::Internal::print_loop_nest(contents.ptr->outputs);
+    s << Halide::Internal::print_loop_nest(contents.ptr->outputs);
 }
 
 void Pipeline::compile_to_lowered_stmt(const string &filename,
