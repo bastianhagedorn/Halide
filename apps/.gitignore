@@ -2,7 +2,7 @@
 *_auto
 ref_perf.txt
 auto_perf.txt
-benchmarks.png
+benchmarks-*.png
 cost_function_test/cost.h
 cost_function_test/cost_function_test
 data_dependent_test/data_dep.h

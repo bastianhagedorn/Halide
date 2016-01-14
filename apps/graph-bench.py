@@ -4,11 +4,25 @@ from pandas import DataFrame
 import os.path
 import math
 
-apps = ["blur", "hist", "unsharp", "harris", "local_laplacian",         \
-        "interpolate", "bilateral_grid", "camera_pipe", "conv_layer",   \
-        "mat_mul", "cost_function_test", "overlap_test", "split_test",  \
-        "tile_vs_inline_test", "data_dependent_test", "parallel_test",  \
-        "vgg", "large_window_test" ]
+apps = [ \
+"bilateral_grid", \
+"blur", \
+"camera_pipe", \
+"conv_layer", \
+"cost_function_test", \
+"harris", \
+"hist", \
+"interpolate", \
+"large_window_test", \
+"local_laplacian", \
+"mat_mul", \
+"overlap_test", \
+"parallel_test", \
+"split_test", \
+"tile_vs_inline_test", \
+"unsharp", \
+"vgg" \
+]
 
 times_ref = []
 times_auto = []
@@ -33,20 +47,37 @@ for app in apps:
     res = res.append(DataFrame({
         'app': [app_name]*num_samples,
         'ver': 'auto',
-        'threads': range(1, num_samples+1),
-        'perf': times_auto,
+        'threads': [2**i for i in range(num_samples)],
+        'runtime': times_auto, # msecs
+        'throughput': [1000.0/t for t in times_auto], # runs/sec
         'speedup': speed_up
     }))
     
     res = res.append(DataFrame({
         'app': [app_name]*num_samples,
         'ver': 'ref',
-        'threads': range(1, num_samples+1),
-        'perf': times_ref,
+        'threads': [2**i for i in range(num_samples)],
+        'runtime': times_ref, # msecs
+        'throughput': [1000.0/t for t in times_ref], # runs/sec
         'speedup': [1.0]*num_samples
     }))
 
-pl = ggplot('data', aes(x='threads', y='speedup'))
-geom = geom_bar(aes(fill='ver'), stat="'identity'", position="'dodge'")
-geom = geom + facet_wrap('~ app')
-ggsave('benchmarks.png', pl + geom, data=res)
+log2_threads = scale_x_continuous(trans='log2_trans()')
+
+pl = {}
+for p in ('speedup','throughput','runtime'):
+    pl[p] = ggplot('data', aes(x='threads', y=p))
+
+bars = geom_bar(aes(fill='ver'), stat="'identity'", position="'dodge'")
+lines = geom_line(aes(colour='ver'))
+
+def save(name, geom):
+    wrap = facet_wrap('~ app')
+    ggsave('benchmarks-{0}.png'.format(name),
+            pl[name] + geom + log2_threads + wrap,
+            data=res,
+            prefix='library(scales)')
+
+save('speedup', bars)
+save('runtime', lines)
+save('throughput', lines)
