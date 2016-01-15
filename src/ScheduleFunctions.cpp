@@ -3207,6 +3207,20 @@ pair<float, vector<Partitioner::Option> >
         // Compute the aggregate benefit for inlining into all the children
         float overall_benefit = 0;
         vector<Option> options;
+        // Flip a coin and skip evaluating the option. Will also make the
+        // auto tuning runs faster.
+        //
+        // This will change the order of choices from greedy considering
+        // all the chocies to greedy only considering a subset of the
+        // choices at any point. With this we are going against the cost
+        // model in a bounded fashion.
+        //
+        // This will also achive the goal of early stopping since there
+        // might no benefit in fusing the subset of choice that are being
+        // considered
+        if (random_seed && rand()%2==0) {
+            continue;
+        }
         for (auto &c: children[p.first]) {
 
             // Get the output function of the child group
@@ -3331,11 +3345,38 @@ Partitioner::Option Partitioner::choose_candidate(
     vector<Option> options;
     vector<int> size_variants = {256, 128, 64, 32, 16, 8, 4};
 
+    if(random_seed) {
+        vector<int> rand_variants;
+        for (auto &s: size_variants) {
+            if (rand()%2 == 0) {
+                rand_variants.push_back(s);
+            }
+        }
+        size_variants.clear();
+        size_variants = rand_variants;
+    }
+
     Option best_opt;
 
     for (auto &p: cand_pairs) {
         pair<string, string> key = make_pair(p.first, p.second);
         Option cand_best_opt;
+
+        // Flip a coin and skip evaluating the option. Will also make the
+        // auto tuning runs faster.
+        //
+        // This will change the order of choices from greedy considering
+        // all the chocies to greedy only considering a subset of the
+        // choices at any point. With this we are going against the cost
+        // model in a bounded fashion.
+        //
+        // This will also achive the goal of early stopping since there
+        // might no benefit in fusing the subset of choice that are being
+        // considered
+        if (random_seed && rand()%2==0) {
+            continue;
+        }
+
         // Check if the pair has been evaluated before
         if (option_cache.find(key) != option_cache.end()) {
             //std::cerr << "Hit:" << p.first << "," << p.second << std::endl;
@@ -3413,6 +3454,7 @@ Partitioner::Option Partitioner::choose_candidate(
                               << std::endl;
                 }
             }
+
             /*
             vector<int> new_variants = {1, 4, 8, 16, 32, 64, 128, 256};
             // Reuse based tiling
@@ -3774,6 +3816,18 @@ void Partitioner::tile_for_input_locality() {
         // the porition of inputs fit in fast memory
         vector<int> size_variants = {256, 128, 64, 32, 16, 8, 4};
 
+        if(random_seed) {
+            // Truncate tile size variants randomly
+            vector<int> rand_variants;
+            for (auto &s: size_variants) {
+                if (rand()%2 == 0) {
+                    rand_variants.push_back(s);
+                }
+            }
+            size_variants.clear();
+            size_variants = rand_variants;
+        }
+
         // If the pair has not been evaluated before create all the options
         // and evaluate them
 
@@ -3815,6 +3869,19 @@ void Partitioner::tile_for_input_locality() {
             vector<int> best_tiling;
 
             vector<int> new_variants = {1, 4, 8, 16, 32, 64, 128, 256};
+
+            if(random_seed) {
+                // Truncate tile size variants randomly
+                vector<int> rand_variants;
+                for (auto &s: new_variants) {
+                    if (rand()%2 == 0) {
+                        rand_variants.push_back(s);
+                    }
+                }
+                new_variants.clear();
+                new_variants = rand_variants;
+            }
+
             // Reuse based tiling
             for (unsigned int i = 0; i < num_args; i++) {
                 for (auto &s: new_variants) {
@@ -4330,10 +4397,10 @@ void schedule_advisor(const vector<Function> &outputs,
     const char *random_seed_var = getenv("HL_AUTO_RANDOM_SEED");
     int random_seed = 0;
     if (random_seed_var) {
-        fprintf(stdout, "HL_AUTO_RANDOM_SEED: %s\n", random_seed_var);
         random_seed = atoi(random_seed_var);
         srand(random_seed);
     }
+    fprintf(stdout, "HL_AUTO_RANDOM_SEED: %d\n", random_seed);
 
     const char *debug_var = getenv("HL_AUTO_DEBUG");
     bool debug_info = false;
