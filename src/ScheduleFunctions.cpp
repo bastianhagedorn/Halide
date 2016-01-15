@@ -2611,8 +2611,10 @@ struct Partitioner {
             arch_params.fast_mem_size = fast_mem_kb[fast_mem_kb_idx]*1024*8;
         }
 
-        fprintf(stdout, "auto_params: par = %d, vec = %d, balance = %d, fast_mem_size = %lld\n",
-                arch_params.parallelism, arch_params.vec_len, arch_params.balance, arch_params.fast_mem_size);
+        fprintf(stdout, "{\"auto_params\": { \n \"par\": \"%d\", \"vec\" : "
+                "\"%d\", \"balance\" : \"%d\", \"fast_mem_size\" : \"%lld\"\n}}\n",
+                arch_params.parallelism, arch_params.vec_len,
+                arch_params.balance, arch_params.fast_mem_size);
     }
 
     void merge_groups(string cand_group, string child_group) {
@@ -4465,10 +4467,6 @@ void schedule_advisor(const vector<Function> &outputs,
         inlines = simple_inline(all_calls, consumers, env);
     */
 
-    if (debug_info) {
-        std::cerr << "Inlining lambda functions:" << std::endl;
-    }
-
     for (auto &f: env) {
         if (env[f.first].is_lambda()) {
             //assert(consumers[f.first].size() == 1);
@@ -4478,8 +4476,11 @@ void schedule_advisor(const vector<Function> &outputs,
         }
     }
 
-    disp_inlines(inlines);
-    std::cout << std::endl;
+    if (debug_info) {
+        std::cerr << "Inlining lambda functions:" << std::endl;
+        disp_inlines(inlines);
+        std::cout << std::endl;
+    }
 
     bool group = true;
     auto_vec = true;
