@@ -1555,9 +1555,9 @@ map<string, Box> regions_required(Function f, const vector<string> &update_args,
                 if (update.domain.defined()) {
                     // Partial analysis is only done for the output function f
                     if (num_update_args > 0 && curr_f.name() == f.name()) {
-                        //std::cout << curr_f.name() << std::endl;
+                        //std::cerr << curr_f.name() << std::endl;
                         assert(update.domain.domain().size() == num_update_args);
-                        //std::cout << curr_bounds.size() << " " << num_args << " "
+                        //std::cerr << curr_bounds.size() << " " << num_args << " "
                         //          << num_update_args << std::endl;
                         assert(curr_bounds.size() ==
                                     num_update_args + num_args);
@@ -1850,14 +1850,14 @@ map<string, Box> sym_to_concrete_bounds(vector< pair<Var, Var> > &sym,
 
 void disp_box(Box &b) {
     for (unsigned int dim = 0; dim < b.size(); dim++)
-        std::cout << "(" << b[dim].min << "," << b[dim].max << ")";
+        std::cerr << "(" << b[dim].min << "," << b[dim].max << ")";
 }
 
 void disp_regions(map<string, Box> &regions) {
     for (auto& reg: regions) {
-        std::cout << reg.first;
+        std::cerr << reg.first;
         disp_box(reg.second);
-        std::cout << std::endl;
+        std::cerr << std::endl;
     }
 }
 
@@ -1901,9 +1901,9 @@ struct DependenceAnalysis {
             func_dep_regions[kv.first] = regions;
 
             /*
-            std::cout << "Function regions required for " << kv.first << ":" << std::endl;
+            std::cerr << "Function regions required for " << kv.first << ":" << std::endl;
             disp_regions(regions);
-            std::cout << std::endl;
+            std::cerr << std::endl;
             */
 
             assert(func_overlaps.find(kv.first) == func_overlaps.end());
@@ -1914,15 +1914,15 @@ struct DependenceAnalysis {
                 func_overlaps[kv.first].push_back(overlaps);
 
                 /*
-                std::cout << "Function region overlaps for var " <<
+                std::cerr << "Function region overlaps for var " <<
                           args[arg]  << " " << kv.first << ":" << std::endl;
                 disp_regions(overlaps);
-                std::cout << std::endl;
+                std::cerr << std::endl;
                 */
             }
 
             if (reductions.find(kv.first) != reductions.end()) {
-                std::cout << "Processing reduction " << kv.first << std::endl;
+                //std::cerr << "Processing reduction " << kv.first << std::endl;
                 assert(update_args.find(kv.first) != update_args.end());
                 u_args = update_args[kv.first];
 
@@ -1943,9 +1943,9 @@ struct DependenceAnalysis {
                 func_partial_dep_regions[kv.first] = regions;
 
                 /*
-                   std::cout << "Function regions required for " << kv.first << ":" << std::endl;
+                   std::cerr << "Function regions required for " << kv.first << ":" << std::endl;
                    disp_regions(regions);
-                   std::cout << std::endl;
+                   std::cerr << std::endl;
                  */
 
                 assert(func_partial_overlaps.find(kv.first) ==
@@ -2180,7 +2180,7 @@ long long region_cost_inline(string func, vector<string> &inline_reg,
             }
         }
     }
-    std::cout << func << " " << total_cost << std::endl;
+    //std::cerr << func << " " << total_cost << std::endl;
     assert(total_cost >= 0);
     return total_cost;
 }
@@ -2270,10 +2270,10 @@ void add_children(map<string, set<string> > &children,
 
 void disp_children(map<string, set<string> > &children) {
     for (auto &f: children) {
-        std::cout << f.first <<  ":" << std::endl;
+        std::cerr << f.first <<  ": [";
         for (auto &c: f.second)
-            std::cout << c << ",";
-        std::cout << std::endl;
+            std::cerr << c << ",";
+        std::cerr << "]" << std::endl;
     }
 }
 
@@ -2452,14 +2452,18 @@ struct Partitioner {
 
     map<pair<string, string>, Option> option_cache;
 
+    int random_seed;
+    bool debug_info;
+
     MachineParams arch_params;
 
     Partitioner(map<string, Box> &_pipeline_bounds,
                 map<string, vector<string> > &_inlines, DependenceAnalysis &_analy,
                 map<string, pair<long long, long long> > &_func_cost,
-                int random_seed):
+                int _random_seed, bool _debug_info):
                 pipeline_bounds(_pipeline_bounds), inlines(_inlines),
-                analy(_analy), func_cost(_func_cost) {
+                analy(_analy), func_cost(_func_cost), random_seed(_random_seed),
+                debug_info(_debug_info) {
 
         // Place each function in its own group
         for (auto &kv: analy.env) {
@@ -2544,7 +2548,7 @@ struct Partitioner {
             func_calls[f.first] = num_calls;
         }
 
-        disp_func_calls(func_calls);
+        //disp_func_calls(func_calls);
 
         for (auto &f: analy.env) {
             const vector<string> &args = f.second.args();
@@ -2570,7 +2574,6 @@ struct Partitioner {
                 get_dim_estimates(f.first, pipeline_bounds, analy.env);
         }
 
-        // TODO: get these args from env vars optionally too
         arch_params.parallelism = 8;
         arch_params.vec_len = 8;
         if (!random_seed) {
@@ -2580,7 +2583,7 @@ struct Partitioner {
             // L1 = 32K
             // L2 = 256K
             // L3 = 8192K
-            
+
             char *var;
             var = getenv("HL_AUTO_PARALLELISM");
             if (var) {
@@ -2603,12 +2606,12 @@ struct Partitioner {
             vector<int> fast_mem_kb = { 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192 };
             int balance_idx = rand() % balance.size();
             int fast_mem_kb_idx = rand() % fast_mem_kb.size();
-            
+
             arch_params.balance = balance[balance_idx];
             arch_params.fast_mem_size = fast_mem_kb[fast_mem_kb_idx]*1024*8;
         }
-        
-        fprintf(stderr, "auto_params: par = %d, vec = %d, balance = %d, fast_mem_size = %lld\n",
+
+        fprintf(stdout, "auto_params: par = %d, vec = %d, balance = %d, fast_mem_size = %lld\n",
                 arch_params.parallelism, arch_params.vec_len, arch_params.balance, arch_params.fast_mem_size);
     }
 
@@ -2660,32 +2663,31 @@ struct Partitioner {
 
     void disp_grouping() {
         for (auto& g: groups) {
-            std::cout << "Group " <<  g.first  << " :"<< std::endl;
+            std::cerr << "Group " <<  g.first  << " : [" ;
             for (auto& m: g.second)
-                std::cout << m.name() << std::endl;
-            std::cout << std::endl;
+                std::cerr << m.name() << ",";
+            std::cerr << "]" << std::endl;
         }
     }
 
     void disp_costs() {
         for (auto &f: analy.env) {
-            std::cout << f.first << " Cost " <<
+            std::cerr << f.first << " Cost " <<
                 func_cost[f.first].first  << " " <<
-                func_cost[f.first].second  <<
-                std::endl;
+                func_cost[f.first].second << std::cerr;
         }
     }
 
     void disp_option(Option &opt) {
-        std::cout << opt.prod_group << "->" << opt.cons_group << std::endl;
-        std::cout << "[";
+        std::cerr << opt.prod_group << "->" << opt.cons_group << std::endl;
+        std::cerr << "[";
         for (unsigned int i = 0; i < opt.tile_sizes.size(); i++) {
-            std::cout << opt.tile_sizes[i] << ",";
+            std::cerr << opt.tile_sizes[i] << ",";
         }
-        std::cout << "]" << std::endl;
-        std::cout << "Benefit:" << opt.benefit << std::endl;
-        std::cout << "Redundant work:" << opt.redundant_work << std::endl;
-        std::cout << "Memory accesses saved:" << opt.saved_mem << std::endl;
+        std::cerr << "]" << std::endl;
+        std::cerr << "Benefit:" << opt.benefit << std::endl;
+        std::cerr << "Redundant work:" << opt.redundant_work << std::endl;
+        std::cerr << "Memory accesses saved:" << opt.saved_mem << std::endl;
     }
 
     Option choose_candidate(const vector< pair<string, string > > &cand_pairs);
@@ -2767,6 +2769,7 @@ void Partitioner::update_function_costs() {
         assert(work_per_ele >= 0);
         func_cost[g.first].first += work_per_ele;
     }
+
     for (auto &f: analy.env) {
         const vector<string> &args = f.second.args();
         long long size = 1;
@@ -2805,10 +2808,14 @@ void Partitioner::group(Partitioner::Level level) {
                 }
             }
         }
-        for (auto &p: cand) {
-            std::cout << "[" << p.first << "," <<  p.second << "]";
+
+        if (debug_info) {
+            std::cerr << "Current grouping candidates:" << std::endl;
+            for (auto &p: cand) {
+                std::cerr << "[" << p.first << "," <<  p.second << "]";
+            }
+            std::cerr << std::endl;
         }
-        std::cout << std::endl;
 
         vector<pair<string, string> > invalid_keys;
         if (level == Partitioner::INLINE) {
@@ -2817,8 +2824,9 @@ void Partitioner::group(Partitioner::Level level) {
             if (best.first >= 0) {
                 string prod = best.second[0].prod_group;
 
-                std::cout << "Choice Inline:" << std::endl;
-                std::cout << prod << std::endl;
+                if (debug_info) {
+                    std::cerr << "Choice Inline:" << prod << std::endl;
+                }
 
                 for (auto &o: best.second)
                     assert(o.prod_group == prod);
@@ -2861,13 +2869,15 @@ void Partitioner::group(Partitioner::Level level) {
             best = choose_candidate(cand);
             if (best.benefit >= 0) {
 
-                std::cout << "Choice Fuse:" << std::endl;
-                std::cout << best.prod_group << " "
-                          << best.cons_group << std::endl;
-                std::cout << "[";
-                for (auto s: best.tile_sizes)
-                    std::cout << s << ",";
-                std::cout << "]"  << std::endl;
+                if (debug_info) {
+                    std::cerr << "Choice Fuse:";
+                    std::cerr << best.prod_group << "->"
+                        << best.cons_group << std::endl;
+                    std::cerr << "[";
+                    for (auto s: best.tile_sizes)
+                        std::cerr << s << ",";
+                    std::cerr << "]"  << std::endl;
+                }
 
                 for (auto& opt: option_cache) {
                     if (opt.first.second == best.cons_group
@@ -2899,10 +2909,7 @@ void Partitioner::group(Partitioner::Level level) {
 
 void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
 
-    std::cout << std::endl;
-    std::cout << "Evaluating benefit " << opt.prod_group << "->"
-                                       << opt.cons_group << ":" << std::endl;
-    disp_option(opt);
+    //disp_option(opt);
 
     map<string, Box> conc_reg;
 
@@ -3087,18 +3094,20 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
     assert(data >= 0);
     saved_mem += data;
 
-    disp_regions(prod_comp);
+    if (debug_info) {
 
-    std::cout << "Work per tile:" << work_per_tile << std::endl;
-    std::cout << "Num tiles:" << estimate_tiles << std::endl;
-    std::cout << "Partial tiles:" << partial_tiles << std::endl;
-    std::cout << "Total work:" << total_work << std::endl;
-    std::cout << "Original work:" << original_work << std::endl;
-    std::cout << "Saved mem:" << saved_mem << std::endl;
+        disp_regions(prod_comp);
+        std::cerr << "Work per tile:" << work_per_tile << std::endl;
+        std::cerr << "Num tiles:" << estimate_tiles << std::endl;
+        std::cerr << "Partial tiles:" << partial_tiles << std::endl;
+        std::cerr << "Total work:" << total_work << std::endl;
+        std::cerr << "Original work:" << original_work << std::endl;
+        std::cerr << "Saved mem:" << saved_mem << std::endl;
 
-    std::cout << "Intermediate size:" << inter_s << std::endl;
-    std::cout << "Redundant work:" <<
-                    (total_work - original_work) << std::endl;
+        std::cerr << "Intermediate size:" << inter_s << std::endl;
+        std::cerr << "Redundant work:" <<
+                            (total_work - original_work) << std::endl;
+    }
 
     opt.redundant_work = total_work - original_work;
     opt.saved_mem = saved_mem;
@@ -3122,7 +3131,8 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
         }
     }
 
-    std::cout << "Estimated benefit:" << opt.benefit << std::endl;
+    if (debug_info)
+        std::cout << "Estimated benefit:" << opt.benefit << std::endl;
 
     if ((arch_params.parallelism > estimate_tiles) && opt.prod_group != "") {
         // Option did not satisfy the parallelism constraint
@@ -3130,27 +3140,24 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
     }
 
     if (opt.prod_group != "") {
-        std::cout << std::endl << "Producer group:" << std::endl;
-        for (auto &f: groups[opt.prod_group])
-            std::cout << f.name() << std::endl;
-
         if (l == Partitioner::INLINE) {
             assert(!group_sched[opt.prod_group].fusion);
             assert(!group_sched[opt.prod_group].locality);
         } else {
             assert(!group_sched[opt.prod_group].locality);
         }
-
-        std::cout << "Saved mem:" << group_sched[opt.prod_group].saved_mem
-            << std::endl;
-        std::cout << "Redundant work:" << group_sched[opt.prod_group].redundant_work
-            << std::endl;
-        std::cout << "Producer benefit:" << group_sched[opt.prod_group].benefit << std::endl;
+        if (debug_info) {
+            std::cerr << "Producer group:" << std::endl;
+            for (auto &f: groups[opt.prod_group])
+                std::cerr << f.name() << std::endl;
+            std::cerr << "Saved mem:"
+                      << group_sched[opt.prod_group].saved_mem << std::endl;
+            std::cerr << "Redundant work:"
+                      << group_sched[opt.prod_group].redundant_work << std::endl;
+            std::cerr << "Producer benefit:"
+                      << group_sched[opt.prod_group].benefit << std::endl;
+        }
     }
-
-    std::cout << std::endl << "Consumer group:" << std::endl;
-    for (auto &f: groups[opt.cons_group])
-        std::cout << f.name() << std::endl;
 
     if (l == Partitioner::INLINE) {
         assert(!group_sched[opt.cons_group].fusion);
@@ -3159,12 +3166,18 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
         assert(!group_sched[opt.cons_group].locality);
     }
 
-    std::cout << "Saved mem:" << group_sched[opt.cons_group].saved_mem
-              << std::endl;
-    std::cout << "Redundant work:" << group_sched[opt.cons_group].redundant_work
-              << std::endl;
-    std::cout << "Consumer benefit:" << group_sched[opt.cons_group].benefit
-              << std::endl;
+    if (debug_info) {
+        std::cerr << std::endl << "Consumer group:" << std::endl;
+        for (auto &f: groups[opt.cons_group])
+            std::cerr << f.name() << std::endl;
+
+        std::cerr << "Saved mem:"
+            << group_sched[opt.cons_group].saved_mem << std::endl;
+        std::cerr << "Redundant work:"
+            << group_sched[opt.cons_group].redundant_work << std::endl;
+        std::cerr << "Consumer benefit:"
+            << group_sched[opt.cons_group].benefit << std::endl;
+    }
 
     if (opt.prod_group != "")  {
         //assert(group_sched[opt.cons_group].benefit >= 0 &&
@@ -3178,7 +3191,8 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
             opt.benefit = -1;
         }
     }
-    std::cout << std::endl << "Final benefit:" << opt.benefit << std::endl;
+    if (debug_info)
+        std::cerr << std::endl << "Final benefit:" << opt.benefit << std::endl;
 }
 
 pair<float, vector<Partitioner::Option> >
@@ -3240,8 +3254,10 @@ pair<float, vector<Partitioner::Option> >
                 // dimensions effectively.
                 // The number of loads saved is relatively insignificant
                 if (prod_size < 0.01 * prod_data) {
-                    std::cout << "Inlining avoided " <<  cand_opt.prod_group
-                              << " " << cand_opt.cons_group << std::endl;
+                    if (debug_info) {
+                        std::cerr << "Inlining avoided " <<  cand_opt.prod_group
+                                  << " " << cand_opt.cons_group << std::endl;
+                    }
                     overall_benefit = -1;
                     break;
                 }
@@ -3320,7 +3336,7 @@ Partitioner::Option Partitioner::choose_candidate(
         Option cand_best_opt;
         // Check if the pair has been evaluated before
         if (option_cache.find(key) != option_cache.end()) {
-            //std::cout << "Hit:" << p.first << "," << p.second << std::endl;
+            //std::cerr << "Hit:" << p.first << "," << p.second << std::endl;
             cand_best_opt = option_cache[key];
             if (best_opt.benefit < cand_best_opt.benefit)
                 best_opt = cand_best_opt;
@@ -3359,8 +3375,10 @@ Partitioner::Option Partitioner::choose_candidate(
         // dimensions effectively.
         // The number of loads saved is relatively insignificant
         if (prod_size < 0.01 * prod_data) {
-            std::cout << "Grouping avoided " <<  p.first
-                      << " " << p.second << std::endl;
+            if (debug_info) {
+                std::cerr << "Grouping avoided " <<  p.first
+                          << " " << p.second << std::endl;
+            }
             invalid = true;
         }
 
@@ -3385,12 +3403,15 @@ Partitioner::Option Partitioner::choose_candidate(
                 evaluate_option(opt, Partitioner::FAST_MEM);
                 reuse[i] = opt.redundant_work;
             }
-            std::cout << "Analyzing dims for reuse" << std::endl;
-            for (unsigned int i = 0; i < args.size(); i++) {
-                std::cout << args[i] << " Reuse/Redundant Work " << reuse[i]
-                          << std::endl;
-            }
 
+            if (debug_info) {
+                std::cerr << "Analyzing dims for reuse" << std::endl;
+                for (unsigned int i = 0; i < args.size(); i++) {
+                    std::cerr << args[i] << " Reuse/Redundant Work " << reuse[i]
+                              << std::endl;
+                }
+            }
+            /*
             vector<int> new_variants = {1, 4, 8, 16, 32, 64, 128, 256};
             // Reuse based tiling
             for (unsigned int i = 0; i < args.size(); i++) {
@@ -3436,7 +3457,7 @@ Partitioner::Option Partitioner::choose_candidate(
                         cand_best_opt = opt;
                     }
                 }
-            }
+            }*/
 
             // From the outer to the inner most argument
             for (int i = (int)args.size() - 1; i >= 0; i--) {
@@ -3600,16 +3621,17 @@ pair<float, float>
     float unit_input_data = 0;
     // Evalute the intermediate storage for computing in unit tiles
     if (tile_size > 1) {
-        disp_regions(group_mem_reg);
-        disp_regions(input_mem_reg);
-        std::cout << "Config :[";
-        for (auto &s: tile_sizes)
-            std::cout << s << ",";
-        std::cout << "]" << std::endl;
-        std::cout << "Total intermediate size:" << total_inter  << std::endl;
-        std::cout << "Input intermediate size:" << input_inter  << std::endl;
+        if (debug_info) {
+            disp_regions(group_mem_reg);
+            disp_regions(input_mem_reg);
+            std::cerr << "Config :[";
+            for (auto &s: tile_sizes)
+                std::cerr << s << ",";
+            std::cerr << "]" << std::endl;
+            std::cerr << "Total intermediate size:" << total_inter  << std::endl;
+            std::cerr << "Input intermediate size:" << input_inter  << std::endl;
+        }
         vector<int> unit_sizes;
-
         for (unsigned int i = 0; i < tile_sizes.size(); i++)
             unit_sizes.push_back(1);
         pair<float, float> unit = evaluate_reuse(group, group_inputs,
@@ -3617,7 +3639,8 @@ pair<float, float>
         assert(unit.first < 1);
         unit_input_data = unit.second;
     } else {
-        std::cout << "Unit input size:" << input_inter << std::endl;
+        if (debug_info)
+            std::cout << "Unit input size:" << input_inter << std::endl;
         unit_input_data = input_inter;
     }
 
@@ -3632,8 +3655,8 @@ pair<float, float>
         realized_reuse = reuse;
     }
 
-    if (tile_size > 1)
-        std::cout << "Reuse:" << realized_reuse << std::endl << std::endl;
+    if (tile_size > 1 && debug_info)
+        std::cerr << "Reuse:" << realized_reuse << std::endl;
 
     return make_pair(realized_reuse, input_inter);
 }
@@ -3664,11 +3687,11 @@ Partitioner::get_input_reuse(Function f, vector<string> &inputs) {
                 arg_name = u_args[j - args.size()];
             if (j==i) {
                 bounds.push_back(make_pair(0, 0));
-                //std::cout << "Varying " <<  arg_name << std::endl;
+                //std::cerr << "Varying " <<  arg_name << std::endl;
             }
             else {
                 assert(dim_estimates.find(arg_name) != dim_estimates.end());
-                //std::cout << arg_name << ":"  << dim_estimates[arg_name]  << std::endl;
+                //std::cerr << arg_name << ":"  << dim_estimates[arg_name]  << std::endl;
                 bounds.push_back(make_pair(0, dim_estimates[arg_name] - 1));
             }
             eval.push_back(true);
@@ -3717,7 +3740,8 @@ void Partitioner::tile_for_input_locality() {
         // Skip functions that are not reductions
         if (group_sched[g.first].fusion || (analy.reductions.find(g.first) ==
                                             analy.reductions.end())) {
-            std::cout << "Skipped " << g.first << std::endl;
+            if (debug_info)
+                std::cerr << "Skipped " << g.first << std::endl;
             continue;
         }
 
@@ -3736,10 +3760,12 @@ void Partitioner::tile_for_input_locality() {
             }
         }
 
-        std::cout << "Inputs for group " << g.first << ":" << std::endl;
-        for(auto &in: group_inputs)
-            std::cout << in << std::endl;
-        std::cout << std::endl;
+        if (debug_info) {
+            std::cerr << "Inputs for group " << g.first << ":" << std::endl;
+            for(auto &in: group_inputs)
+                std::cerr << in << std::endl;
+            std::cerr << std::endl;
+        }
 
         // For the dimensions with reuse along multiple dimensions tile
         // the dimensions in such a way that the reuse is maximized and
@@ -3772,15 +3798,15 @@ void Partitioner::tile_for_input_locality() {
 
             vector<string> &u_args = analy.update_args[g.first];
             unsigned int num_args = args.size() + u_args.size();
-            std::cout << "Analyzing dims for locality" << std::endl;
+            //std::cerr << "Analyzing dims for locality" << std::endl;
             for (unsigned int i = 0; i < num_args; i++) {
                 string arg_name = "";
                 if (i < args.size())
                     arg_name = args[i];
                 else
                     arg_name = u_args[i - args.size()];
-                std::cout << arg_name << " Reuse " << reuse[i]
-                          << std::endl;
+                //std::cerr << arg_name << " Reuse " << reuse[i]
+                //          << std::endl;
             }
 
             float best_reuse = 0;
@@ -3822,8 +3848,8 @@ void Partitioner::tile_for_input_locality() {
                             arg_name = args[j];
                         else
                             arg_name = u_args[j - args.size()];
-                        std::cout << arg_name << " tile size " << tile_sizes[j]
-                                  << std::endl;
+                        //std::cerr << arg_name << " tile size " << tile_sizes[j]
+                        //          << std::endl;
                     }
 
                     pair<float, float>  eval;
@@ -3871,10 +3897,13 @@ void Partitioner::tile_for_input_locality() {
                 }
             }
 
-            std::cout << "Best Tiling:" << "[";
-            for (auto &t: best_tiling)
-                std::cout << t << ",";
-            std::cout <<  "]" << std::endl;
+            if (debug_info) {
+                std::cerr << "Best tiling:" << "[";
+                for (auto &t: best_tiling)
+                    std::cerr << t << ",";
+                std::cerr <<  "]" << std::endl;
+            }
+
             if (best_reuse > 0) {
                 group_sched[g.first].tile_sizes = best_tiling;
                 assert(!group_sched[g.first].fusion);
@@ -3891,7 +3920,7 @@ void Partitioner::tile_for_input_locality() {
 void disp_function_value_bounds(const FuncValueBounds &func_val_bounds) {
 
 	for (auto& kv: func_val_bounds) {
-        std::cout << kv.first.first << "," << kv.first.second << ":"
+        std::cerr << kv.first.first << "," << kv.first.second << ":"
                   << "(" << kv.second.min  << ","  << kv.second.max << ")"
                   << std::endl;
     }
@@ -3900,20 +3929,20 @@ void disp_function_value_bounds(const FuncValueBounds &func_val_bounds) {
 void disp_schedule_and_storage_mapping(map<string, Function> &env) {
     // Names of all the functions in the environment and their schedules
     for (auto& kv : env) {
-        std::cout << schedule_to_source(kv.second,
+        std::cerr << schedule_to_source(kv.second,
                                         kv.second.schedule().compute_level(),
                                         kv.second.schedule().store_level())
                   << std::endl;
     }
-    std::cout << std::endl;
+    std::cerr << std::endl;
 }
 
 void disp_inlines(map<string, vector<string> > &inlines) {
     for (auto& in: inlines) {
-        std::cout << in.first << "-> [";
+        std::cerr << in.first << "-> [";
         for (auto& c: in.second)
-            std::cout << c << " ";
-        std::cout << "]" << std::endl;
+            std::cerr << c << " ";
+        std::cerr << "]" << std::endl;
     }
 }
 
@@ -4010,7 +4039,7 @@ void reorder_by_reuse(Schedule &sched, map<string, float> &reuse,
             // to the innermost storage dimension, vectorize that to get a
             // dense vector store instead of a scatter.
             if (rank == i && dims[j].var != innermost_storage_dim) {
-                std::cout << dims[j].var << " " << reuse[dims[j].var] << std::endl;
+                //std::cerr << dims[j].var << " " << reuse[dims[j].var] << std::endl;
                 var_order.push_back(dims[j].var);
             }
         }
@@ -4029,10 +4058,10 @@ void reorder_by_reuse(Schedule &sched, map<string, float> &reuse,
 
     var_order.insert(var_order.begin() + vector_dim, innermost_storage_dim);
 
-    std::cout << "Reuse order :";
-    for (auto &v: var_order)
-        std::cout << v << ",";
-    std::cout << std::endl;
+    //std::cerr << "Reuse order :";
+    //for (auto &v: var_order)
+    //    std::cerr << v << ",";
+    //std::cerr << std::endl;
     reorder_dims(sched, var_order);
 }
 
@@ -4299,10 +4328,15 @@ void schedule_advisor(const vector<Function> &outputs,
     const char *random_seed_var = getenv("HL_AUTO_RANDOM_SEED");
     int random_seed = 0;
     if (random_seed_var) {
-        fprintf(stderr, "HL_AUTO_RANDOM_SEED: %s\n", random_seed_var);
+        fprintf(stdout, "HL_AUTO_RANDOM_SEED: %s\n", random_seed_var);
         random_seed = atoi(random_seed_var);
         srand(random_seed);
     }
+
+    const char *debug_var = getenv("HL_AUTO_DEBUG");
+    bool debug_info = false;
+    if (debug_var)
+        debug_info = true;
 
     if (root_default) {
         // Changing the default to compute root. This does not completely clear
@@ -4318,9 +4352,6 @@ void schedule_advisor(const vector<Function> &outputs,
         	kv.second.schedule().compute_level().var = "__root";
     	}
     }
-
-    // TODO infer the bounds of each function in the pipeline based on the
-    // estimates of output sizes and the parameters
 
     // TODO explain strcuture
     map<string, Box> pipeline_bounds;
@@ -4381,7 +4412,6 @@ void schedule_advisor(const vector<Function> &outputs,
             }
 
             if (reduction) {
-                std::cout << "Found reduction " << kv.first << std::endl;
                 for (auto &rvar: u.domain.domain()) {
                     red_args.push_back(rvar.var);
                 }
@@ -4405,7 +4435,14 @@ void schedule_advisor(const vector<Function> &outputs,
             }
         }
     }
-    // std::cout << "Num reductions:" << reductions.size() << std::endl;
+
+    if (debug_info) {
+        std::cerr << "Reductions in the pipeline:" << std::endl;
+        for (auto &r: reductions) {
+            std::cerr << r << std::endl;
+        }
+    }
+
     // Make obvious inline decisions early
     map<string, vector<string> > inlines;
 
@@ -4428,7 +4465,10 @@ void schedule_advisor(const vector<Function> &outputs,
         inlines = simple_inline(all_calls, consumers, env);
     */
 
-    std::cout << "Inlining:" << std::endl;
+    if (debug_info) {
+        std::cerr << "Inlining lambda functions:" << std::endl;
+    }
+
     for (auto &f: env) {
         if (env[f.first].is_lambda()) {
             //assert(consumers[f.first].size() == 1);
@@ -4461,7 +4501,10 @@ void schedule_advisor(const vector<Function> &outputs,
         */
 
         bool bounds_avail = check_bounds_on_outputs(outputs);
-        std::cout << "output bounds:" << bounds_avail << std::endl;
+
+        if (debug_info) {
+            std::cerr << "Bounds of pipeline outputs:" << bounds_avail << std::endl;
+        }
 
         if (bounds_avail) {
             for (auto &out: outputs) {
@@ -4508,34 +4551,49 @@ void schedule_advisor(const vector<Function> &outputs,
             }
         }
 
-        disp_regions(pipeline_bounds);
+        if (debug_info) {
+           std::cerr << "Pipeline bounds inferred from output bounds:" << std::endl;
+           disp_regions(pipeline_bounds);
+        }
 
-        // Grouping
-        Partitioner part(pipeline_bounds, inlines, analy, func_cost, random_seed);
-        std::cout << std::endl << "Function costs pre Inlining" << std::endl;
-        part.disp_costs();
-        std::cout << std::endl;
+        // Initialize the partitioner
+        Partitioner part(pipeline_bounds, inlines, analy, func_cost,
+                         random_seed, debug_info);
+
+        if (debug_info) {
+            std::cerr << "Function costs pre-inlining" << std::endl;
+            part.disp_costs();
+            std::cerr << std::endl;
+        }
 
         part.initialize_groups_inline();
-        std::cout << std::endl << "Groups Pre Inlining" << std::endl;
-        part.disp_grouping();
-        std::cout << std::endl;
+
+        if (debug_info) {
+            std::cerr << "Groups pre-inlining" << std::endl;
+            part.disp_grouping();
+            std::cerr << std::endl;
+        }
+
         part.group(Partitioner::INLINE);
-        std::cout << std::endl << "Groups Inlining" << std::endl;
-        part.disp_grouping();
 
-        //Clear the option cache
+        if (debug_info) {
+            std::cerr << "Groups post-inlining" << std::endl;
+            part.disp_grouping();
+            std::cerr << std::endl;
 
-        std::cout << std::endl << "Function costs post Inlining" << std::endl;
-        part.disp_costs();
-        std::cout << std::endl;
+            std::cerr << "Function costs post-nlining" << std::endl;
+            part.disp_costs();
+            std::cerr << std::endl;
+        }
 
         part.initialize_groups_fast_mem();
         part.group(Partitioner::FAST_MEM);
-        std::cout << std::endl << "Groups Fast Mem" << std::endl;
-        part.disp_grouping();
-        std::cout << std::endl;
-        part.disp_grouping();
+
+        if (debug_info) {
+            std::cerr << "Groups Fast Mem" << std::endl;
+            part.disp_grouping();
+            std::cerr << std::endl;
+        }
 
         part.tile_for_input_locality();
 
@@ -4545,7 +4603,7 @@ void schedule_advisor(const vector<Function> &outputs,
         for (auto& g: part.groups) {
             // Create a tiled traversal for the output of the group
             Function &g_out = env[g.first];
-            // std::cout << "Start scheduling "  <<  g_out.name() << std::endl;
+            // std::cerr << "Start scheduling "  <<  g_out.name() << std::endl;
 
             assert(inlines.find(g_out.name()) == inlines.end());
             // The dimension names that will be tiled
@@ -4563,17 +4621,25 @@ void schedule_advisor(const vector<Function> &outputs,
 
             map<string, int> tile_sizes_pure;
             if (sched.locality || sched.fusion) {
-                std::cout << std::endl << g_out.name() << " final tile sizes and reuse" << std::endl;
-                std::cout << "[";
+
                 for(int i = 0; i < (int)dims.size() - 1; i++) {
-                    std::cout << "("  << dims[i].var  << "," << sched.tile_sizes[i] << ","
-                              << sched.reuse[i] << ")" << ",";
                     if (sched.tile_sizes[i] != -1) {
                         pure_vars.push_back(dims[i].var);
                         tile_sizes_pure[dims[i].var] = sched.tile_sizes[i];
                     }
                 }
-                std::cout << "]" << std::endl;
+
+                if (debug_info) {
+                    std::cerr << g_out.name() << " tile sizes and reuse" << std::endl;
+                    std::cerr << "[";
+                    for(int i = 0; i < (int)dims.size() - 1; i++) {
+                        if (debug_info) {
+                            std::cerr << "("  << dims[i].var  << "," << sched.tile_sizes[i] << ","
+                                      << sched.reuse[i] << ")" << ",";
+                        }
+                    }
+                    std::cerr << "]" << std::endl;
+                }
 
                 // Reordering by reuse
                 /*
@@ -4623,7 +4689,8 @@ void schedule_advisor(const vector<Function> &outputs,
             int num_fused_dims = 0;
             int parallelism = part.arch_params.parallelism;
 
-            //std::cout << "Start vectorization pure dims "  <<  g_out.name() << std::endl;
+            //std::cerr << "Start vectorization pure dims "
+            //            <<  g_out.name() << std::endl;
             {
                 // Vectorize first
                 Schedule &s = g_out.schedule();
@@ -4660,7 +4727,7 @@ void schedule_advisor(const vector<Function> &outputs,
                     parallelize_dim(g_out.schedule(), outer_dim);
             }
 
-            //std::cout << "Finished pure dims "  <<  g_out.name() << std::endl;
+            //std::cerr << "Finished pure dims "  <<  g_out.name() << std::endl;
             if (!g_out.is_pure()) {
 
                 int num_updates = g_out.updates().size();
@@ -4694,7 +4761,7 @@ void schedule_advisor(const vector<Function> &outputs,
                                 update_vars.push_back(dims[i].var);
                                 tile_sizes_update[dims[i].var] =
                                     sched.tile_sizes[num_pure_dims + i];
-                                //std::cout << dims[i].var << " "
+                                //std::cerr << dims[i].var << " "
                                 //          << sched.tile_sizes[num_pure_dims + i]
                                 //          << std::endl;
                             }
@@ -4711,7 +4778,7 @@ void schedule_advisor(const vector<Function> &outputs,
                                 update_vars.push_back(dims[num_red_dims + i].var);
                                 tile_sizes_update[dims[num_red_dims + i].var]
                                                             = sched.tile_sizes[i];
-                                //std::cout << dims[num_red_dims + i].var << " "
+                                //std::cerr << dims[num_red_dims + i].var << " "
                                 //          << sched.tile_sizes[i] << std::endl;
                             }
                         }
@@ -4781,7 +4848,7 @@ void schedule_advisor(const vector<Function> &outputs,
                 }
             }
 
-            // std::cout << "Finished updates "  <<  g_out.name() << std::endl;
+            // std::cerr << "Finished updates "  <<  g_out.name() << std::endl;
             for (auto &m: g.second) {
                 int outer_dim = dims.size() - 2;
                 map<string, int> org_mem_estimates =
@@ -4813,12 +4880,12 @@ void schedule_advisor(const vector<Function> &outputs,
                     }
                 }
             }
-            // std::cout << "Finished group members "  <<  g_out.name() << std::endl;
+            // std::cerr << "Finished group members "  <<  g_out.name() << std::endl;
         }
     }
-    // TODO Method for reordering and unrolling based on reuse across iterations
-    if (root_default || auto_vec || auto_par || auto_inline)
-        disp_schedule_and_storage_mapping(env);
+
+    //if (root_default || auto_vec || auto_par || auto_inline)
+    //    disp_schedule_and_storage_mapping(env);
 
 	return;
 }
