@@ -4682,7 +4682,6 @@ void schedule_advisor(const vector<Function> &outputs,
         Function &g_out = env[g.first];
         // std::cerr << "Start scheduling "  <<  g_out.name() << std::endl;
 
-        std::cout << g_out.name() << std::endl;
         assert(inlines.find(g_out.name()) == inlines.end());
         // The dimension names that will be tiled
         vector<string> pure_vars;
