@@ -2,48 +2,68 @@
 #include<stdio.h>
 #include "benchmark.h"
 
+#ifndef p_N
+#define p_N 4     // number of samples/batch_size
+#endif
+
+#ifndef p_d_w
+#define p_d_w 128 // data width
+#endif
+
+#ifndef p_d_h
+#define p_d_h 128 // data height
+#endif
+
+#ifndef p_ch
+#define p_ch 64   // number of input channels
+#endif
+
+#ifndef p_n_f
+#define p_n_f 64  // number of filters
+#endif
+
+#ifndef p_f_w
+#define p_f_w 3   // filter width
+#endif
+
+#ifndef p_f_h
+#define p_f_h 3   // filter height
+#endif
+
 int main(int argc, char **argv) {
 
-    int N = 4; // number of samples/batch_size
-    int d_w = 128; // data width
-    int d_h = 128; // data height
-    int ch = 64; // number of channels
-
-    Image<float> data(d_w, d_h, ch, N);
-    DataLayer * d_layer = new DataLayer(d_h, d_w, ch, N, data);
+    Image<float> data(p_d_w, p_d_h, p_ch, p_N);
+    DataLayer * d_layer = new DataLayer(p_d_h, p_d_w, p_ch, p_N, data);
     fprintf(stderr, "data out size %d x %d x %d x %d\n", d_layer->out_dim_size(0),
                                                 d_layer->out_dim_size(1),
                                                 d_layer->out_dim_size(2),
                                                 d_layer->out_dim_size(3));
 
-    int n_f = 64; // number of filters
-    int f_w = 3;  // filter width
-    int f_h = 3;  // filter height
-    int pad = (f_w-1)/2; // padding required to handle boundaries
+    int pad = (p_f_w-1)/2; // padding required to handle boundaries
     int stride = 1; // stride at which the filter evaluated
     float reg = 0.1;
-    Convolutional * conv  = new Convolutional(n_f, f_w, f_h, pad,
+    Convolutional * conv  = new Convolutional(p_n_f, p_f_w, p_f_h, pad,
                                               stride, reg, d_layer);
     fprintf(stderr, "conv out size %d x %d x %d x %d\n", conv->out_dim_size(0),
                                                 conv->out_dim_size(1),
                                                 conv->out_dim_size(2),
                                                 conv->out_dim_size(3));
     Func f_in_bound;
-    f_in_bound = BoundaryConditions::repeat_edge(d_layer->forward, 0, d_w,
-                                                 0, d_h);
+    f_in_bound = BoundaryConditions::repeat_edge(d_layer->forward, 0, p_d_w,
+                                                 0, p_d_h);
 
     Image<float> conv_out(conv->out_dim_size(0),
                           conv->out_dim_size(1),
                           conv->out_dim_size(2),
                           conv->out_dim_size(3));
 
-    Image<float> W(f_w, f_h, ch, n_f), b(n_f);
+    Image<float> W(p_f_w, p_f_h, p_ch, p_n_f), b(p_n_f);
 
     Var x, y, z, n, par;
     Var i_B, o_B, x_t, y_t, z_t;
     // Simple convolution
     Func f_conv("conv");
-    RDom r(0, f_w, 0, f_h, 0, ch);
+    RDom r(0, p_f_w, 0, p_f_h, 0, p_ch);
 
     f_conv(x, y, z, n) = b(z);
 

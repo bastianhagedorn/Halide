@@ -4032,7 +4032,8 @@ simple_inline(map<string, vector<const Call*>> &all_calls,
                 // Skip casts to an integer there seems to be a bug lurking
                 // in is_one_to_one
                 bool one_to_one = (!arg.as<Cast>()) && is_one_to_one(arg);
-                all_one_to_one = all_one_to_one && (one_to_one
+                all_one_to_one = (call->name != fcalls.first) &&
+                                  all_one_to_one && (one_to_one
                                                     || is_simple_const(arg));
             }
         }
@@ -4681,6 +4682,7 @@ void schedule_advisor(const vector<Function> &outputs,
         Function &g_out = env[g.first];
         // std::cerr << "Start scheduling "  <<  g_out.name() << std::endl;
 
+        std::cout << g_out.name() << std::endl;
         assert(inlines.find(g_out.name()) == inlines.end());
         // The dimension names that will be tiled
         vector<string> pure_vars;
