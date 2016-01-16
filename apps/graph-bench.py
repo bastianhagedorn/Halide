@@ -7,6 +7,7 @@ import argparse, sys
 
 parser = argparse.ArgumentParser(description="Graph the benchmarks")
 parser.add_argument('-a', '--apps', const=True, default=False, help='Graph the apps (default if nothing else specified)', action='store_const')
+parser.add_argument('-c', '--conv', const=True, default=False, help='Conv layer experiment', action='store_const')
 parser.add_argument('-t', '--tests', const=True, default=False, help='Graph the tests', action='store_const')
 parser.add_argument('-e', '--extra', type=str, default=[], help='Include specific benchmarks', nargs='+')
 parser.add_argument('-x', '--exclude', type=str, default=[], help='Exclude specific benchmarks', nargs='+')
@@ -18,16 +19,19 @@ print args
 disabled = args.exclude
 
 apps = open('apps.txt').read().split()
-tests= open('tests.txt').read().split()
+tests = open('tests.txt').read().split()
+conv = open('conv.txt').read().split()
 
 benches = []
-if not (args.apps or args.tests or args.extra):
+if not (args.apps or args.tests or args.extra or args.conv):
     benches = apps
 else:
     if args.apps:
         benches.extend(apps)
     if args.tests:
         benches.extend(tests)
+    if args.conv:
+        benches.extend(conv)
     if args.extra:
         benches.extend(args.extra)
 
@@ -46,14 +50,14 @@ for app in benches:
         with open(os.path.join(app, "ref_perf.txt")) as f:
             times_ref = [ float(l) for l in f ]
             num_samples = len(times_ref)
-    
+
         with open(os.path.join(app, "auto_perf.txt")) as f:
             times_auto = [ float(l) for l in f ]
             assert(num_samples == len(times_auto))
-    
+
         speed_up = [ ref/auto for (ref, auto) \
                                in zip( times_ref, times_auto ) ]
-    
+
         app_name = app.replace('_', ' ').title()
         auto = DataFrame({
             'app': [app_name]*num_samples,
@@ -63,7 +67,7 @@ for app in benches:
             'throughput': [1000.0/t for t in times_auto], # runs/sec
             'speedup': speed_up
         })
-    
+
         ref = DataFrame({
             'app': [app_name]*num_samples,
             'ver': 'ref',
@@ -72,15 +76,15 @@ for app in benches:
             'throughput': [1000.0/t for t in times_ref], # runs/sec
             'speedup': [1.0]*num_samples
         })
-        
+
         results = auto.append(ref)
-        
+
         if not args.dont_normalize:
             max_runtime = max(auto.append(ref).runtime)
             results.runtime = results.runtime / max_runtime
             max_throughput = max(auto.append(ref).throughput)
             results.throughput = results.throughput / max_throughput
-        
+
         res = res.append(results)
 
     except IOError,e:
