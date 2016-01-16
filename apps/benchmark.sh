@@ -39,6 +39,7 @@ for app in $BATCH; do
     echo "                  BENCHMARKING $app"
     echo "============================================================"
     make clean; make bench;
+    # TODO: how to log gen data?
     cd ../;
 done
 #python benchmark.py
