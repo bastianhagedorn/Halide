@@ -1,10 +1,11 @@
 #!/bin/bash
 APPS=`cat apps.txt`
 TESTS=`cat tests.txt`
+CONV=`cat conv.txt`
 BATCH=""
 while [[ $# > 0 ]]
 do
-echo "arg"
+echo $arg
 key="$1"
 case $key in
     -a|--apps)
@@ -14,6 +15,10 @@ case $key in
     -t|--tests)
     echo "Tests"
     BATCH+=" $TESTS"
+    ;;
+    -c|--conv)
+    echo "Conv"
+    BATCH+=" $CONV"
     ;;
     -e|--extra)
     BATCH+=" $2"
@@ -33,7 +38,7 @@ for app in $BATCH; do
     echo "============================================================"
     echo "                  BENCHMARKING $app"
     echo "============================================================"
-    #make clean; make bench;
+    make clean; make bench;
     cd ../;
 done
 #python benchmark.py
