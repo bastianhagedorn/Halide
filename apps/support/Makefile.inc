@@ -73,7 +73,7 @@ regen: cleangen gen
 	$(eval NTHREADS := $(word 2,$(subst ., ,$@)))
 	$(eval VER := $(word 2,$(subst _, ,$(word 1,$(subst ., ,$@)))))
 	echo "[$@]" > $@
-	echo "version: $(VER)\nnthreads: $(NTHREADS)" >> $@
+	echo "version: $(VER)\nthreads: $(NTHREADS)" >> $@
 	./test.sh $(VER) $(NTHREADS) >> $@
 
 ref_perf.txt: $(REF_BENCHES)
