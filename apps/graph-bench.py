@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 from pygg import *
 from pandas import DataFrame
 
