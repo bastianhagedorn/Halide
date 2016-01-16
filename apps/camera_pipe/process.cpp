@@ -51,7 +51,7 @@ int main(int argc, char **argv) {
         curved(color_temp, gamma, contrast,
                  input, matrix_3200, matrix_7000, output);
     });
-    fprintf(stdout, "%g\n", best * 1e3);
+    fprintf(stdout, "runtime: %g\n", best * 1e3);
     save_image(output, argv[6]);
 
     best = benchmark(timing_iterations, 1, [&]() {

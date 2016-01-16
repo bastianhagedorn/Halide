@@ -115,5 +115,5 @@ int main(int argc, char **argv) {
         f_ReLU.compile_jit(target, false);
 
     double best = benchmark(3, 1, [&]() { f_ReLU.realize(conv_out); });
-    std::cout << best * 1e3 << std::endl;
+    std::cout << "runtime: " << best * 1e3 << std::endl;
 }

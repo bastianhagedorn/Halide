@@ -22,7 +22,7 @@ int main(int argc, char **argv) {
     double min_t = benchmark(1, 10, [&]() {
         hist(input, output);
     });
-    printf("%g\n", min_t * 1e3);
+    printf("runtime: %g\n", min_t * 1e3);
 
     save_image(output, argv[2]);
 

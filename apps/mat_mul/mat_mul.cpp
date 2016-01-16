@@ -59,5 +59,5 @@ int main(int argc, char **argv) {
     std::vector<Func> outs;
     outs.push_back(out);
     double best = benchmark(3, 1, [&]() { out.realize(C); });
-    std::cout << best * 1e3 << std::endl;
+    std::cout << "runtime: " << best * 1e3 << std::endl;
 }

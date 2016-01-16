@@ -2343,9 +2343,9 @@ pair<int, int> get_bound_estimates(Function &f, map<string, Box> &bounds,
 
 void disp_func_calls(map<string, map<string, int> > &func_calls) {
     for (auto &f: func_calls) {
-        std::cout << "Calls in function " << f.first << std::endl;
+        std::cerr << "Calls in function " << f.first << std::endl;
         for (auto &c: f.second)
-            std::cout << c.first << " " << c.second << std::endl;
+            std::cerr << c.first << " " << c.second << std::endl;
     }
 }
 
@@ -2610,9 +2610,12 @@ struct Partitioner {
             arch_params.balance = balance[balance_idx];
             arch_params.fast_mem_size = fast_mem_kb[fast_mem_kb_idx]*1024*8;
         }
-
-        fprintf(stdout, "{\"auto_params\": { \n \"par\": \"%d\", \"vec\" : "
-                "\"%d\", \"balance\" : \"%d\", \"fast_mem_size\" : \"%lld\"\n}}\n",
+        
+        fprintf(stdout,
+                "auto_sched_par: %d\n"
+                "auto_sched_vec: %d\n"
+                "auto_sched_balance: %d\n"
+                "auto_sched_fast_mem_size: %lld\n",
                 arch_params.parallelism, arch_params.vec_len,
                 arch_params.balance, arch_params.fast_mem_size);
     }
@@ -2676,7 +2679,7 @@ struct Partitioner {
         for (auto &f: analy.env) {
             std::cerr << f.first << " Cost " <<
                 func_cost[f.first].first  << " " <<
-                func_cost[f.first].second << std::cerr;
+                func_cost[f.first].second << std::endl;
         }
     }
 
@@ -3134,7 +3137,7 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
     }
 
     if (debug_info)
-        std::cout << "Estimated benefit:" << opt.benefit << std::endl;
+        std::cerr << "Estimated benefit:" << opt.benefit << std::endl;
 
     if ((arch_params.parallelism > estimate_tiles) && opt.prod_group != "") {
         // Option did not satisfy the parallelism constraint
@@ -3684,7 +3687,7 @@ pair<float, float>
         unit_input_data = unit.second;
     } else {
         if (debug_info)
-            std::cout << "Unit input size:" << input_inter << std::endl;
+            std::cerr << "Unit input size:" << input_inter << std::endl;
         unit_input_data = input_inter;
     }
 
@@ -4552,7 +4555,7 @@ void schedule_advisor(const vector<Function> &outputs,
     if (debug_info) {
         std::cerr << "Inlining lambda functions:" << std::endl;
         disp_inlines(inlines);
-        std::cout << std::endl;
+        std::cerr << std::endl;
     }
 
     auto_vec = true;

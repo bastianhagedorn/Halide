@@ -46,7 +46,7 @@ int main(int argc, char **argv) {
 
     // fast_time2 is always slower than fast_time, so skip printing it
     //printf("times: %f %f %f\n", slow_time, fast_time, halide_time);
-    printf("%g\n", halide_time * 1000);
+    printf("runtime: %g\n", halide_time * 1000);
 
 
     return 0;

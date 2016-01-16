@@ -29,7 +29,7 @@ int main(int argc, char **argv) {
 
     DataLayer * d_layer = new DataLayer(d_h, d_w, ch, N, data);
     network.push_back(d_layer);
-    printf("data out size %d x %d x %d x %d\n", d_layer->out_dim_size(0),
+    fprintf(stderr, "data out size %d x %d x %d x %d\n", d_layer->out_dim_size(0),
                                                 d_layer->out_dim_size(1),
                                                 d_layer->out_dim_size(2),
                                                 d_layer->out_dim_size(3));
@@ -42,7 +42,7 @@ int main(int argc, char **argv) {
     Convolutional * conv1_1  = new Convolutional(n_f_1, f_w, f_h, pad,
                                               stride, reg, d_layer, sched);
     network.push_back(conv1_1);
-    printf("conv1_1 out size %d x %d x %d x %d\n", conv1_1->out_dim_size(0),
+    fprintf(stderr, "conv1_1 out size %d x %d x %d x %d\n", conv1_1->out_dim_size(0),
                                                    conv1_1->out_dim_size(1),
                                                    conv1_1->out_dim_size(2),
                                                    conv1_1->out_dim_size(3));
@@ -53,7 +53,7 @@ int main(int argc, char **argv) {
     Convolutional * conv1_2  = new Convolutional(n_f_1, f_w, f_h, pad,
                                               stride, reg, relu1_1, sched);
     network.push_back(conv1_2);
-    printf("conv1_2 out size %d x %d x %d x %d\n", conv1_2->out_dim_size(0),
+    fprintf(stderr, "conv1_2 out size %d x %d x %d x %d\n", conv1_2->out_dim_size(0),
                                                    conv1_2->out_dim_size(1),
                                                    conv1_2->out_dim_size(2),
                                                    conv1_2->out_dim_size(3));
@@ -66,7 +66,7 @@ int main(int argc, char **argv) {
 
     MaxPooling * pool1 = new MaxPooling(p_w, p_h, p_stride, relu1_2, sched);
     network.push_back(pool1);
-    printf("pool1 out size %d x %d x %d x %d\n", pool1->out_dim_size(0),
+    fprintf(stderr, "pool1 out size %d x %d x %d x %d\n", pool1->out_dim_size(0),
                                                  pool1->out_dim_size(1),
                                                  pool1->out_dim_size(2),
                                                  pool1->out_dim_size(3));
@@ -75,7 +75,7 @@ int main(int argc, char **argv) {
     Convolutional * conv2_1  = new Convolutional(n_f_2, f_w, f_h, pad,
                                               stride, reg, pool1, sched);
     network.push_back(conv2_1);
-    printf("conv2_1 out size %d x %d x %d x %d\n", conv2_1->out_dim_size(0),
+    fprintf(stderr, "conv2_1 out size %d x %d x %d x %d\n", conv2_1->out_dim_size(0),
                                                    conv2_1->out_dim_size(1),
                                                    conv2_1->out_dim_size(2),
                                                    conv2_1->out_dim_size(3));
@@ -86,7 +86,7 @@ int main(int argc, char **argv) {
     Convolutional * conv2_2  = new Convolutional(n_f_2, f_w, f_h, pad,
                                               stride, reg, relu2_1, sched);
     network.push_back(conv2_2);
-    printf("conv2_2 out size %d x %d x %d x %d\n", conv2_2->out_dim_size(0),
+    fprintf(stderr, "conv2_2 out size %d x %d x %d x %d\n", conv2_2->out_dim_size(0),
                                                    conv2_2->out_dim_size(1),
                                                    conv2_2->out_dim_size(2),
                                                    conv2_2->out_dim_size(3));
@@ -95,7 +95,7 @@ int main(int argc, char **argv) {
 
     MaxPooling * pool2 = new MaxPooling(p_w, p_h, p_stride, relu2_2, sched);
     network.push_back(pool2);
-    printf("pool2 out size %d x %d x %d x %d\n", pool2->out_dim_size(0),
+    fprintf(stderr, "pool2 out size %d x %d x %d x %d\n", pool2->out_dim_size(0),
                                                  pool2->out_dim_size(1),
                                                  pool2->out_dim_size(2),
                                                  pool2->out_dim_size(3));
@@ -104,7 +104,7 @@ int main(int argc, char **argv) {
     Convolutional * conv3_1  = new Convolutional(n_f_3, f_w, f_h, pad,
                                               stride, reg, pool2, sched);
     network.push_back(conv3_1);
-    printf("conv3_1 out size %d x %d x %d x %d\n", conv3_1->out_dim_size(0),
+    fprintf(stderr, "conv3_1 out size %d x %d x %d x %d\n", conv3_1->out_dim_size(0),
                                                    conv3_1->out_dim_size(1),
                                                    conv3_1->out_dim_size(2),
                                                    conv3_1->out_dim_size(3));
@@ -115,7 +115,7 @@ int main(int argc, char **argv) {
     Convolutional * conv3_2  = new Convolutional(n_f_3, f_w, f_h, pad,
                                               stride, reg, relu3_1, sched);
     network.push_back(conv3_2);
-    printf("conv3_2 out size %d x %d x %d x %d\n", conv3_2->out_dim_size(0),
+    fprintf(stderr, "conv3_2 out size %d x %d x %d x %d\n", conv3_2->out_dim_size(0),
                                                    conv3_2->out_dim_size(1),
                                                    conv3_2->out_dim_size(2),
                                                    conv3_2->out_dim_size(3));
@@ -125,7 +125,7 @@ int main(int argc, char **argv) {
     Convolutional * conv3_3  = new Convolutional(n_f_3, f_w, f_h, pad,
                                               stride, reg, relu3_2, sched);
     network.push_back(conv3_3);
-    printf("conv3_3 out size %d x %d x %d x %d\n", conv3_3->out_dim_size(0),
+    fprintf(stderr, "conv3_3 out size %d x %d x %d x %d\n", conv3_3->out_dim_size(0),
                                                    conv3_3->out_dim_size(1),
                                                    conv3_3->out_dim_size(2),
                                                    conv3_3->out_dim_size(3));
@@ -134,7 +134,7 @@ int main(int argc, char **argv) {
 
     MaxPooling * pool3 = new MaxPooling(p_w, p_h, p_stride, relu3_3, sched);
     network.push_back(pool3);
-    printf("pool3 out size %d x %d x %d x %d\n", pool3->out_dim_size(0),
+    fprintf(stderr, "pool3 out size %d x %d x %d x %d\n", pool3->out_dim_size(0),
                                                  pool3->out_dim_size(1),
                                                  pool3->out_dim_size(2),
                                                  pool3->out_dim_size(3));
@@ -143,7 +143,7 @@ int main(int argc, char **argv) {
     Convolutional * conv4_1  = new Convolutional(n_f_4, f_w, f_h, pad,
                                               stride, reg, pool3, sched);
     network.push_back(conv4_1);
-    printf("conv4_1 out size %d x %d x %d x %d\n", conv4_1->out_dim_size(0),
+    fprintf(stderr, "conv4_1 out size %d x %d x %d x %d\n", conv4_1->out_dim_size(0),
                                                    conv4_1->out_dim_size(1),
                                                    conv4_1->out_dim_size(2),
                                                    conv4_1->out_dim_size(3));
@@ -154,7 +154,7 @@ int main(int argc, char **argv) {
     Convolutional * conv4_2  = new Convolutional(n_f_4, f_w, f_h, pad,
                                               stride, reg, relu4_1, sched);
     network.push_back(conv4_2);
-    printf("conv4_2 out size %d x %d x %d x %d\n", conv4_2->out_dim_size(0),
+    fprintf(stderr, "conv4_2 out size %d x %d x %d x %d\n", conv4_2->out_dim_size(0),
                                                    conv4_2->out_dim_size(1),
                                                    conv4_2->out_dim_size(2),
                                                    conv4_2->out_dim_size(3));
@@ -164,7 +164,7 @@ int main(int argc, char **argv) {
     Convolutional * conv4_3  = new Convolutional(n_f_4, f_w, f_h, pad,
                                               stride, reg, relu4_2, sched);
     network.push_back(conv4_3);
-    printf("conv4_3 out size %d x %d x %d x %d\n", conv4_3->out_dim_size(0),
+    fprintf(stderr, "conv4_3 out size %d x %d x %d x %d\n", conv4_3->out_dim_size(0),
                                                    conv4_3->out_dim_size(1),
                                                    conv4_3->out_dim_size(2),
                                                    conv4_3->out_dim_size(3));
@@ -173,7 +173,7 @@ int main(int argc, char **argv) {
 
     MaxPooling * pool4 = new MaxPooling(p_w, p_h, p_stride, relu4_3, sched);
     network.push_back(pool4);
-    printf("pool4 out size %d x %d x %d x %d\n", pool4->out_dim_size(0),
+    fprintf(stderr, "pool4 out size %d x %d x %d x %d\n", pool4->out_dim_size(0),
                                                  pool4->out_dim_size(1),
                                                  pool4->out_dim_size(2),
                                                  pool4->out_dim_size(3));
@@ -182,7 +182,7 @@ int main(int argc, char **argv) {
     Convolutional * conv5_1  = new Convolutional(n_f_5, f_w, f_h, pad,
                                               stride, reg, pool4, sched);
     network.push_back(conv5_1);
-    printf("conv5_1 out size %d x %d x %d x %d\n", conv5_1->out_dim_size(0),
+    fprintf(stderr, "conv5_1 out size %d x %d x %d x %d\n", conv5_1->out_dim_size(0),
                                                    conv5_1->out_dim_size(1),
                                                    conv5_1->out_dim_size(2),
                                                    conv5_1->out_dim_size(3));
@@ -193,7 +193,7 @@ int main(int argc, char **argv) {
     Convolutional * conv5_2  = new Convolutional(n_f_5, f_w, f_h, pad,
                                               stride, reg, relu5_1, sched);
     network.push_back(conv5_2);
-    printf("conv5_2 out size %d x %d x %d x %d\n", conv5_2->out_dim_size(0),
+    fprintf(stderr, "conv5_2 out size %d x %d x %d x %d\n", conv5_2->out_dim_size(0),
                                                    conv5_2->out_dim_size(1),
                                                    conv5_2->out_dim_size(2),
                                                    conv5_2->out_dim_size(3));
@@ -203,7 +203,7 @@ int main(int argc, char **argv) {
     Convolutional * conv5_3  = new Convolutional(n_f_5, f_w, f_h, pad,
                                               stride, reg, relu5_2, sched);
     network.push_back(conv5_3);
-    printf("conv5_3 out size %d x %d x %d x %d\n", conv5_3->out_dim_size(0),
+    fprintf(stderr, "conv5_3 out size %d x %d x %d x %d\n", conv5_3->out_dim_size(0),
                                                    conv5_3->out_dim_size(1),
                                                    conv5_3->out_dim_size(2),
                                                    conv5_3->out_dim_size(3));
@@ -212,20 +212,20 @@ int main(int argc, char **argv) {
 
     MaxPooling * pool5 = new MaxPooling(p_w, p_h, p_stride, relu5_3, sched);
     network.push_back(pool5);
-    printf("pool5 out size %d x %d x %d x %d\n", pool5->out_dim_size(0),
+    fprintf(stderr, "pool5 out size %d x %d x %d x %d\n", pool5->out_dim_size(0),
                                                  pool5->out_dim_size(1),
                                                  pool5->out_dim_size(2),
                                                  pool5->out_dim_size(3));
     Flatten * flatten = new Flatten(pool5, sched);
     network.push_back(flatten);
-    printf("flatten out size %d x %d\n", flatten->out_dim_size(0),
+    fprintf(stderr, "flatten out size %d x %d\n", flatten->out_dim_size(0),
                                          flatten->out_dim_size(1));
 
     int fc6_out_dim = 4096;
 
     Affine * fc6 = new Affine(fc6_out_dim, reg, flatten, sched);
     network.push_back(fc6);
-    printf("fc6 out size %d x %d\n", fc6->out_dim_size(0),
+    fprintf(stderr, "fc6 out size %d x %d\n", fc6->out_dim_size(0),
                                      fc6->out_dim_size(1));
 
     ReLU * relu6 = new ReLU(fc6, sched);
@@ -237,7 +237,7 @@ int main(int argc, char **argv) {
 
     Affine * fc7 = new Affine(fc7_out_dim, reg, relu6, sched);
     network.push_back(fc7);
-    printf("fc7 out size %d x %d\n", fc7->out_dim_size(0),
+    fprintf(stderr, "fc7 out size %d x %d\n", fc7->out_dim_size(0),
                                      fc7->out_dim_size(1));
 
     ReLU * relu7 = new ReLU(fc7, sched);
@@ -248,12 +248,12 @@ int main(int argc, char **argv) {
     int C = 1000;
     Affine * fc8 = new Affine(C, reg, relu7, sched);
     network.push_back(fc8);
-    printf("fc8 out size %d x %d\n", fc8->out_dim_size(0),
+    fprintf(stderr, "fc8 out size %d x %d\n", fc8->out_dim_size(0),
                                      fc8->out_dim_size(1));
 
     SoftMax * softm = new SoftMax(fc8, sched);
     network.push_back(softm);
-    printf("softm out size %d x %d\n", softm->out_dim_size(0),
+    fprintf(stderr, "softm out size %d x %d\n", softm->out_dim_size(0),
                                        softm->out_dim_size(1));
 
     Func acc = softm->loss(Func(labels));
@@ -275,5 +275,5 @@ int main(int argc, char **argv) {
         test.compile_jit(target, false);
 
     double best = benchmark(3, 1, [&]() { test.realize({loss, scores}); });
-    std::cout << best * 1e3 << std::endl;
+    std::cout << "runtime: " << best * 1e3 << std::endl;
 }

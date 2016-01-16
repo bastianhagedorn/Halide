@@ -38,5 +38,5 @@ int main(int argc, char **argv) {
     Image<float> out(1536, 2560, 3, 3);
 
     double best = benchmark(5, 1, [&]() { f.realize(out); });
-    std::cout << best * 1e3 << std::endl;
+    std::cout << "runtime: " << best * 1e3 << std::endl;
 }

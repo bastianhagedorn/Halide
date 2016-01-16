@@ -38,7 +38,7 @@ int main(int argc, char **argv) {
     test(input);
     double halide_time = t;
 
-    printf("%g\n", halide_time * 1000);
+    printf("runtime: %g\n", halide_time * 1000);
 
     return 0;
 }
