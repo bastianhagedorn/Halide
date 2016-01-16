@@ -2,6 +2,8 @@
 from pygg import *
 from pandas import DataFrame
 
+from ConfigParser import ConfigParser
+
 import os.path
 import math
 import argparse, sys
@@ -40,7 +42,7 @@ benches = filter(lambda a: a not in disabled, benches)
 
 print 'Testing:\n  ' + '\n  '.join(benches)
 
-res = DataFrame(columns=['app', 'ver', 'threads', 'perf', 'speedup'])
+res = DataFrame()#columns=['app', 'ver', 'threads', 'perf', 'speedup'])
 
 for app in benches:
     try:
@@ -48,45 +50,46 @@ for app in benches:
         times_auto = []
         speed_up = []
         num_samples = -1
-        with open(os.path.join(app, "ref_perf.txt")) as f:
-            times_ref = [ float(l) for l in f ]
-            num_samples = len(times_ref)
-
-        with open(os.path.join(app, "auto_perf.txt")) as f:
-            times_auto = [ float(l) for l in f ]
-            assert(num_samples == len(times_auto))
-
-        speed_up = [ ref/auto for (ref, auto) \
-                               in zip( times_ref, times_auto ) ]
-
+        
+        c = ConfigParser()
+        for f in 'ref_perf.txt', 'auto_perf.txt', 'naive_perf.txt':
+            c.read(os.path.join(app, f))
+        df = DataFrame([dict(c.items(s)) for s in c.sections()])
+        
+        # coerce types
+        for col in df.columns:
+            try:
+                ints = df[col].astype(int)
+                df[col] = ints
+            except:
+                try:
+                    floats = df[col].astype(float)
+                    df[col] = floats
+                except:
+                    pass # keep as string
+        
+        # coerce old data names if present
+        df = df.rename(columns={'nthreads':'threads'})
+        
         app_name = app.replace('_', ' ').title()
-        auto = DataFrame({
-            'app': [app_name]*num_samples,
-            'ver': 'auto',
-            'threads': [2**i for i in range(num_samples)],
-            'runtime': times_auto, # msecs
-            'throughput': [1000.0/t for t in times_auto], # runs/sec
-            'speedup': speed_up
-        })
-
-        ref = DataFrame({
-            'app': [app_name]*num_samples,
-            'ver': 'ref',
-            'threads': [2**i for i in range(num_samples)],
-            'runtime': times_ref, # msecs
-            'throughput': [1000.0/t for t in times_ref], # runs/sec
-            'speedup': [1.0]*num_samples
-        })
-
-        results = auto.append(ref)
-
+        
+        df.insert(0, 'app', app_name)
+        df['throughput'] = 1000.0 / df.runtime # runs/sec
+        df['speedup'] = 0.0
+        
+        # this is a little bullshit, but DataFrame slice indexing gets confusing
+        ref = df[df.version == 'ref']#.set_index('threads')
+        def compute_speedup(row):
+            r = ref[ref.threads == row.threads].runtime.iloc[0] #FFFfffuuu
+            row.speedup = r / row.runtime
+            return row
+        df = df.apply(compute_speedup, axis=1)
+        
         if not args.dont_normalize:
-            max_runtime = max(auto.append(ref).runtime)
-            results.runtime = results.runtime / max_runtime
-            max_throughput = max(auto.append(ref).throughput)
-            results.throughput = results.throughput / max_throughput
-
-        res = res.append(results)
+            df.runtime = df.runtime / max(df.runtime)
+            df.throughput = df.throughput / max(df.throughput)
+            
+        res = res.append(df)
 
     except IOError,e:
         print 'Skipping missing: '+app
@@ -98,8 +101,8 @@ pl = {}
 for p in ('speedup','throughput','runtime'):
     pl[p] = ggplot('data', aes(x='threads', y=p))
 
-bars = geom_bar(aes(fill='ver'), stat="'identity'", position="'dodge'")
-lines = geom_line(aes(colour='ver')) #+ log_vertical
+bars = geom_bar(aes(fill='version'), stat="'identity'", position="'dodge'")
+lines = geom_line(aes(colour='version')) #+ log_vertical
 
 
 def save(name, geom):
