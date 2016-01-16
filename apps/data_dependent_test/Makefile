@@ -9,6 +9,9 @@ data_dep_ref.o: data_dependent_test
 data_dep_auto.o: data_dependent_test
 	./data_dependent_test -1
 
+data_dep_naive.o: data_dependent_test
+	HL_AUTO_NAIVE=1 ./data_dependent_test -1
+
 test_%: test.cpp data_dep_%.o
 	$(CXX) $(CXXFLAGS) $^ -o $@ -lpthread -ldl $(PNGFLAGS)
 

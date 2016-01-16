@@ -3,7 +3,7 @@ HALIDE_SRC_PATH ?= ../..
 
 CXX ?= g++
 GXX ?= g++
-CXX += -O3 -march=native -Wall -fopenmp -g
+CXX += -O3 -Wall -g
 
 CFLAGS += -I $(HALIDE_BIN_PATH)/include/ -I $(HALIDE_SRC_PATH)/tools/ -I $(HALIDE_SRC_PATH)/apps/support/
 CXXFLAGS += -std=c++11 -I $(HALIDE_BIN_PATH)/include/ -I $(HALIDE_SRC_PATH)/tools/ -I $(HALIDE_SRC_PATH)/apps/support/
@@ -55,16 +55,26 @@ print-%:
 	@echo '$*=$($*)'
 
 # BENCHMARKING
-TESTS ?= test_ref test_auto # overload before include if desired!
+TESTS ?= test_ref test_auto test_naive # overload before include if desired!
 THREADS_TO_TEST ?= 1 2 4 8
 REF_BENCHES=$(patsubst %,.bench_ref.%.txt,$(THREADS_TO_TEST))
 AUTO_BENCHES=$(patsubst %,.bench_auto.%.txt,$(THREADS_TO_TEST))
-BENCHES=$(REF_BENCHES) $(AUTO_BENCHES)
+NAIVE_BENCHES=$(patsubst %,.bench_naive.%.txt,$(THREADS_TO_TEST))
+BENCHES=$(REF_BENCHES) $(AUTO_BENCHES) $(NAIVE_BENCHES)
+
+gen: $(TESTS)
+
+cleangen:
+	rm -f $(TESTS)
+
+regen: cleangen gen
 
 .bench_%.txt: $(TESTS)
 	$(eval NTHREADS := $(word 2,$(subst ., ,$@)))
 	$(eval VER := $(word 2,$(subst _, ,$(word 1,$(subst ., ,$@)))))
-	OMP_NUM_THREADS=$(NTHREADS) HL_NUM_THREADS=$(NTHREADS) ./test.sh $(VER) | tail -n1 > $@
+	echo "" > $@
+	echo "\"version\": \"$(VER)\", \"nthreads\": \"$(NTHREADS)\"," >> $@
+	./test.sh $(VER) $(NTHREADS) >> $@
 
 ref_perf.txt: $(REF_BENCHES)
 	cat $^ > $@
@@ -72,7 +82,10 @@ bench_ref: ref_perf.txt
 auto_perf.txt: $(AUTO_BENCHES)
 	cat $^ > $@
 bench_auto: auto_perf.txt
-bench: bench_ref bench_auto
+naive_perf.txt: $(AUTO_BENCHES)
+	cat $^ > $@
+bench_naive: naive_perf.txt
+bench: bench_ref bench_auto bench_naive
 
 clean_bench:
-	rm -f $(BENCHES) auto_perf.txt ref_perf.txt
+	rm -f $(BENCHES) auto_perf.txt ref_perf.txt naive_perf.txt

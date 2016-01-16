@@ -1,4 +1,4 @@
-TESTS=process_ref process_auto
+TESTS=process_ref process_auto process_naive
 include ../support/Makefile.inc
 
 local_laplacian_gen: local_laplacian_gen.cpp
@@ -10,6 +10,9 @@ local_laplacian_ref.o: local_laplacian_gen
 
 local_laplacian_auto.o: local_laplacian_gen
 	./local_laplacian_gen 8 -1
+
+local_laplacian_naive.o: local_laplacian_gen
+	HL_AUTO_NAIVE=1 ./local_laplacian_gen 8 -1
 
 process_%: process.cpp local_laplacian_%.o
 	$(CXX) $(CXXFLAGS) $^ \

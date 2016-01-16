@@ -1,4 +1,4 @@
-TESTS=filter_ref filter_auto # specify before include!
+TESTS=filter_ref filter_auto filter_naive # specify before include!
 include ../support/Makefile.inc
 
 harris: harris.cpp
@@ -10,6 +10,9 @@ harris_ref.o: harris
 
 harris_auto.o: harris
 	./harris -1
+
+harris_naive.o: harris
+	.HL_AUTO_NAIVE=1 /harris -1
 
 filter_%: harris_%.o filter.cpp
 	$(CXX) $(CXXFLAGS) $^ -lpthread -ldl -o $@ \

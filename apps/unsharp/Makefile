@@ -1,4 +1,4 @@
-TESTS=filter_auto filter_ref
+TESTS=filter_auto filter_ref filter_naive
 include ../support/Makefile.inc
 
 unsharp: unsharp.cpp
@@ -10,6 +10,9 @@ unsharp_ref.o: unsharp
 
 unsharp_auto.o: unsharp
 	./unsharp -1
+
+unsharp_naive.o: unsharp
+	HL_AUTO_NAIVE=1 ./unsharp -1
 
 filter_%: unsharp_%.o filter.cpp
 	$(CXX) $(CXXFLAGS) $^ -lpthread -ldl -o $@ \
