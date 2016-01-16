@@ -12,7 +12,12 @@ void auto_build(Halide::Pipeline p,
     Halide::Outputs o;
     std::string suffix = "_ref";
     if (auto_schedule) {
-        suffix = "_auto";
+        const char *naive = getenv("HL_AUTO_NAIVE");
+        if (naive && atoi(naive)) {
+            suffix = "_naive";
+        } else {
+            suffix = "_auto";
+        }
     }
     o = o.header(name+".h").object(name+suffix+".o");
     p.compile_to(o, args, name, target, auto_schedule);

@@ -65,7 +65,7 @@ BENCHES=$(REF_BENCHES) $(AUTO_BENCHES) $(NAIVE_BENCHES)
 gen: $(TESTS)
 
 cleangen:
-	rm -f $(TESTS)
+	rm -f $(TESTS) *.o
 
 regen: cleangen gen
 
@@ -82,7 +82,7 @@ bench_ref: ref_perf.txt
 auto_perf.txt: $(AUTO_BENCHES)
 	cat $^ > $@
 bench_auto: auto_perf.txt
-naive_perf.txt: $(AUTO_BENCHES)
+naive_perf.txt: $(NAIVE_BENCHES)
 	cat $^ > $@
 bench_naive: naive_perf.txt
 bench: bench_ref bench_auto bench_naive

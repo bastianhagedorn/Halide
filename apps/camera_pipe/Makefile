@@ -1,4 +1,4 @@
-TESTS=process_ref process_auto # specify before include!
+TESTS=process_ref process_auto process_naive # specify before include!
 include ../support/Makefile.inc
 
 ifeq ($(HL_TARGET),ptx)
@@ -16,6 +16,9 @@ curved_ref.o: camera_pipe
 
 curved_auto.o: camera_pipe
 	./camera_pipe 8 -1 # 8-bit output,
+
+curved_naive.o: camera_pipe
+	HL_AUTO_NAIVE=1 ./camera_pipe 8 -1 # 8-bit output,
 
 fcam/Demosaic.o: fcam/Demosaic.cpp fcam/Demosaic.h
 	$(CXX) $(CXXFLAGS) -c $< -o $@
