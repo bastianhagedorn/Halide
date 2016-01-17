@@ -22,6 +22,11 @@ errlog="${rundir}/err.log"
 echo "Testing $apps"
 echo "   in $rundir"
 
+MEMSIZE=${MEMSIZE:-131072 524288 2097152 8388608 33554432}
+BALANCE=${BALANCE:-1 2 3 5 7 10 14 19 28}
+VEC=${VEC:-4 8}
+PAR=${PAR:-1 2 4 8}
+
 #echo "This will remove {gen,run}.*.txt - OK?"; read
 for app in $apps; do
     
@@ -37,10 +42,10 @@ for app in $apps; do
     make -s clean
     #rm -f "gen.*.*.*.txt" "run.*.*.*.txt"
 
-    for vec in 4 8
+    for vec in $VEC
     do
         echo "  vec: $vec"
-        for par in 1 2 4 8
+        for par in $PAR
         do
             echo "    par: $par"
             # 16kB  = 131072
@@ -53,10 +58,10 @@ for app in $apps; do
             # 2MB   = 16777216
             # 4MB   = 33554432
             # 8MB   = 67108864
-            for memsize in 131072 524288 2097152 8388608 33554432
+            for memsize in $MEMSIZE
             do
                 echo "      memsize: $memsize"
-                for balance in 1 2 3 5 7 10 14 19 28
+                for balance in $BALANCE
                 do
                     echo "        balance: $balance"
                     genfile="$apprundir/gen.$par.$vec.$balance.$memsize.txt"
