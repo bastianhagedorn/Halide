@@ -1,5 +1,6 @@
 #!/bin/bash
 APPS=`cat apps.txt`
+RACES=`cat raceapps.txt`
 TESTS=`cat tests.txt`
 CONV=`cat conv.txt`
 BATCH=""
@@ -35,7 +36,7 @@ esac
 shift # past argument or value
 done
 if [[ $BATCH == "" ]]; then
-    BATCH=$APPS
+    BATCH="$APPS $RACES"
 fi
 for app in $BATCH; do
     cd $app;

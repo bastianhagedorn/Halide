@@ -22,6 +22,7 @@ print args
 disabled = args.exclude
 
 apps = open('apps.txt').read().split()
+apps.append(open('raceapps.txt').read().split())
 tests = open('tests.txt').read().split()
 conv = open('conv.txt').read().split()
 
