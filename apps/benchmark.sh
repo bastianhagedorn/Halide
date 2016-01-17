@@ -24,6 +24,10 @@ case $key in
     BATCH+=" $2"
     shift # past argument
     ;;
+    -p|--threads)
+    export THREADS_TO_TEST="$2"
+    shift # past argument
+    ;;
     *)
             # unknown option
     ;;
