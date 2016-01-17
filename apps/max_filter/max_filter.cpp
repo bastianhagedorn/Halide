@@ -82,7 +82,32 @@ int main(int argc, char **argv) {
         vert_log.vectorize(x, 8);
         vert_log.update().reorder(x, r.x, r.y, c).vectorize(x, 8);
         vert.compute_at(final, y).vectorize(x, 8);
-    break;
+        // 7:42pm. 110ms !!!
+        break;
+    case 1: // DILLON
+        // That was a little slower, but a bit easier to work with, and avoids large buffers at root (memory consumption would be high).
+        // Playing with the tile size yielded a bit of an improvement.
+        slice_for_radius.compute_root();
+        filter_height.compute_root();
+
+        final.compute_root()
+            .split(x, tx, x, 128)
+            .reorder(x, y, c, tx)
+            .vectorize(x, 8)
+            .parallel(tx);
+
+        vert_log.compute_at(final, tx);
+        vert_log.update(0)
+            .reorder(r.x, x)
+            .vectorize(x, 8);
+
+        vert.compute_at(final, y)
+            .reorder(t, x, y)
+            .vectorize(x, 8);
+        // Time: 35 min
+        // Runtime: 218 ms
+        break;
+    
 
     default:
         vert_log.compute_root();
