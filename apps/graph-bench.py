@@ -4,6 +4,7 @@ from pandas import DataFrame
 
 from ConfigParser import ConfigParser
 
+import inspect
 import os.path
 import math
 import argparse, sys
@@ -21,10 +22,13 @@ print args
 
 disabled = args.exclude
 
-apps = open('apps.txt').read().split()
-apps.extend(open('raceapps.txt').read().split())
-tests = open('tests.txt').read().split()
-conv = open('conv.txt').read().split()
+srcdir = os.path.dirname(os.path.abspath(
+            inspect.getfile(inspect.currentframe())))
+
+apps      = open(os.path.join(srcdir, 'apps.txt')).read().split()
+apps.extend(open(os.path.join(srcdir, 'raceapps.txt')).read().split())
+tests     = open(os.path.join(srcdir, 'tests.txt')).read().split()
+conv      = open(os.path.join(srcdir, 'conv.txt')).read().split()
 
 benches = []
 if not (args.apps or args.tests or args.extra or args.conv):
@@ -95,6 +99,9 @@ for app in benches:
 
     except IOError,e:
         print 'Skipping missing: '+app
+    except:
+        print '\n\nFailed on',app_name,'\n'
+        raise
 
 log2_threads = scale_x_continuous(trans='log2_trans()')
 log_vertical = scale_y_continuous(trans='log_trans()')
