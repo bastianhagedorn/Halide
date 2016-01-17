@@ -121,7 +121,7 @@ int main(int argc, char **argv) {
        f_conv.update().parallel(y);
 
        f_ReLU.reorder(n, z).parallel(z).vectorize(x, 8);
-       f_ReLU.print_loop_nest();
+       //f_ReLU.print_loop_nest();
     }
 
     Target target = get_target_from_environment();
