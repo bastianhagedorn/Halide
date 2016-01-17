@@ -188,7 +188,7 @@ int main(int argc, char **argv) {
     Image<uint8_t> in_r = load_image(argv[2]);
     final.bound(x, 0, in_l.width()).bound(y, 0, in_l.height()).bound(c, 0, 3);
 
-    std::cerr << in_l.width() << "," << in_l.height() << std::endl;
+    // std::cerr << in_l.width() << "," << in_l.height() << std::endl;
     int schedule = atoi(argv[4]);
     switch(schedule) {
     case 0:
