@@ -1,7 +1,10 @@
 #!/bin/bash
 app=${1:-local_laplacian}
-num_samples=${NUM_SAMPLES:-2}
+num_samples=${NUM_SAMPLES:-100}
 threads=${THREADS:-6}
+
+echo "Threads: $threads"
+echo "Samples: $num_samples"
 
 halide="${HOME}/auto-halide"
 
