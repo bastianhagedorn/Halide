@@ -86,7 +86,9 @@ int main(int argc, char **argv) {
     Func cost_pyramid_push[8];
     cost_pyramid_push[0](x, y, z, c) =
         select(c == 0, cost(x, y, z) * cost_confidence(x, y), cost_confidence(x, y));
-    Expr w = left_im.width(), h = left_im.height();
+    //Expr w = left_im.width(), h = left_im.height();
+    int w = 992;
+    int h = 1024;
     for (int i = 1; i < 8; i++) {
         cost_pyramid_push[i](x, y, z, c) = downsample(cost_pyramid_push[i-1])(x, y, z, c);
         w /= 2;
@@ -179,13 +181,14 @@ int main(int argc, char **argv) {
     output(x, y, c) += sample_weight(x, y, s) * input_with_alpha(sample_x, sample_y, c);
 
     // Normalize
-    Func final;
+    Func final("final");
     final(x, y, c) = output(x, y, c) / output(x, y, 3);
 
     Image<uint8_t> in_l = load_image(argv[1]);
     Image<uint8_t> in_r = load_image(argv[2]);
     final.bound(x, 0, in_l.width()).bound(y, 0, in_l.height()).bound(c, 0, 3);
 
+    std::cout << in_l.width() << "," << in_l.height() << std::endl;
     int schedule = atoi(argv[4]);
     switch(schedule) {
     case 0:
