@@ -3,7 +3,7 @@ HALIDE_SRC_PATH ?= ../..
 
 CXX ?= g++
 GXX ?= g++
-CXX += -O3 -Wall -g
+CXX += -Wall -g
 
 CFLAGS += -I $(HALIDE_BIN_PATH)/include/ -I $(HALIDE_SRC_PATH)/tools/ -I $(HALIDE_SRC_PATH)/apps/support/
 CXXFLAGS += -std=c++11 -I $(HALIDE_BIN_PATH)/include/ -I $(HALIDE_SRC_PATH)/tools/ -I $(HALIDE_SRC_PATH)/apps/support/
