@@ -22,7 +22,7 @@ print args
 disabled = args.exclude
 
 apps = open('apps.txt').read().split()
-apps.append(open('raceapps.txt').read().split())
+apps.extend(open('raceapps.txt').read().split())
 tests = open('tests.txt').read().split()
 conv = open('conv.txt').read().split()
 
@@ -41,7 +41,7 @@ else:
 
 benches = filter(lambda a: a not in disabled, benches)
 
-print 'Testing:\n  ' + '\n  '.join(benches)
+print 'Loading:\n  ' + '\n  '.join(benches)
 
 res = DataFrame()#columns=['app', 'ver', 'threads', 'perf', 'speedup'])
 
@@ -75,6 +75,7 @@ for app in benches:
         app_name = app.replace('_', ' ').title()
         
         df.insert(0, 'app', app_name)
+        assert(len(df))
         df['throughput'] = 1000.0 / df.runtime # runs/sec
         df['speedup'] = 0.0
         
