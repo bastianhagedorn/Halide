@@ -1,3 +1,4 @@
+TESTS=max_filter
 include ../support/Makefile.inc
 
 CXXFLAGS += -g -Wall

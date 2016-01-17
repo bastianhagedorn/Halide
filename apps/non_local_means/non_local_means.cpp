@@ -1,5 +1,6 @@
 #include "Halide.h"
 #include <stdio.h>
+#include "../support/auto_build.h"
 
 using namespace Halide;
 
@@ -13,7 +14,8 @@ int main(int argc, char **argv) {
 
     int patch_size = atoi(argv[1]);
     int search_area = atoi(argv[2]);
-    int schedule = atoi(argv[3]);
+    int schedule = 999;
+    if (argc > 3) { schedule = atoi(argv[3]); }
 
     ImageParam input(Float(32), 3);
     Param<float> sigma;
@@ -72,6 +74,8 @@ int main(int argc, char **argv) {
     non_local_means.output_buffer().set_min(2, 0).set_extent(2, 3);
     non_local_means.bound(x, 0, 192).bound(y, 0, 320).bound(c, 0, 3);
 
+    Var tx("tx"), ty("ty");
+
     switch (schedule) {
     case 0:  {
         d.compute_root();
@@ -80,20 +84,54 @@ int main(int argc, char **argv) {
         non_local_means.compute_root();
         break;
     }
-    case 1: {
-        // Put more schedules here.
-    }
-    default:
+    case 1: { // ANDREW
+        // blur_d_y and blur_d should share a single loop over s_dom.x
+        non_local_means_sum.compute_root().bound(c, 0, 4).parallel(y, 4).vectorize(x, 16);
+        non_local_means_sum.update().reorder(c, s_dom.x, x, y, s_dom.y).unroll(c).parallel(y, 4).vectorize(x, 16);
+        w.compute_at(non_local_means_sum, x).vectorize(x);
+        blur_d.compute_at(non_local_means_sum, y).vectorize(x, 16);
+        blur_d_y.compute_at(blur_d, y).vectorize(x, 16);
+        d.compute_at(non_local_means_sum, s_dom.y).parallel(y, 8).vectorize(x, 16);
+        non_local_means.reorder(c, x, y).bound(c, 0, 3).unroll(c).parallel(y, 8).vectorize(x, 16);
+        // 10:49 am. 6.1296 ms. I think I've converged.
         break;
     }
+    case 2: { // DILLON
+        // Back to tiling. Let's play with the tile size?
+        non_local_means.compute_root()
+            .reorder(c, x, y)
+            .tile(x, y, tx, ty, x, y, 16, 8)
+            .parallel(ty)
+            .vectorize(x, 8);
 
+        blur_d_y.compute_at(non_local_means, tx)
+            .reorder(y, x)
+            .vectorize(x, 8);
+        d.compute_at(blur_d_y, x)
+            .vectorize(x, 8);
+        non_local_means_sum.compute_at(non_local_means, x)
+            .reorder(c, x, y)
+            .bound(c, 0, 4).unroll(c)
+            .vectorize(x, 8);
+        non_local_means_sum.update(0)
+            .reorder(c, x, y, s_dom.x, s_dom.y)
+            .unroll(c)
+            .vectorize(x, 8);
+        blur_d.compute_at(non_local_means_sum, x)
+            .vectorize(x, 8);
 
+        // Time: 43 min
+        // Runtime: 4.9 ms (Wow, 16x8 tiles is shockingly small, there is a ton of redundant work! That suggests this schedule might be badly designed from the outset. Perhaps many global passes over the image would be better. However, I'm having a hard time thinking of how to do this without excessive memory usage.)
+        break;
+    }
+    default: {
+        break;
+    }
+    }
 
+    auto_build(non_local_means, "non_local_means", {sigma, input}, target, schedule == -1);
 
-
-    non_local_means.print_loop_nest();
-
-    non_local_means.compile_to_file("non_local_means", {sigma, input}, target, schedule == -1);
+    // non_local_means.print_loop_nest();
 
     return 0;
 }

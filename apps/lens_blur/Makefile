@@ -1,3 +1,4 @@
+TESTS=lens_blur
 include ../support/Makefile.inc
 
 CXXFLAGS += -g -Wall

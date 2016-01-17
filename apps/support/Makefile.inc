@@ -3,7 +3,7 @@ HALIDE_SRC_PATH ?= ../..
 
 CXX ?= g++
 GXX ?= g++
-CXX += -O3 -Wall -g
+CXX += -Wall -g
 
 CFLAGS += -I $(HALIDE_BIN_PATH)/include/ -I $(HALIDE_SRC_PATH)/tools/ -I $(HALIDE_SRC_PATH)/apps/support/
 CXXFLAGS += -std=c++11 -I $(HALIDE_BIN_PATH)/include/ -I $(HALIDE_SRC_PATH)/tools/ -I $(HALIDE_SRC_PATH)/apps/support/
@@ -55,6 +55,8 @@ print-%:
 	@echo '$*=$($*)'
 
 # BENCHMARKING
+.NOTPARALLEL: # important not to parallelize the bench runs accidentally
+
 TESTS ?= test_ref test_auto test_naive # overload before include if desired!
 THREADS_TO_TEST ?= 1 2 4 8
 REF_BENCHES=$(patsubst %,.bench_ref.%.txt,$(THREADS_TO_TEST))
@@ -65,7 +67,7 @@ BENCHES=$(REF_BENCHES) $(AUTO_BENCHES) $(NAIVE_BENCHES)
 gen: $(TESTS)
 
 cleangen:
-	rm -f $(TESTS) *.o
+	rm -f $(TESTS) *.o $(BENCHES)
 
 regen: cleangen gen
 
@@ -73,7 +75,7 @@ regen: cleangen gen
 	$(eval NTHREADS := $(word 2,$(subst ., ,$@)))
 	$(eval VER := $(word 2,$(subst _, ,$(word 1,$(subst ., ,$@)))))
 	echo "[$@]" > $@
-	echo "version: $(VER)\nnthreads: $(NTHREADS)" >> $@
+	echo "version: $(VER)\nthreads: $(NTHREADS)" >> $@
 	./test.sh $(VER) $(NTHREADS) >> $@
 
 ref_perf.txt: $(REF_BENCHES)

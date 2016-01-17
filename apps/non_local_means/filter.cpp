@@ -20,8 +20,8 @@ int main(int argc, char **argv) {
     }
 
     Image<float> input = load_image(argv[1]);
-    std::cout << input.width() << std::endl;
-    std::cout << input.height() << std::endl;
+    std::cerr << input.width() << std::endl;
+    std::cerr << input.height() << std::endl;
     Image<float> output(input.width(), input.height(), input.channels());
 
     non_local_means(atof(argv[3]), input, output);
@@ -31,7 +31,7 @@ int main(int argc, char **argv) {
     double min_t = benchmark(10, 10, [&]() {
         non_local_means(atof(argv[3]), input, output);
     });
-    printf("%g ms\n", min_t * 1e3);
+    printf("runtime: %g\n", min_t * 1e3);
 
     save_image(output, argv[2]);
 
