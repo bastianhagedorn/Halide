@@ -106,6 +106,22 @@ int main(int argc, char **argv) {
        //f_conv.update().fuse(y, par, par).parallel(par);
        //f_conv.update().parallel(z);
        //f_conv.print_loop_nest();
+    } else if (sched == 1) {
+       RVar z_r;
+       f_in_bound.compute_root().parallel(f_in_bound.args()[3]);
+       f_conv.compute_root().vectorize(x, 8);
+       f_conv.reorder(z, y, n).fuse(y, n, par).parallel(par);
+       //f_conv.update().reorder(x, y, r.z);
+       f_conv.update().reorder(z, r.z, y, n);
+       f_conv.update().split(r.z, r.z, z_r, 32).reorder(x, z_r, z, r.z);
+       f_conv.update().vectorize(x, vec_len);
+       f_conv.update().unroll(r.x);
+       f_conv.update().unroll(r.y);
+       f_conv.update().parallel(n);
+       f_conv.update().parallel(y);
+
+       f_ReLU.reorder(n, z).parallel(z).vectorize(x, 8);
+       //f_ReLU.print_loop_nest();
     }
 
     Target target = get_target_from_environment();
