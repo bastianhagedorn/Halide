@@ -70,7 +70,7 @@ for app in $apps; do
                         rm -f "*.o"
                         make -s cleangen 2>> $errlog
                         make -s gen > $genfile 2>> $errlog
-                        echo "$WARN<--!$ must cull out naive gen log data!!" >> $genfile
+                        #echo "$WARN<--!$ must cull out naive gen log data!!" >> $genfile # should be cool now
                     fi
                     for runthreads in 1 2 4 8
                     do
