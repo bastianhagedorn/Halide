@@ -202,6 +202,7 @@ int main(int argc, char **argv) {
         }
     }
 
+#if 0
     Image<uint16_t> blurry = blur(input);
     //double slow_time = t;
 
@@ -210,6 +211,7 @@ int main(int argc, char **argv) {
 
     //Image<uint16_t> speedy2 = blur_fast2(input);
     //float fast_time2 = t;
+#endif
 
     Image<uint16_t> halide = blur_halide(input);
     double halide_time = t;
@@ -218,12 +220,13 @@ int main(int argc, char **argv) {
     //printf("times: %f %f %f\n", slow_time, fast_time, halide_time);
     printf("runtime: %g\n", halide_time * 1000);
 
+#if 0
     for (int y = 64; y < input.height() - 64; y++) {
         for (int x = 64; x < input.width() - 64; x++) {
             if (blurry(x, y) != speedy(x, y) || blurry(x, y) != halide(x, y))
                 printf("difference at (%d,%d): %d %d %d\n", x, y, blurry(x, y), speedy(x, y), halide(x, y));
         }
     }
-
+#endif
     return 0;
 }
