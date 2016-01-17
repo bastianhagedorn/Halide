@@ -4047,7 +4047,7 @@ simple_inline(map<string, vector<const Call*>> &all_calls,
             env[fcalls.first].schedule().compute_level().var = "";
         }
         if (env[fcalls.first].is_boundary() || env[fcalls.first].is_lambda()) {
-            assert(consumers[fcalls.first].size() == 1);
+            //assert(consumers[fcalls.first].size() == 1);
             inlines[fcalls.first].push_back(consumers[fcalls.first][0]);
             env[fcalls.first].schedule().store_level().var = "";
             env[fcalls.first].schedule().compute_level().var = "";

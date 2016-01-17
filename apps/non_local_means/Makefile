@@ -7,10 +7,10 @@ non_local_means: non_local_means.cpp
 	$(CXX) $(CXXFLAGS) $^ -g $(LIB_HALIDE) -o $@ -lpthread -ldl -lz -ltinfo $(LDFLAGS) \
 	$(LLVM_SHARED_LIBS)
 
-non_local_means_auto.o: non_local_means
+non_local_means_naive.o: non_local_means
 	HL_AUTO_NAIVE=1 ./$(<) 7 7 -1
 
-non_local_means_naive.o: non_local_means
+non_local_means_auto.o: non_local_means
 	./$(<) 7 7 -1
 
 non_local_means_base.o: non_local_means
