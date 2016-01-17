@@ -31,7 +31,7 @@ int main(int argc, char **argv) {
     double min_t = benchmark(10, 10, [&]() {
         non_local_means(atof(argv[3]), input, output);
     });
-    printf("%g ms\n", min_t * 1e3);
+    printf("runtime: %g\n", min_t * 1e3);
 
     save_image(output, argv[2]);
 

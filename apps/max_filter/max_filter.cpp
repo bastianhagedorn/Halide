@@ -65,14 +65,28 @@ int main(int argc, char **argv) {
 
     Var tx, xi;
     switch (schedule) {
-    case 0:
+    case 0: // ANDREW
+        // These don't matter, just LUTs
+        slice_for_radius.compute_root();
+        filter_height.compute_root();
+
+        // vert_log.update(1) doesn't have enough parallelism, but I
+        // can't figure out how to give it more... Split whole image
+        // into slices.
+
+        final.compute_root().split(x, tx, x, 256).reorder(x, y, c, tx).fuse(c, tx, t).parallel(t).vectorize(x, 8);
+        vert_log.compute_at(final, t);
+        vert_log.update(0).vectorize(x, 8);
+        vert_log.update(1).reorder(x, r.x, r.y, c).vectorize(x, 8);
+        vert.compute_at(final, y).vectorize(x, 8);
+    break;
+    
+    default:
         vert_log.compute_root();
         vert.compute_root();
         slice_for_radius.compute_root();
         filter_height.compute_root();
         final.compute_root();
-        break;
-    default:
         break;
     }
 
@@ -92,11 +106,11 @@ int main(int argc, char **argv) {
 
 
 
-    std::cout << "Running... " << std::endl;
+    // std::cout << "Running... " << std::endl;
     double best = benchmark(3, 3, [&]() { final.realize(out); });
-    std::cout << " took " << best * 1e3 << " msec." << std::endl;
+    std::cout << "runtime: " << best * 1e3 << std::endl;
 
-    save_image(out, argv[2]);
+    // save_image(out, argv[2]);
 
     return 0;
 }
