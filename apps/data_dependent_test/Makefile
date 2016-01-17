@@ -1,5 +1,7 @@
 include ../support/Makefile.inc
 
+auto: clean_auto test_auto
+
 data_dependent_test: data_dependent_test.cpp
 	$(CXX) $(CXXFLAGS) data_dependent_test.cpp $(LIB_HALIDE) -o data_dependent_test -ldl -lpthread -lz $(LDFLAGS) -ltinfo
 

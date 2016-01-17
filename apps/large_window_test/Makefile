@@ -1,5 +1,7 @@
 include ../support/Makefile.inc
 
+auto: clean_auto test_auto
+
 large_window_test: large_window_test.cpp
 	$(CXX) $(CXXFLAGS) large_window_test.cpp $(LIB_HALIDE) -o large_window_test -ldl -lpthread -lz $(LDFLAGS) -ltinfo
 

@@ -24,7 +24,7 @@ int main(int argc, char **argv) {
     });
     printf("runtime: %g\n", min_t * 1e3);
 
-    save_image(output, argv[2]);
+    // save_image(output, argv[2]);
 
     return 0;
 }

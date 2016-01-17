@@ -3,6 +3,8 @@ include ../support/Makefile.inc
 
 all: filter
 
+auto: clean_auto filter_auto
+
 non_local_means: non_local_means.cpp
 	$(CXX) $(CXXFLAGS) $^ -g $(LIB_HALIDE) -o $@ -lpthread -ldl -lz -ltinfo $(LDFLAGS) \
 	$(LLVM_SHARED_LIBS)

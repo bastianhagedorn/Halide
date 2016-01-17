@@ -1,6 +1,8 @@
 TESTS=filter_auto filter_ref filter_naive
 include ../support/Makefile.inc
 
+auto: clean_auto filter_auto
+
 unsharp: unsharp.cpp
 	$(CXX) $(CXXFLAGS) unsharp.cpp $(LIB_HALIDE) -o \
 		unsharp -lpthread -ldl -lz $(LDFLAGS) $(LLVM_SHARED_LIBS) -ltinfo

@@ -1,6 +1,8 @@
 TESTS=process_ref process_auto process_naive
 include ../support/Makefile.inc
 
+auto: clean_auto process_auto
+
 local_laplacian_gen: local_laplacian_gen.cpp
 	$(CXX) $(CXXFLAGS) local_laplacian_gen.cpp $(LIB_HALIDE) -o local_laplacian_gen -lpthread -ldl -lz \
 	$(LDFLAGS) $(LLVM_SHARED_LIBS) -ltinfo

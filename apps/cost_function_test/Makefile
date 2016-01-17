@@ -1,5 +1,7 @@
 include ../support/Makefile.inc
 
+auto: clean_auto test_auto
+
 cost_function_test: cost_function_test.cpp
 	$(CXX) $(CXXFLAGS) cost_function_test.cpp $(LIB_HALIDE) -o cost_function_test -ldl -lpthread -lz $(LDFLAGS) -ltinfo
 

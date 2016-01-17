@@ -1,6 +1,8 @@
 TESTS=filter_ref filter_auto filter_naive # specify before include!
 include ../support/Makefile.inc
 
+auto: clean_auto filter_auto
+
 bilateral_grid: bilateral_grid.cpp
 	$(CXX) $(CXXFLAGS) bilateral_grid.cpp $(LIB_HALIDE) -o \
 		bilateral_grid -lpthread -ldl -lz $(LDFLAGS) $(LLVM_SHARED_LIBS) -ltinfo

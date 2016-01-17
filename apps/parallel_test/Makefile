@@ -3,6 +3,8 @@ include ../support/Makefile.inc
 
 .PHONY: clean
 
+auto: clean_auto parallel
+
 parallel: parallel.cpp
 	$(CXX) $(CXXFLAGS) parallel.cpp $(LIB_HALIDE) -o parallel -lpthread -ldl -lz \
 	$(PNGFLAGS) $(LDFLAGS) $(LLVM_SHARED_LIBS) -ltinfo

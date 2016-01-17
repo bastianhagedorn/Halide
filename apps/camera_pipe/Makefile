@@ -7,6 +7,8 @@ else
   SCHEDULE=0
 endif
 
+auto: clean_auto process_auto
+
 camera_pipe: ../../ camera_pipe.cpp
 	$(CXX) $(CXXFLAGS) camera_pipe.cpp $(LIB_HALIDE) -o camera_pipe -ldl \
 		-lpthread -lz $(LDFLAGS) -ltinfo

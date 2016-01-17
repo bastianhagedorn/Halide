@@ -1,5 +1,7 @@
 include ../support/Makefile.inc
 
+auto: test_auto clean_auto
+
 overlap_test: overlap_test.cpp
 	$(CXX) $(CXXFLAGS) overlap_test.cpp $(LIB_HALIDE) -o overlap_test -ldl -lpthread -lz $(LDFLAGS) -ltinfo
 

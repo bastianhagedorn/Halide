@@ -1,6 +1,8 @@
 TESTS=filter_ref filter_auto filter_naive # specify before include!
 include ../support/Makefile.inc
 
+auto: clean_auto filter_auto
+
 harris: harris.cpp
 	$(CXX) $(CXXFLAGS) harris.cpp $(LIB_HALIDE) -o \
 		harris -lpthread -ldl -lz $(LDFLAGS) $(LLVM_SHARED_LIBS) -ltinfo

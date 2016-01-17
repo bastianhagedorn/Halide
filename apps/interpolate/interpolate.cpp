@@ -224,6 +224,6 @@ int main(int argc, char **argv) {
     //args.push_back(input);
     //final.compile_to_assembly("test.s", args, target);
 
-    save_image(out, argv[2]);
+    // save_image(out, argv[2]);
 
 }

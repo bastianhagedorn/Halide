@@ -67,6 +67,9 @@ gen: $(TESTS)
 cleangen:
 	rm -f $(TESTS) *.o $(BENCHES)
 
+clean_auto:
+	rm -f *_auto*
+
 regen: cleangen gen
 
 .bench_%.txt: $(TESTS)

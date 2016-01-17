@@ -3,6 +3,8 @@ include ../support/Makefile.inc
 
 .PHONY: clean
 
+auto: clean_auto interpolate
+
 interpolate: interpolate.cpp
 	$(CXX) $(CXXFLAGS) interpolate.cpp $(LIB_HALIDE) -o interpolate -lpthread -ldl -lz \
 	$(PNGFLAGS) $(LDFLAGS) $(LLVM_SHARED_LIBS) -ltinfo
