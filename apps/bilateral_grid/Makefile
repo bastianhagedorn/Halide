@@ -1,4 +1,4 @@
-TESTS=filter_ref filter_auto # specify before include!
+TESTS=filter_ref filter_auto filter_naive # specify before include!
 include ../support/Makefile.inc
 
 bilateral_grid: bilateral_grid.cpp
@@ -8,7 +8,14 @@ bilateral_grid: bilateral_grid.cpp
 bilateral_grid_ref.o: bilateral_grid
 	./bilateral_grid 8 0
 
-bilateral_grid_auto.o: bilateral_grid
+# bilateral_grid_auto.o: bilateral_grid
+# 	./bilateral_grid 8 -1
+
+bilateral_grid_naive.o bilateral_grid_auto.o: bilateral_grid
+	# naive
+	HL_AUTO_NAIVE=1 ./bilateral_grid 8 -1
+	mv bilateral_grid_auto.o $@
+	# auto
 	./bilateral_grid 8 -1
 
 filter_%: bilateral_grid_%.o filter.cpp
