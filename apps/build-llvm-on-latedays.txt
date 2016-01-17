@@ -1,0 +1,2 @@
+CXX=g++ CC=gcc ./configure --enable-asserts --enable-optimized --prefix=/home/jrk-temp/install/llvm
+Forcing gcc/g++ is important to fix std-c++11 problems in the configure
