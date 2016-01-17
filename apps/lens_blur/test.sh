@@ -7,4 +7,4 @@ else
     fi
     sched=-1
 fi
-echo OMP_NUM_THREADS=$2 HL_NUM_THREADS=$2 ./lens_blur left.png right.png out.png $sched
+OMP_NUM_THREADS=$2 HL_NUM_THREADS=$2 ./lens_blur left.png right.png out.png $sched

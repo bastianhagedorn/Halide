@@ -24,6 +24,7 @@ echo "   in $rundir"
 
 #echo "This will remove {gen,run}.*.txt - OK?"; read
 for app in $apps; do
+    
     echo "============================================================" >> $errlog
     date "+$app (%Y-%m-%d %H:%M:%S)" >> $errlog
     echo ""
@@ -33,8 +34,9 @@ for app in $apps; do
     apprundir="${rundir}/${app}"
     mkdir -p "$apprundir"
     
-    # make clean
+    make -s clean
     #rm -f "gen.*.*.*.txt" "run.*.*.*.txt"
+
     for vec in 4 8
     do
         echo "  vec: $vec"
