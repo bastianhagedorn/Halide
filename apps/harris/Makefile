@@ -20,6 +20,6 @@ filter_%: harris_%.o filter.cpp
 	$(CXX) $(CXXFLAGS) $^ -lpthread -ldl -o $@ \
 		$(PNGFLAGS)
 
-clean: clean_bench
+clean: clean_bench clean_variants
 	rm -f harris harris*.o harris.h\
 		filter_ref filter_auto bench_*.txt ref_perf.txt auto_perf.txt out.png

@@ -8,6 +8,7 @@ HL_TARGET ?= host
 all: $(BUILD_DIR)/wavelet
 
 clean:
+	rm -f wavelet *.o filter
 	@rm -rf $(BUILD_DIR)
 
 # By default, %.generator is produced by building %_generator.cpp

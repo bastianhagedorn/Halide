@@ -14,5 +14,5 @@ overlap_auto.o: overlap_test
 test_%: test.cpp overlap_%.o
 	$(CXX) $(CXXFLAGS) $^ -o $@ -lpthread -ldl $(PNGFLAGS)
 
-clean: clean_bench
+clean: clean_bench clean_variants
 	rm -f test overlap_test overlap.h overlap*.o test_ref test_auto

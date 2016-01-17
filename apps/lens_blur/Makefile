@@ -14,5 +14,5 @@ lens_blur: lens_blur.cpp
 out.png: lens_blur
 	./lens_blur left.png right.png out.png
 
-clean:
+clean: clean_variants
 	rm -f lens_blur out.png

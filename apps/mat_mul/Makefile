@@ -9,5 +9,5 @@ mat_mul: mat_mul.cpp
 	$(CXX) $(CXXFLAGS) mat_mul.cpp $(LIB_HALIDE) -o mat_mul -lpthread -ldl -lz \
 	$(PNGFLAGS) $(LDFLAGS) $(LLVM_SHARED_LIBS) -ltinfo
 
-clean: clean_bench
+clean: clean_bench clean_variants
 	rm -f mat_mul

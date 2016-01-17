@@ -20,6 +20,6 @@ filter_%: unsharp_%.o filter.cpp
 	$(CXX) $(CXXFLAGS) $^ -lpthread -ldl -o $@ \
 		$(PNGFLAGS)
 
-clean:
+clean: clean_variants
 	rm -f unsharp unsharp.o unsharp.h\
 		filter_ref filter_auto ref_perf.txt auto_perf.txt out.png

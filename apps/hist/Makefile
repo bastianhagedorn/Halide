@@ -20,6 +20,6 @@ filter_%: hist_%.o filter.cpp
 	$(CXX) $(CXXFLAGS) $^ -lpthread -ldl -o $@ \
 		$(PNGFLAGS)
 
-clean: clean_bench
+clean: clean_bench clean_variants
 	rm -f hist hist*.o hist.h\
 		filter_ref filter_auto ref_perf.txt auto_perf.txt out.png

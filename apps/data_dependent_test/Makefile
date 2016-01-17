@@ -17,6 +17,6 @@ data_dep_naive.o: data_dependent_test
 test_%: test.cpp data_dep_%.o
 	$(CXX) $(CXXFLAGS) $^ -o $@ -lpthread -ldl $(PNGFLAGS)
 
-clean: clean_bench
+clean: clean_bench clean_variants
 	rm -f test data_dependent_test data_dep.h data_dep*.o test_ref \
     test_auto

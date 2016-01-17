@@ -11,5 +11,5 @@ parallel: parallel.cpp
 
 cleangen: .dummy
 
-clean: clean_bench
+clean: clean_bench clean_variants
 	rm -f parallel parallel.h out.png ref_perf.txt auto_perf.txt

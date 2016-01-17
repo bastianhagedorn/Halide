@@ -17,5 +17,5 @@ large_win_naive.o: large_window_test
 test_%: test.cpp large_win_%.o
 	$(CXX) $(CXXFLAGS) $^ -o $@ -lpthread -ldl $(PNGFLAGS)
 
-clean: clean_bench
+clean: clean_bench clean_variants
 	rm -f test large_window_test large_win.h large_win*.o ref_perf.txt test_*

@@ -33,5 +33,5 @@ filter_%: non_local_means_%.o filter.cpp
 out.png: filter_base
 	HL_NUM_THREADS=4 ./$(<) ../images/rgb_small_noisy.png out.png 0.12
 
-clean:
+clean: clean_variants
 	rm -rf non_local_means non_local_means_dillon non_local_means_andrew non_local_means*.o non_local_means.h filter_* *.dSYM out.png

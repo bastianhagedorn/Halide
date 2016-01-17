@@ -67,8 +67,11 @@ gen: $(TESTS)
 cleangen:
 	rm -f $(TESTS) *.o $(BENCHES)
 
-clean_auto:
-	rm -f *_auto*
+clean_%:
+	rm -rf *.dSYM*
+	rm -f $(patsubst clean_%,*_%*,$@)
+
+clean_variants: clean_auto clean_ref clean_naive
 
 regen: cleangen gen
 

@@ -12,5 +12,5 @@ interpolate: interpolate.cpp
 out.png: interpolate
 	./interpolate ../images/rgba.png out.png
 
-clean: clean_bench
+clean: clean_bench clean_variants
 	rm -f interpolate out.png

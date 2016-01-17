@@ -14,5 +14,5 @@ max_filter: max_filter.cpp
 out.png: max_filter
 	HL_NUM_THREADS=4 ./max_filter ../images/rgb.png out.png 0
 
-clean:
+clean: clean_variants
 	rm -f max_filter out.png

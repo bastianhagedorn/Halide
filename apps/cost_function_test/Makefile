@@ -17,6 +17,6 @@ cost_naive.o: cost_function_test
 test_%: test.cpp cost_%.o
 	$(CXX) $(CXXFLAGS) $^ -o $@ -lpthread -ldl $(PNGFLAGS)
 
-clean: clean_bench
+clean: clean_bench clean_variants
 	rm -f test cost_function_test cost.h cost*.o test_ref \
     test_auto

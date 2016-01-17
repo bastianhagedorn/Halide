@@ -27,6 +27,6 @@ bilateral_grid.mp4: bilateral_grid.cpp viz.sh filter_ref
 out.png: filter_ref
 	./filter_ref ../images/gray.png out.png 0.1 10
 
-clean: clean_bench
+clean: clean_bench clean_variants
 	rm -f bilateral_grid bilateral_grid.mp4 bilateral_grid.o bilateral_grid.h\
 		filter_ref filter_auto ref_perf.txt auto_perf.txt out.png

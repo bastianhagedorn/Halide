@@ -35,7 +35,7 @@ local_laplacian_viz.o: local_laplacian_gen
 local_laplacian.mp4: process_viz
 	bash viz.sh
 
-clean: clean_bench
-	rm -f out.png process_ref process_auto local_laplacian*.o process_viz \
+clean: clean_bench clean_variants
+	rm -f out.png process local_laplacian local_laplacian*.o process_viz \
 		local_laplacian_viz.o local_laplacian_gen \
 		local_laplacian.mp4 local_laplacian.h
