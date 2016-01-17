@@ -20,8 +20,8 @@ int main(int argc, char **argv) {
     }
 
     Image<float> input = load_image(argv[1]);
-    std::cout << input.width() << std::endl;
-    std::cout << input.height() << std::endl;
+    std::cerr << input.width() << std::endl;
+    std::cerr << input.height() << std::endl;
     Image<float> output(input.width(), input.height(), input.channels());
 
     non_local_means(atof(argv[3]), input, output);

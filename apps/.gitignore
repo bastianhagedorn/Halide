@@ -1,9 +1,12 @@
 *_ref
 *_auto
+*_naive
 ref_perf.txt
 auto_perf.txt
+naive_perf.txt
 .bench_ref.*.txt
 .bench_auto.*.txt
+.bench_naive.*.txt
 benchmarks-*.png
 cost_function_test/cost.h
 cost_function_test/cost_function_test
