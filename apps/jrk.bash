@@ -2,7 +2,9 @@ called=$_
 [[ $called != $0 ]] || echo "jrk.bash should be sourced not run!"
 
 function apps {
-    cat apps.txt appraces.txt tests.txt | ruby -e "STDIN.read.split.each {|a| puts a+\"/${1}\"}"
+    cat apps.txt        | ruby -e "STDIN.read.split.each {|a| puts a+\"/${1}\"}"
+    cat raceapps.txt    | ruby -e "STDIN.read.split.each {|a| puts a+\"/${1}\"}"
+    cat tests.txt       | ruby -e "STDIN.read.split.each {|a| puts a+\"/${1}\"}"
 }
 
 appdir=$(dirname "${BASH_SOURCE[0]}")
