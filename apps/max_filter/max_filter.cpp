@@ -64,6 +64,8 @@ int main(int argc, char **argv) {
     RDom dx(-radius, 2*radius+1);
     final(x, y, c) = maximum(vert(x + dx, y, c, clamp(filter_height(dx), 0, radius+1)));
 
+    final.bound(x, 0, in.width()).bound(y, 0, in.height()).bound(c, 0, in.channels());
+
     Var tx, xi;
     switch (schedule) {
     case 0: // ANDREW
