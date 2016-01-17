@@ -21,22 +21,23 @@ int main(int argc, char **argv) {
     }
     int schedule = atoi(argv[3]);
 
+    Image<float> in = load_image(argv[1]);
+
     ImageParam input_im(Float(32), 3);
-    Param<int> radius;
+    const int radius = 26;
 
     Func input = BoundaryConditions::repeat_edge(input_im);
 
-    Var x("x"), y("y"), c("c"), t("t");
+    Var x, y, c, t;
 
-    Expr slices = cast<int>(ceil(log(radius) / logf(2))) + 1;
+    const int slices = (int)(ceilf(logf(radius) / logf(2))) + 1;
 
     // A sequence of vertically-max-filtered versions of the input,
     // each filtered twice as tall as the previous slice. All filters
     // are downward-looking.
-    Func vert_log("vert_log");
-    vert_log(x, y, c, t) = undef<float>();
-    vert_log(x, y, c, 0) = input(x, y, c);
-    RDom r(-radius, input_im.height() + radius, 1, slices-1);
+    Func vert_log;
+    vert_log(x, y, c, t) = input(x, y, c);
+    RDom r(-radius, in.height() + radius, 1, slices-1);
     vert_log(x, r.x, c, r.y) = max(vert_log(x, r.x, c, r.y - 1), vert_log(x, r.x + clamp((1<<(r.y-1)), 0, radius*2), c, r.y - 1));
 
     // We're going to take a max filter of arbitrary diameter
@@ -47,7 +48,7 @@ int main(int argc, char **argv) {
     slice_for_radius(t) = cast<int>(floor(log(2*t+1) / logf(2)));
 
     // Produce every possible vertically-max-filtered version of the image:
-    Func vert("vert");
+    Func vert;
     // t is the blur radius
     Expr slice = clamp(slice_for_radius(t), 0, slices);
     Expr first_sample = vert_log(x, y - t, c, slice);
@@ -59,9 +60,11 @@ int main(int argc, char **argv) {
     filter_height(x) = sum(select(x*x + dy*dy < (radius+0.25f)*(radius+0.25f), 1, 0));
 
     // Now take an appropriate horizontal max of them at each output pixel
-    Func final("final");
+    Func final;
     RDom dx(-radius, 2*radius+1);
     final(x, y, c) = maximum(vert(x + dx, y, c, clamp(filter_height(dx), 0, radius+1)));
+
+    final.bound(x, 0, in.width()).bound(y, 0, in.height()).bound(c, 0, in.channels());
 
     Var tx, xi;
     Var ty;
@@ -82,7 +85,7 @@ int main(int argc, char **argv) {
         filter_height.compute_root();
 
         vert_log.compute_root();
-        vert_log.update(1)
+        vert_log.update(0)
             .reorder(r.x, c, x)
             .vectorize(x, 8)
             .parallel(x, 4);
@@ -103,7 +106,7 @@ int main(int argc, char **argv) {
         slice_for_radius.compute_root();
 
         vert_log.compute_root();
-        vert_log.update(1)
+        vert_log.update(0)
             .reorder(r.x, c, x)
             .vectorize(x, 8)
             .parallel(x, 4);
@@ -124,7 +127,7 @@ int main(int argc, char **argv) {
         filter_height.compute_root();
 
         vert_log.compute_root();
-        vert_log.update(1)
+        vert_log.update(0)
             .reorder(r.x, c, x)
             .vectorize(x, 8)
             .parallel(x, 4);
@@ -152,7 +155,7 @@ int main(int argc, char **argv) {
             .parallel(y, 8);
 
         vert_log.compute_at(final, c);
-        vert_log.update(1)
+        vert_log.update(0)
             .reorder(r.x, x)
             .vectorize(x, 8)
             .parallel(x, 4);
@@ -175,7 +178,7 @@ int main(int argc, char **argv) {
             .parallel(ty);
 
         vert_log.compute_at(final, tx);
-        vert_log.update(1)
+        vert_log.update(0)
             .reorder(r.x, x)
             .vectorize(x, 8);
 
@@ -201,7 +204,7 @@ int main(int argc, char **argv) {
             .parallel(y);
 
         vert_log.compute_at(final, c);
-        vert_log.update(1)
+        vert_log.update(0)
             .reorder(r.x, x)
             .vectorize(x, 8)
             .parallel(x, 4);
@@ -224,7 +227,7 @@ int main(int argc, char **argv) {
             .parallel(tx);
 
         vert_log.compute_at(final, tx);
-        vert_log.update(1)
+        vert_log.update(0)
             .reorder(r.x, x)
             .vectorize(x, 8);
 
@@ -247,7 +250,7 @@ int main(int argc, char **argv) {
             .parallel(tx);
 
         vert_log.compute_at(final, tx);
-        vert_log.update(1)
+        vert_log.update(0)
             .reorder(r.x, x)
             .vectorize(x, 8);
 
@@ -265,24 +268,21 @@ int main(int argc, char **argv) {
 
     // Run it
 
-    Image<float> in = load_image(argv[1]);
     input_im.set(in);
-    radius.set(26);
+    //radius.set(26);
     Image<float> out(in.width(), in.height(), in.channels());
-    Target target = get_jit_target_from_environment();
+    Target target = get_target_from_environment();
     if (schedule == -1) {
         final.compile_jit(target, true);
     } else {
         final.compile_jit(target);
     }
 
-
-
-    std::cout << "Running... " << std::endl;
+    // std::cout << "Running... " << std::endl;
     double best = benchmark(3, 3, [&]() { final.realize(out); });
-    std::cout << " took " << best * 1e3 << " msec." << std::endl;
+    std::cout << "runtime: " << best * 1e3 << std::endl;
 
-    save_image(out, argv[2]);
+    // save_image(out, argv[2]);
 
     return 0;
 }
