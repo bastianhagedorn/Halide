@@ -1,3 +1,3 @@
 #!/bin/bash
 #PBS -q kayvon
-stochastic.sh blur
+stochastic.sh hist

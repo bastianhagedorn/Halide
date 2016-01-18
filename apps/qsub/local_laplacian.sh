@@ -1,4 +1,3 @@
 #!/bin/bash
-#PBS -o /tmp/pbs-stochastic.log
-#PBS -j oe
+#PBS -q kayvon
 stochastic.sh local_laplacian
