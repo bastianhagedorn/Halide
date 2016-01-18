@@ -4,21 +4,13 @@ RACES=`cat raceapps.txt`
 TESTS=`cat tests.txt`
 CONV=`cat conv.txt`
 
+rand=`LC_CTYPE=C tr -dc a-f0-9 < /dev/urandom | fold -w 8 | head -n 1`
+
 myrealpath () {
   [[ $1 = /* ]] && echo "$1" || echo "$PWD/${1#./}"
 }
 
-start_time=`date "+%Y-%m-%d.%H%M%S"`
-rundirname="bench-${HOSTNAME}-${start_time}"
-mkdir -p $rundirname
-rundir=`myrealpath $rundirname`
-
-halide_hash=`openssl md5 ../bin/libHalide.a  | sed 's/^.* //'`
-
-echo "hostname: ${HOSTNAME}" >> $rundir/config.txt
-echo "start_time: ${start_time}" >> $rundir/config.txt
-echo "libHalide.a: ${halide_hash}" >> $rundir/config.txt
-
+LABEL=""
 BATCH=""
 while [[ $# > 0 ]]
 do
@@ -41,6 +33,10 @@ case $key in
     BATCH+=" $2"
     shift # past argument
     ;;
+    -l|--label)
+    LABEL="-$2"
+    shift # past argument
+    ;;
     -p|--threads)
     export THREADS_TO_TEST="$2"
     shift # past argument
@@ -54,6 +50,21 @@ done
 if [[ $BATCH == "" ]]; then
     BATCH="$APPS $RACES"
 fi
+
+echo ${rand}
+
+start_time=`date "+%Y-%m-%d.%H%M%S"`
+rundirname="bench-${HOSTNAME}-${rand}${LABEL}"
+mkdir -p $rundirname
+rundir=`myrealpath $rundirname`
+
+halide_hash=`openssl md5 ../bin/libHalide.a  | sed 's/^.* //'`
+
+echo "hostname: ${HOSTNAME}" >> $rundir/config.txt
+echo "start_time: ${start_time}" >> $rundir/config.txt
+echo "libHalide.a: ${halide_hash}" >> $rundir/config.txt
+echo "batch: ${BATCH}" >> $rundir/config.txt
+
 for app in $BATCH; do
     cd $app;
     echo "============================================================"

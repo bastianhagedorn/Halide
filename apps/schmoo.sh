@@ -4,8 +4,10 @@ apps=${APPS:-`cat apps.txt`}
 
 halide_dir=${HOME}/ravi
 
+rand=`LC_CTYPE=C tr -dc a-f0-9 < /dev/urandom | fold -w 12 | head -n 1`
+
 start_time=`date "+%Y-%m-%d.%H%M%S"`
-rundirname="${HOSTNAME}-schmoo-${start_time}"
+rundirname="schmoo-${HOSTNAME}-${LABEL}-${rand}"
 mkdir -p $rundirname
 rundir=`realpath $rundirname`
 cd $halide_dir

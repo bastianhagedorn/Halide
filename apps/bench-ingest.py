@@ -45,11 +45,11 @@ res = DataFrame()
 for app in benches:
     try:
         res = res.append(ingest(app))
-    except IOError,e:
-        print 'Skipping missing: '+app
-    except:
-        print '\n\nFailed on',app,'\n'
-        raise
+    except: # IOError,e:
+        print 'Skipping missing or malformed: '+app
+    #except:
+    #    print '\n\nFailed on',app,'\n'
+    #    raise
 
 db = create_engine('sqlite:///benchmarks.db')
 res.to_sql('benchmarks', db)
