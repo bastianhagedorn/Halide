@@ -19,7 +19,7 @@ int main(int argc, char **argv) {
     Param<float> sigma;
     Var x("x"), y("y"), z("z"), c("c");
 
-    Expr inv_sigma_sq = 1.0f/(sigma*sigma*patch_size*patch_size);
+    Expr inv_sigma_sq = -1.0f/(sigma*sigma*patch_size*patch_size);
 
     // Add a boundary condition
     Func clamped = BoundaryConditions::repeat_edge(input);
@@ -58,7 +58,7 @@ int main(int argc, char **argv) {
 
     // Compute the sum of the pixels in the search area.
     Func non_local_means_sum("non_local_means_sum");
-    non_local_means_sum(x, y, c) += w(x, y, s_dom.x, s_dom.y) * clamped_with_alpha(x, y, c);
+    non_local_means_sum(x, y, c) += w(x, y, s_dom.x, s_dom.y) * clamped_with_alpha(x + s_dom.x, y + s_dom.y, c);
 
     Func non_local_means("non_local_means");
     non_local_means(x, y, c) =
