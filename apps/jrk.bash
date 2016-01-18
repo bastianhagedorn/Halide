@@ -15,3 +15,11 @@ alias m=out-of-tree.sh
 function gen_rand_id {
     LC_CTYPE=C tr -dc A-Za-z0-9 < /dev/urandom | fold -w ${1:-16} | head -n 1
 }
+
+function pushover {
+    curl -s \
+      --form-string "token=$PUSHOVER_APP_KEY" \
+      --form-string "user=$PUSHOVER_USER_KEY" \
+      --form-string '"'"$*"'"' \
+      https://api.pushover.net/1/messages.json
+}
