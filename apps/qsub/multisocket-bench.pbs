@@ -1,0 +1,5 @@
+#!/bin/bash
+#PBS -q kayvon
+cd ${HOME}/auto-halide/apps
+
+single-socket.sh benchmark.sh $@
