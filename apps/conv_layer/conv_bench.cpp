@@ -106,7 +106,7 @@ int main(int argc, char **argv) {
        //f_conv.update().fuse(y, par, par).parallel(par);
        //f_conv.update().parallel(z);
        //f_conv.print_loop_nest();
-    } else if (sched == 1) {
+    } else if (sched == 1) { //autoschedule version for middle choice
        RVar z_r;
        f_in_bound.compute_root().parallel(f_in_bound.args()[3]);
        f_conv.compute_root().vectorize(x, 8);
