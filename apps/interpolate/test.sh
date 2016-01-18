@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 if [[ $1 == "ref" ]]; then
-    sched=0
+    sched=2
 else
     if [[ $1 == "naive" ]]; then
         export HL_AUTO_NAIVE=1
