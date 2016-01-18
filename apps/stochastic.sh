@@ -23,9 +23,18 @@ errlog="${outdir}/${HOSTNAME}.err"
 
 cd $rundir
 
-for (( i = 0; i < $num_samples; i++ )); do
-    seed=`shuf -i 1-2000000000 -n 1`
+function test_seed {
+    seed=$1
+    
     res="${outdir}/$app.$seed.res"
+    
+    if [[ -f $res ]]; then
+        echo "Default auto:"
+        if grep runtime $res ; then
+            echo "Skipping already-existing $seed"
+            return
+        fi
+    fi
     echo "[$app.$seed]" >> $res
     echo "hostname: ${HOSTNAME}" >> $res
     echo "date: `date`" >> $res
@@ -39,6 +48,19 @@ for (( i = 0; i < $num_samples; i++ )); do
     echo "running..."
 
     numactl --cpunodebind 0 --membind 0 ./test.sh auto $threads >> $res 2> $errlog
+    
+    grep runtime $res
+}
+
+# Make sure our auto baseline is there
+test_seed 0
+
+#
+# Do the actual run
+#
+for (( i = 0; i < $num_samples; i++ )); do
+    seed=`shuf -i 1-2000000000 -n 1`
+    test_seed $seed
 done
 
 make -s clean
