@@ -58,6 +58,8 @@ rundirname="bench-${HOSTNAME}-${rand}${LABEL}"
 mkdir -p $rundirname
 rundir=`myrealpath $rundirname`
 
+echo "Running in $rundirname"
+
 halide_hash=`openssl md5 ../bin/libHalide.a  | sed 's/^.* //'`
 
 echo "hostname: ${HOSTNAME}" >> $rundir/config.txt
@@ -70,11 +72,18 @@ for app in $BATCH; do
     echo "============================================================"
     echo "                  BENCHMARKING $app"
     echo "============================================================"
-    # TODO: how to log gen data - autoscheduler?
-    make clean; make bench;
-    echo ${rundir}/${app}
     mkdir -p "${rundir}/${app}"
+
+    make -s clean;
+    make -s auto > "${rundir}/${app}/gen.txt" 2>> "${rundir}/${app}/err.log"
+    make -s bench;
+    echo ${rundir}/${app}
+    cat *_perf.txt
     mv *_perf.txt "${rundir}/${app}"
     cd ../;
 done
-#python benchmark.py
+
+end_time=`date "+%Y-%m-%d.%H%M%S"`
+
+echo "end_time: ${end_time}" >> $rundir/config.txt
+echo "Finished: ${end_time}" >> "$rundir/done.txt"
