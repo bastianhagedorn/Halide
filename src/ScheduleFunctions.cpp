@@ -1242,6 +1242,25 @@ class FindCallArgs : public IRVisitor {
         }
 };
 
+class FindAllCallArgs : public IRVisitor {
+    public:
+        map<string, std::vector<const Call*> > calls;
+        vector<vector<Expr>> load_args;
+
+        using IRVisitor::visit;
+
+        void visit(const Call *call) {
+            // See if images need to be included
+            if (call->call_type == Call::Halide ||
+                call->call_type == Call::Image) {
+                calls[call->func.name()].push_back(call);
+                load_args.push_back(call->args);
+            }
+            for (size_t i = 0; (i < call->args.size()); i++)
+                call->args[i].accept(this);
+        }
+};
+
 class FindAllCalls : public IRVisitor {
     public:
         set<string> calls;
@@ -1268,6 +1287,20 @@ long long get_func_out_size(Function &f) {
         size = 4;
     return size;
 }
+
+class UsesVarCheck : public IRVisitor {
+    public:
+        bool uses_var;
+        string var;
+
+        UsesVarCheck(string _var): var(_var) {
+            uses_var = false;
+        }
+        using IRVisitor::visit;
+
+        void visit(const Variable *v) { uses_var = uses_var
+                                        || (v->name == var); }
+};
 
 class VectorExprCheck : public IRVisitor {
     public:
@@ -2610,7 +2643,7 @@ struct Partitioner {
             arch_params.balance = balance[balance_idx];
             arch_params.fast_mem_size = fast_mem_kb[fast_mem_kb_idx]*1024*8;
         }
-        
+
         fprintf(stdout,
                 "auto_sched_par: %d\n"
                 "auto_sched_vec: %d\n"
@@ -4089,8 +4122,39 @@ void reorder_dims(Schedule &sched, vector<string> &var_order) {
     }
 }
 
+string get_spatially_coherent_innermost_dim(Function &f, const UpdateDefinition &u) {
+    // Collect all the load args
+    FindAllCallArgs find;
+    for (auto &e: u.values)
+        e.accept(&find);
+    for (auto &arg: u.args)
+        arg.accept(&find);
+
+    string inner_store_var = f.schedule().storage_dims()[0];
+    int inner_dim = 0;
+    assert(f.args()[0] == inner_store_var);
+    // For all the loads find the stride of the loop corresponding
+    // to the innermost storage dim across inputs and outputs
+    for(auto& larg: find.load_args) {
+        for (unsigned int dim = 0; dim < larg.size(); dim++) {
+            UsesVarCheck check(f.args()[inner_dim]);
+            Expr acc = larg[dim];
+            acc.accept(&check);
+            //std::cout << larg[dim] << std::endl;
+            if (dim > 0 && check.uses_var) {
+                //std::cout << dim << " "  << f.args()[inner_dim]
+                //          << " " << acc << std::endl;
+                // Stick to the ordering specified in the program when there
+                // is disruption in spaital locality
+                return u.schedule.dims()[0].var;
+            }
+        }
+    }
+    return inner_store_var;
+}
+
 void reorder_by_reuse(Schedule &sched, map<string, float> &reuse,
-                      string innermost_storage_dim,
+                      string innermost_dim,
                       map<string, int> &dim_estimates, int vec_len) {
     vector<string> var_order;
     vector<Dim> &dims = sched.dims();
@@ -4103,15 +4167,17 @@ void reorder_by_reuse(Schedule &sched, map<string, float> &reuse,
                 // Count up the number of dimensions with reuse
                 // significantly less than that of j
                 if (k!=j) {
-                    if (reuse[dims[j].var] > 2 * reuse[dims[k].var] ||
-                            (j < k))
+                    bool better_reuse =
+                        (reuse[dims[j].var] > 2 * reuse[dims[k].var]);
+                    if (better_reuse || (j < k) )
                         rank++;
                 }
             }
             // If the update definition is pure in the dimension corresponding
             // to the innermost storage dimension, vectorize that to get a
             // dense vector store instead of a scatter.
-            if (rank == i && dims[j].var != innermost_storage_dim) {
+
+            if (rank == i && dims[j].var != innermost_dim) {
                 //std::cerr << dims[j].var << " " << reuse[dims[j].var] << std::endl;
                 var_order.push_back(dims[j].var);
             }
@@ -4129,7 +4195,7 @@ void reorder_by_reuse(Schedule &sched, map<string, float> &reuse,
 
     }
 
-    var_order.insert(var_order.begin() + vector_dim, innermost_storage_dim);
+    var_order.insert(var_order.begin() + vector_dim, innermost_dim);
 
     //std::cerr << "Reuse order :";
     //for (auto &v: var_order)
@@ -4864,9 +4930,14 @@ void schedule_advisor(const vector<Function> &outputs,
                     }
                 }
 
+                // Determine which dimension if any can be moved inner most
+                // while not disrupting spatial locality both on inputs and
+                // outputs
+                string inner_dim =
+                        get_spatially_coherent_innermost_dim(g_out, u);
+
                 if (sched.locality) {
-                    reorder_by_reuse(s, var_reuse,
-                                     g_out.schedule().storage_dims()[0],
+                    reorder_by_reuse(s, var_reuse, inner_dim,
                                      out_up_estimates, vec_len);
                 }
 
@@ -4902,6 +4973,7 @@ void schedule_advisor(const vector<Function> &outputs,
 
                 if(auto_par) {
                     int curr_par = 1;
+                    bool no_par = true;
                     // Exploiting nested parallelism
                     for (int i = (int)dims.size() - 2; i > 0 ; i--) {
                         bool dim_par = can_parallelize_rvar(dims[i].var,
@@ -4911,18 +4983,27 @@ void schedule_advisor(const vector<Function> &outputs,
                         if (dim_par) {
                             curr_par = curr_par * out_up_estimates[dims[i].var];
                             parallelize_dim(s, i);
+                            no_par = false;
                             if (curr_par > parallelism)
                                 break;
                         } else {
                             break;
                         }
-                        /*
-                        if (dim_par && out_up_estimates[dims[i].var] > parallelism) {
-                            move_dim_to_outermost(s, i);
-                            int outer_dim = dims.size() - 2;
-                            parallelize_dim(s, outer_dim);
-                            break;
-                        }*/
+                    }
+                    if (no_par) {
+                        for (int i = (int)dims.size() - 2; i > 0 ; i--) {
+                            bool dim_par = can_parallelize_rvar(dims[i].var,
+                                                                g_out.name(), u);
+                            dim_par = dim_par ||
+                                (par_vars.find(dims[i].var) != par_vars.end());
+                            if (dim_par &&
+                                    out_up_estimates[dims[i].var] > parallelism) {
+                                move_dim_to_outermost(s, i);
+                                int outer_dim = dims.size() - 2;
+                                parallelize_dim(s, outer_dim);
+                                break;
+                            }
+                        }
                     }
                 }
             }

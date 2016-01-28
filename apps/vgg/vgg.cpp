@@ -19,7 +19,7 @@ int main(int argc, char **argv) {
 
     // Description of the neural network
 
-    int N = 2; // number of samples/batch_size
+    int N = 16; // number of samples/batch_size
     int d_w = 224; // data width
     int d_h = 224; // data height
     int ch = 3; // number of channels
