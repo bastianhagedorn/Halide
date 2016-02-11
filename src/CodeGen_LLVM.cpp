@@ -1633,13 +1633,19 @@ void CodeGen_LLVM::visit(const Load *op) {
             int alignment = op->type.bytes(); // The size of a single element
 
             int native_bits = native_vector_bits();
+            int native_bytes = native_bits / 8;
+            // We assume halide_malloc for the platform returns
+            // buffers aligned to at least the native vector
+            // width. (i.e. 16-byte alignment on arm, and 32-byte
+            // alignment on x86), so this is the maximum alignment we
+            // can infer based on the index alone.
 
             // Boost the alignment if possible, up to the native vector width.
             ModulusRemainder mod_rem = modulus_remainder(ramp->base, alignment_info);
             if (!possibly_misaligned) {
                 while ((mod_rem.remainder & 1) == 0 &&
                        (mod_rem.modulus & 1) == 0 &&
-                       alignment < native_bits) {
+                       alignment < native_bytes) {
                     mod_rem.modulus /= 2;
                     mod_rem.remainder /= 2;
                     alignment *= 2;
@@ -2724,7 +2730,9 @@ void CodeGen_LLVM::visit(const Call *op) {
                         call->setDoesNotAccessMemory();
                     }
                     call->setDoesNotThrow();
-                    value = builder->CreateInsertElement(value, call, idx);
+                    if (!call->getType()->isVoidTy()) {
+                        value = builder->CreateInsertElement(value, call, idx);
+                    } // otherwise leave it as undef.
                 }
             }
         }
@@ -2915,14 +2923,14 @@ void CodeGen_LLVM::visit(const For *op) {
 
         // Find every symbol that the body of this loop refers to
         // and dump it into a closure
-        Closure closure(op->body, op->name, buffer_t_type);
+        Closure closure(op->body, op->name);
 
         // Allocate a closure
-        StructType *closure_t = closure.build_type(context);
+        StructType *closure_t = build_closure_type(closure, buffer_t_type, context);
         Value *ptr = create_alloca_at_entry(closure_t, 1);
 
         // Fill in the closure
-        closure.pack_struct(closure_t, ptr, symbol_table, builder);
+        pack_closure(closure_t, ptr, closure, symbol_table, buffer_t_type, builder);
 
         // Make a new function that does one iteration of the body of the loop
         llvm::Type *voidPointerType = (llvm::Type *)(i8->getPointerTo());
@@ -2968,7 +2976,7 @@ void CodeGen_LLVM::visit(const For *op) {
         Value *closure_handle = builder->CreatePointerCast(iterator_to_pointer(iter),
                                                            closure_t->getPointerTo());
         // Load everything from the closure into the new scope
-        closure.unpack_struct(symbol_table, closure_t, closure_handle, builder);
+        unpack_closure(closure, symbol_table, closure_t, closure_handle, builder);
 
         // Generate the new function body
         codegen(op->body);
@@ -3028,13 +3036,14 @@ void CodeGen_LLVM::visit(const Store *op) {
         if (ramp && is_one(ramp->stride)) {
 
             int native_bits = native_vector_bits();
+            int native_bytes = native_bits / 8;
 
             // Boost the alignment if possible, up to the native vector width.
             ModulusRemainder mod_rem = modulus_remainder(ramp->base, alignment_info);
             if (!possibly_misaligned) {
                 while ((mod_rem.remainder & 1) == 0 &&
                        (mod_rem.modulus & 1) == 0 &&
-                       alignment < native_bits) {
+                       alignment < native_bytes) {
                     mod_rem.modulus /= 2;
                     mod_rem.remainder /= 2;
                     alignment *= 2;
