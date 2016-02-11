@@ -14,15 +14,12 @@
 #include "ParallelRVar.h"
 #include "Derivative.h"
 #include "CodeGen_GPU_Dev.h"
-<<<<<<< HEAD
+#include "IRPrinter.h"
 #include "RealizationOrder.h"
 
 #include <cstdlib>
 #include <algorithm>
 #include <limits>
-=======
-#include "IRPrinter.h"
->>>>>>> upstream/master
 
 namespace Halide {
 namespace Internal {
@@ -963,22 +960,7 @@ public:
     PrintUsesOfFunc(string f, std::ostream &s) : func(f), stream(s) {}
 };
 
-<<<<<<< HEAD
-std::ostream &operator<<(std::ostream &stream, LoopLevel l) {
-    stream << "LoopLevel(";
-    if (l.is_index) {
-        stream << l.index;
-    } else {
-        stream << l.func << ", " << l.var;
-    }
-    stream << ")";
-    return stream;
-}
-
-void validate_schedule(Function f, Stmt s, bool is_output) {
-=======
 void validate_schedule(Function f, Stmt s, const Target &target, bool is_output) {
->>>>>>> upstream/master
 
     // If f is extern, check that none of its inputs are scheduled inline.
     if (f.has_extern_definition()) {

@@ -97,7 +97,7 @@ Stmt lower(const vector<Function> &outputs, const string &pipeline_name,
 
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>( t2 - t1 ).count();
 
-        //std::cerr << print_loop_nest(outputs) << std::endl;
+        std::cerr << print_loop_nest(outputs) << std::endl;
         std::cout << "auto_schedule_time: " << duration << std::endl;
     }
 

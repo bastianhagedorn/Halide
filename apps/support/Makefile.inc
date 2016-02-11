@@ -8,11 +8,11 @@ CXX += -Wall -g
 CFLAGS += -I $(HALIDE_BIN_PATH)/include/ -I $(HALIDE_SRC_PATH)/tools/ -I $(HALIDE_SRC_PATH)/apps/support/
 CXXFLAGS += -std=c++11 -I $(HALIDE_BIN_PATH)/include/ -I $(HALIDE_SRC_PATH)/tools/ -I $(HALIDE_SRC_PATH)/apps/support/
 
-LIB_HALIDE = $(HALIDE_BIN_PATH)/bin/libHalide.a
+LIB_HALIDE = $(HALIDE_BIN_PATH)/lib/libHalide.a
 
 GENERATOR_DEPS ?= $(HALIDE_BIN_PATH)/bin/libHalide.a $(HALIDE_BIN_PATH)/include/Halide.h $(HALIDE_SRC_PATH)/tools/GenGen.cpp
 
-LLVM_CONFIG ?= llvm-config-3.7
+LLVM_CONFIG ?= llvm-config-3.6
 LLVM_VERSION_TIMES_10 = $(shell $(LLVM_CONFIG) --version | cut -b 1,3)
 LLVM_LDFLAGS = $(shell $(LLVM_CONFIG) --ldflags --system-libs)
 LLVM_FULL_VERSION = $(shell $(LLVM_CONFIG) --version)
