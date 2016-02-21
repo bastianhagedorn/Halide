@@ -81,7 +81,7 @@ for app in $apps; do
                         runfile="$apprundir/run.$par.$vec.$balance.$memsize.$runthreads.txt"
                         echo "[$app.$par.$vec.$balance.$memsize.$runthreads]" > $runfile
                         cat $genfile >> $runfile
-                        ./test.sh auto $runthreads >> \
+                        numactl --cpunodebind 0 --membind 0 ./test.sh auto $runthreads >> \
                                         $runfile \
                                         2> $errlog
                     done
