@@ -9,7 +9,7 @@ rand=`LC_CTYPE=C tr -dc a-f0-9 < /dev/urandom | fold -w 12 | head -n 1`
 start_time=`date "+%Y-%m-%d.%H%M%S"`
 rundirname="schmoo-${HOSTNAME}-${LABEL}-${rand}"
 mkdir -p $rundirname
-rundir=`realpath $rundirname`
+rundir=`readlink -f $rundirname`
 cd $halide_dir
 dirty=$((`git status --porcelain | grep ' M ' | wc -l` > 1))
 commit=`git rev-parse HEAD`
