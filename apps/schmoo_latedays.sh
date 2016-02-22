@@ -1,6 +1,6 @@
 #!/bin/bash
-apps=${APPS:-`cat apps.txt`}
-#apps="blur"
+#apps=${APPS:-`cat apps.txt`}
+apps="local_laplacian"
 
 halide_dir=${HOME}/ravi
 
@@ -24,9 +24,9 @@ errlog="${rundir}/err.log"
 echo "Testing $apps"
 echo "   in $rundir"
 
-MEMSIZE=${MEMSIZE:-131072 262144 524288 1048576 4194304 2097152 8388608 33554432}
-BALANCE=${BALANCE:-1 4 8 12 10 16 20 24 28 32}
-VEC=${VEC:-4 8 16}
+MEMSIZE=${MEMSIZE:-131072 262144 524288 1048576 4194304 8388608 33554432}
+BALANCE=${BALANCE:-1 5 10 15 20 30 40}
+VEC=${VEC:-8 16}
 PAR=${PAR:-6 8 12 18}
 THREADS=${THREADS:-6 12}
 runtimeout=${RUNTIMEOUT:-120}
