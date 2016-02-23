@@ -4397,6 +4397,8 @@ void vectorize_update(Function &func, int stage,
     const UpdateDefinition &u = func.updates()[stage];
     vector<Dim> &dims = s.dims();
 
+    int iterations_unrolled = 1;
+    int unroll_limit = 16;
     for (unsigned int dim = 0; dim < dims.size(); dim++) {
         bool dim_par = can_parallelize_rvar(dims[dim].var, func.name(), u);
         dim_par = dim_par || (par_vars.find(dims[dim].var) != par_vars.end());
@@ -4408,8 +4410,10 @@ void vectorize_update(Function &func, int stage,
             break;
         } else {
             int dim_size = get_dim_size(s, dim, dim_estimates);
-            if (dim_size < vec_len)
+            iterations_unrolled *= dim_size;
+            if (dim_size < vec_len && iterations_unrolled <= unroll_limit) {
                 unroll_dim(s, dim);
+            }
         }
     }
 }
