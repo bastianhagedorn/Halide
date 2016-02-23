@@ -43,7 +43,6 @@ int main(int argc, char **argv) {
     if (sched == 0) {
         Var xi, yi, xii, yii;
         // Tile the output domain
-        AT.compute_root().parallel(y);
         prod.compute_at(out, x).vectorize(x);
         prod.update().reorder(x, y, r).vectorize(x).unroll(y);
         out.tile(x, y, xi, yi, 16, 4).vectorize(xi).unroll(yi).parallel(y);
