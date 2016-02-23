@@ -1,6 +1,6 @@
 #!/bin/bash
-#apps=${APPS:-`cat apps.txt`}
-apps="local_laplacian"
+apps=${APPS:-`cat apps.txt`}
+#apps="local_laplacian"
 
 halide_dir=${HOME}/ravi
 
@@ -26,9 +26,9 @@ echo "   in $rundir"
 
 MEMSIZE=${MEMSIZE:-131072 262144 524288 1048576 4194304 8388608 33554432}
 BALANCE=${BALANCE:-1 5 10 15 20 30 40}
-VEC=${VEC:-8 16}
-PAR=${PAR:-6 8 12 18}
-THREADS=${THREADS:-6 12}
+VEC=${VEC:-4 8 16}
+PAR=${PAR:-4 8 16}
+THREADS=${THREADS:-4 8}
 runtimeout=${RUNTIMEOUT:-120}
 
 #echo "This will remove {gen,run}.*.txt - OK?"; read
@@ -81,7 +81,7 @@ for app in $apps; do
                         runfile="$apprundir/run.$par.$vec.$balance.$memsize.$runthreads.txt"
                         echo "[$app.$par.$vec.$balance.$memsize.$runthreads]" > $runfile
                         cat $genfile >> $runfile
-                        numactl --cpunodebind 0 --membind 0 ./test.sh auto $runthreads >> \
+                     	./test.sh auto $runthreads >> \
                                         $runfile \
                                         2> $errlog
                     done
