@@ -19,10 +19,10 @@ conv      = open(os.path.join(srcdir, 'conv.txt')).read().split()
 
 def ingest(app, path=''):
     c = ConfigParser.ConfigParser()
-    for f in 'ref_perf.txt', 'auto_perf.txt', 'naive_perf.txt':
+    for f in 'ref_perf.txt', 'auto_perf.txt', 'naive_perf.txt', 'sweep_perf.txt':
         c.read(os.path.join(path, app, f))
     df = DataFrame([dict(c.items(s)) for s in c.sections()])
-    
+
     # coerce types
     for col in df.columns:
         try:
@@ -34,18 +34,18 @@ def ingest(app, path=''):
                 df[col] = floats
             except:
                 pass # keep as string
-    
+
     # coerce old data names if present
     df = df.rename(columns={'nthreads':'threads'})
-    
+
     app_name = app.replace('_', ' ').title()
-    
+
     df.insert(0, 'app', app)
     df.insert(0, 'app_name_pretty', app_name)
     assert(len(df))
     df['throughput'] = 1000.0 / df.runtime # runs/sec
     df['speedup'] = 0.0
-    
+
     # this is a little bullshit, but DataFrame slice indexing gets confusing
     ref = df[df.version == 'ref']#.set_index('threads')
     def compute_speedup(row):
@@ -53,10 +53,10 @@ def ingest(app, path=''):
         row.speedup = r / row.runtime
         return row
     df = df.apply(compute_speedup, axis=1)
-    
+
     df['runtime_norm'] = df.runtime / max(df.runtime)
     df['throughput_norm'] = df.throughput / max(df.throughput)
-        
+
     return df
 
 #
@@ -73,6 +73,6 @@ if __name__ == '__main__':
     c.read('/tmp/run.txt')
     #for s in c.sections():
     #    for i in c.options(s):
-    #        
+    #
     #        print i,
     print [dict([(k,v.split('\n')[0]) for k,v in c.items(s)]) for s in c.sections()]
