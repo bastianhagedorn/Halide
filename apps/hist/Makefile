@@ -1,4 +1,4 @@
-TESTS=filter_ref filter_auto filter_naive # specify before include!
+TESTS=filter_ref filter_auto filter_naive filter_sweep # specify before include!
 include ../support/Makefile.inc
 
 auto: clean_auto filter_auto
@@ -15,6 +15,9 @@ hist_auto.o: hist
 
 hist_naive.o: hist
 	HL_AUTO_NAIVE=1 ./hist -1
+
+hist_sweep.o: hist
+	HL_AUTO_SWEEP=1 ./hist -1
 
 filter_%: hist_%.o filter.cpp
 	$(CXX) $(CXXFLAGS) $^ -lpthread -ldl -o $@ \

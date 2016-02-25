@@ -1,4 +1,4 @@
-TESTS=filter_ref filter_auto filter_naive # specify before include!
+TESTS=filter_ref filter_auto filter_naive filter_sweep# specify before include!
 include ../support/Makefile.inc
 
 auto: clean_auto filter_auto
@@ -16,6 +16,9 @@ bilateral_grid_naive.o: bilateral_grid
 
 bilateral_grid_auto.o: bilateral_grid
 	./bilateral_grid 8 -1
+
+bilateral_grid_sweep.o: bilateral_grid
+	HL_AUTO_SWEEP=1 ./bilateral_grid 8 -1
 
 filter_%: bilateral_grid_%.o filter.cpp
 	$(CXX) $(CXXFLAGS) $^ -lpthread -ldl -o $@ \

@@ -14,6 +14,9 @@ halide_blur_auto.o: halide_blur
 halide_blur_naive.o: halide_blur
 	HL_AUTO_NAIVE=1 ./halide_blur -1
 
+halide_blur_sweep.o: halide_blur
+	HL_AUTO_SWEEP=1 ./halide_blur -1
+
 test_%: test.cpp halide_blur_%.o
 	$(CXX) $(CXXFLAGS) $^ -fopenmp -o $@ -march=native -lpthread -ldl $(PNGFLAGS)
 

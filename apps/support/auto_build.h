@@ -13,8 +13,14 @@ void auto_build(Halide::Pipeline p,
     std::string suffix = "_ref";
     if (auto_schedule) {
         const char *naive = getenv("HL_AUTO_NAIVE");
+        const char *sweep = getenv("HL_AUTO_SWEEP");
+        const char *rand = getenv("HL_AUTO_RAND");
         if (naive && atoi(naive)) {
             suffix = "_naive";
+        } else if (sweep && atoi(sweep)){
+            suffix = "_sweep";
+        } else if (rand && atoi(rand)) {
+            suffix = "_rand";
         } else {
             suffix = "_auto";
         }

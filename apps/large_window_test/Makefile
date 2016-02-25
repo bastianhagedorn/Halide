@@ -14,6 +14,9 @@ large_win_auto.o: large_window_test
 large_win_naive.o: large_window_test
 	HL_AUTO_NAIVE=1 ./large_window_test -1
 
+large_win_sweep.o: large_window_test
+	HL_AUTO_SWEEP=1 ./large_window_test -1
+
 test_%: test.cpp large_win_%.o
 	$(CXX) $(CXXFLAGS) $^ -o $@ -lpthread -ldl $(PNGFLAGS)
 
