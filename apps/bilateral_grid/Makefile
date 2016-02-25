@@ -18,7 +18,7 @@ bilateral_grid_auto.o: bilateral_grid
 	./bilateral_grid 8 -1
 
 bilateral_grid_sweep.o: bilateral_grid
-	HL_AUTO_SWEEP=1 ./bilateral_grid 8 -1
+	HL_AUTO_SWEEP=1 HL_AUTO_PARALLELISM=8 HL_AUTO_VEC_LEN=16 HL_AUTO_BALANCE=30 HL_AUTO_FAST_MEM_SIZE=33554432 ./bilateral_grid 8 -1
 
 filter_%: bilateral_grid_%.o filter.cpp
 	$(CXX) $(CXXFLAGS) $^ -lpthread -ldl -o $@ \
@@ -32,4 +32,4 @@ out.png: filter_ref
 
 clean: clean_bench clean_variants
 	rm -f bilateral_grid bilateral_grid.mp4 bilateral_grid.o bilateral_grid.h\
-		filter_ref filter_auto ref_perf.txt auto_perf.txt out.png
+		filter_ref filter_auto filter_naive filter_sweep ref_perf.txt auto_perf.txt out.png
