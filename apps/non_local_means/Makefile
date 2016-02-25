@@ -1,4 +1,4 @@
-TESTS=filter_andrew filter_dillon filter_auto filter_naive
+TESTS=filter_andrew filter_dillon filter_auto filter_naive filter_sweep
 include ../support/Makefile.inc
 
 all: filter
@@ -14,6 +14,9 @@ non_local_means_naive.o: non_local_means
 
 non_local_means_auto.o: non_local_means
 	./$(<) 7 7 -1
+
+non_local_means_sweep.o: non_local_means
+	HL_AUTO_SWEEP=1 ./$(<) 7 7 -1
 
 non_local_means_base.o: non_local_means
 	./$(<) 7 7 0

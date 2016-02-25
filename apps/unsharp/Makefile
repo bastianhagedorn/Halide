@@ -1,4 +1,4 @@
-TESTS=filter_auto filter_ref filter_naive
+TESTS=filter_auto filter_ref filter_naive filter_sweep
 include ../support/Makefile.inc
 
 auto: clean_auto filter_auto
@@ -15,6 +15,9 @@ unsharp_auto.o: unsharp
 
 unsharp_naive.o: unsharp
 	HL_AUTO_NAIVE=1 ./unsharp -1
+
+unsharp_sweep.o: unsharp
+	HL_AUTO_SWEEP=1 ./unsharp -1
 
 filter_%: unsharp_%.o filter.cpp
 	$(CXX) $(CXXFLAGS) $^ -lpthread -ldl -o $@ \
