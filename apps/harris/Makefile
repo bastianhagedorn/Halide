@@ -17,7 +17,7 @@ harris_naive.o: harris
 	HL_AUTO_NAIVE=1 ./harris -1
 
 harris_sweep.o: harris
-	HL_AUTO_SWEEP=1 ./harris -1
+	HL_AUTO_SWEEP=1 HL_AUTO_PARALLELISM=8 HL_AUTO_VEC_LEN=8 HL_AUTO_BALANCE=10 HL_AUTO_FAST_MEM_SIZE=131072 ./harris -1
 
 filter_%: harris_%.o filter.cpp
 	$(CXX) $(CXXFLAGS) $^ -lpthread -ldl -o $@ \

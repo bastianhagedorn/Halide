@@ -17,7 +17,7 @@ local_laplacian_naive.o: local_laplacian_gen
 	HL_AUTO_NAIVE=1 ./local_laplacian_gen 8 -1
 
 local_laplacian_sweep.o: local_laplacian_gen
-	HL_AUTO_SWEEP=1 ./local_laplacian_gen 8 -1
+	HL_AUTO_SWEEP=1 HL_AUTO_PARALLELISM=8 HL_AUTO_VEC_LEN=16 HL_AUTO_BALANCE=15 HL_AUTO_FAST_MEM_SIZE=1048576 ./local_laplacian_gen 8 -1
 
 process_%: process.cpp local_laplacian_%.o
 	$(CXX) $(CXXFLAGS) $^ \

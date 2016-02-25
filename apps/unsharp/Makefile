@@ -17,7 +17,7 @@ unsharp_naive.o: unsharp
 	HL_AUTO_NAIVE=1 ./unsharp -1
 
 unsharp_sweep.o: unsharp
-	HL_AUTO_SWEEP=1 ./unsharp -1
+	HL_AUTO_SWEEP=1 HL_AUTO_PARALLELISM=8 HL_AUTO_VEC_LEN=16 HL_AUTO_BALANCE=20 HL_AUTO_FAST_MEM_SIZE=1048576 ./unsharp -1
 
 filter_%: unsharp_%.o filter.cpp
 	$(CXX) $(CXXFLAGS) $^ -lpthread -ldl -o $@ \

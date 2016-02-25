@@ -16,7 +16,7 @@ non_local_means_auto.o: non_local_means
 	./$(<) 7 7 -1
 
 non_local_means_sweep.o: non_local_means
-	HL_AUTO_SWEEP=1 ./$(<) 7 7 -1
+	HL_AUTO_SWEEP=1 HL_AUTO_PARALLELISM=8 HL_AUTO_VEC_LEN=16 HL_AUTO_BALANCE=1 HL_AUTO_FAST_MEM_SIZE=131072 ./$(<) 7 7 -1
 
 non_local_means_base.o: non_local_means
 	./$(<) 7 7 0
