@@ -1,4 +1,4 @@
-TESTS=filter_ref filter_auto filter_naive filter_sweep # specify before include!
+TESTS=filter_ref filter_auto filter_naive filter_sweep filter_rand # specify before include!
 include ../support/Makefile.inc
 
 auto: clean_auto filter_auto
@@ -19,10 +19,13 @@ hist_naive.o: hist
 hist_sweep.o: hist
 	HL_AUTO_SWEEP=1 HL_AUTO_PARALLELISM=12 HL_AUTO_VEC_LEN=8 HL_AUTO_BALANCE=5 HL_AUTO_FAST_MEM_SIZE=524288 ./hist -1
 
+hist_rand.o: hist
+	HL_AUTO_RAND=1 HL_AUTO_PARALLELISM=12 HL_AUTO_VEC_LEN=8 HL_AUTO_BALANCE=5 HL_AUTO_FAST_MEM_SIZE=524288 ./hist -1
+
 filter_%: hist_%.o filter.cpp
 	$(CXX) $(CXXFLAGS) $^ -lpthread -ldl -o $@ \
 		$(PNGFLAGS)
 
 clean: clean_bench clean_variants
 	rm -f hist hist*.o hist.h\
-		filter_ref filter_auto ref_perf.txt auto_perf.txt out.png
+		filter_ref filter_auto filter_sweep filter_rand out.png
