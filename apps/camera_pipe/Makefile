@@ -23,7 +23,7 @@ curved_naive.o: camera_pipe
 	HL_AUTO_NAIVE=1 ./camera_pipe 8 -1 # 8-bit output,
 
 curved_sweep.o: camera_pipe
-	HL_AUTO_SWEEP=1 HL_AUTO_PARALLELISM=18 HL_AUTO_VEC_LEN=16 HL_AUTO_BALANCE=15 HL_AUTO_FAST_MEM_SIZE=262144 ./camera_pipe 8 -1 # 8-bit output,
+	HL_AUTO_SWEEP=1 HL_AUTO_PARALLELISM=12 HL_AUTO_VEC_LEN=16 HL_AUTO_BALANCE=20 HL_AUTO_FAST_MEM_SIZE=32768 ./camera_pipe 8 -1 # 8-bit output,
 
 curved_rand.o: camera_pipe
 	HL_AUTO_RAND=1 HL_AUTO_PARALLELISM=18 HL_AUTO_VEC_LEN=16 HL_AUTO_BALANCE=15 HL_AUTO_FAST_MEM_SIZE=262144 ./camera_pipe 8 -1 # 8-bit output,
