@@ -28,7 +28,7 @@ int main(int argc, char **argv) {
 
     // Timing code. Timing doesn't include copying the input data to
     // the gpu or copying the output back.
-    double min_t = benchmark(10, 10, [&]() {
+    double min_t = benchmark(20, 20, [&]() {
         non_local_means(atof(argv[3]), input, output);
     });
     printf("runtime: %g\n", min_t * 1e3);
