@@ -4505,6 +4505,7 @@ void pick_gpu_thread_dims(Function &f, map<string, int> &dim_estimates,
     for (int i = outer_dim; num_block_dim > 0 && i >= 0; i--) {
         if(dims[i].pure) {
             rename_dim(f.schedule(), i, thread_names[num_block_dim - 1]);
+            dims[i].for_type = ForType::Parallel;
             num_block_dim--;
         }
     }
