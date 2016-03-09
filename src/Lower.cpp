@@ -89,8 +89,8 @@ Stmt lower(const vector<Function> &outputs, const string &pipeline_name,
         std::chrono::high_resolution_clock::time_point t1 =
                                         std::chrono::high_resolution_clock::now();
 
-        schedule_advisor(outputs, order, env, func_bounds, root_default,
-                         auto_inline, auto_par, auto_vec);
+        schedule_advisor(outputs, order, env, func_bounds, t,
+                         root_default, auto_inline, auto_par, auto_vec);
 
         std::chrono::high_resolution_clock::time_point t2 =
                                         std::chrono::high_resolution_clock::now();
@@ -99,6 +99,7 @@ Stmt lower(const vector<Function> &outputs, const string &pipeline_name,
 
         std::cerr << print_loop_nest(outputs) << std::endl;
         std::cout << "auto_schedule_time: " << duration << std::endl;
+        //assert(false);
     }
 
     bool any_memoized = false;

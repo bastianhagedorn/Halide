@@ -35,6 +35,7 @@ void schedule_advisor(const std::vector<Function> &outputs,
                       const std::vector<std::string> &order,
                       std::map<std::string, Function> &env,
                       const FuncValueBounds &func_val_bounds,
+                      const Target &target,
                       bool root_default, bool auto_inline,
                       bool auto_par, bool auto_vec);
 
