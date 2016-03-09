@@ -203,6 +203,9 @@ int main(int argc, char **argv) {
     }
     }
 
+    target.set_feature(Halide::Target::CUDA);
+    target.set_feature(Halide::Target::Debug);
+
     // JIT compile the pipeline eagerly, so we don't interfere with timing
     if (sched == -1)
         final.compile_jit(target, true);
