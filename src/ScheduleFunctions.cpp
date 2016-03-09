@@ -4301,6 +4301,48 @@ void split_dim(Schedule &sched, int dim, int split_size,
     dim_estimates.erase(old_name);
 }
 
+void rename_dim(Schedule &sched, int dim, string suffix) {
+
+    vector<Dim> &dims = sched.dims();
+
+    string old_name = dims[dim].var;
+    string new_name = old_name + "." + suffix;
+
+    dims[dim].var = new_name;
+
+    /*
+    bool found = false;
+    for (size_t i = sched.splits().size(); i > 0; i--) {
+        if (sched.splits()[i-1].is_fuse()) {
+            if (sched.splits()[i-1].inner == old_name ||
+                sched.splits()[i-1].outer == old_name) {
+                assert(false);
+            }
+            if (sched.splits()[i-1].old_var == old_name) {
+                sched.splits()[i-1].old_var = new_name;
+                found = true;
+                break;
+            }
+        } else {
+            if (sched.splits()[i-1].inner == old_name) {
+                sched.splits()[i-1].inner = new_name;
+                found = true;
+                break;
+            }
+            if (sched.splits()[i-1].outer == old_name) {
+                sched.splits()[i-1].outer = new_name;
+                found = true;
+                break;
+            }
+        }
+    }*/
+
+    //if (!found) {
+    Split split = {old_name, new_name, "", 1, false, false, Split::RenameVar};
+    sched.splits().push_back(split);
+    //}
+}
+
 void split_dim_gpu(Schedule &sched, int dim, int split_size,
                    map<string, int> &dim_estimates,
                    string block_name, string thread_name) {
@@ -4454,44 +4496,26 @@ void vectorize_update(Function &func, int stage,
     }
 }
 
+void pick_gpu_thread_dims(Function &f, map<string, int> &dim_estimates,
+                          int num_block_dim, vector<int> &block_sizes,
+                          vector<string> &thread_names) {
+
+    vector<Dim> &dims = f.schedule().dims();
+    int outer_dim = dims.size() - 2;
+    for (int i = outer_dim; num_block_dim > 0 && i >= 0; i--) {
+        if(dims[i].pure) {
+            rename_dim(f.schedule(), i, thread_names[num_block_dim - 1]);
+            num_block_dim--;
+        }
+    }
+}
+
 bool pick_dim_to_parallelize(Function &f, map<string, int> &dim_estimates,
                              int parallelism, int num_tile_dims,
                              int &outer_dim, int& num_fused_dims) {
     // TODO Check which is better fusing the dimensions or moving
     // the right dimension out and parallelizing it
     //std::cout << "Parallel Dim Choice " << f.name() << std::endl;
-    vector<Dim> &dims = f.schedule().dims();
-    //for (auto &d: dims)
-    //    std::cout << d.var << ",";
-    //std::cout << std::endl;
-    outer_dim = dims.size() - 2;
-
-    if (num_tile_dims > 0) {
-        for (int i = 0; i < num_tile_dims; i++) {
-            if (dim_estimates[dims[outer_dim].var] > parallelism)
-                return true;
-            else {
-                fuse_dim(f.schedule(), outer_dim, outer_dim - 1, dim_estimates);
-                outer_dim = dims.size() - 2;
-                num_fused_dims++;
-            }
-        }
-    } else {
-        for (int i = outer_dim; i > 0; i--) {
-            //std::cout << dims[i].var << " Num Iter "
-            //          << dim_estimates[dims[i].var] << std::endl;
-            if (dim_estimates[dims[i].var] > parallelism) {
-                move_dim_to_outermost(f.schedule(), i);
-                return true;
-            }
-        }
-    }
-    return false;
-}
-
-bool gpu_parallelize(Function &f, map<string, int> &dim_estimates,
-                     int parallelism, int num_tile_dims,
-                     int &outer_dim, int& num_fused_dims) {
     vector<Dim> &dims = f.schedule().dims();
     //for (auto &d: dims)
     //    std::cout << d.var << ",";
@@ -4892,9 +4916,9 @@ void schedule_advisor(const vector<Function> &outputs,
             std::vector<string> thread_names = {"__thread_id_x",
                                                 "__thread_id_y",
                                                 "__thread_id_z"};
-
+            std::vector<int> block_sizes;
             int num_tile_dims = 0;
-            int block_dim = 0;
+            int num_block_dim = 0;
             for(auto &v: pure_tile_vars) {
                 int index = -1;
                 for (int i = 0; i < (int)dims.size() - 1; i++) {
@@ -4911,9 +4935,10 @@ void schedule_advisor(const vector<Function> &outputs,
                     if (dims_left <= 3) {
                         // The outermost three dimensions should to mapped
                         // to gpu blocks and moved outer most
-                        string block_name = block_names[block_dim];
-                        string thread_name = thread_names[block_dim];
-                        block_dim++;
+                        string block_name = block_names[num_block_dim];
+                        string thread_name = thread_names[num_block_dim];
+                        num_block_dim++;
+                        block_sizes.push_back(tile_sizes_pure[v]);
 
                         split_dim_gpu(g_out.schedule(), index, tile_sizes_pure[v],
                                       out_estimates, block_name, thread_name);
@@ -4928,7 +4953,7 @@ void schedule_advisor(const vector<Function> &outputs,
             }
 
             // TODO
-            // Handle group which has no tiling
+            // Handle groups with no tiling
 
             int num_fused_dims = 0;
             for (auto &m: g.second) {
@@ -4939,8 +4964,7 @@ void schedule_advisor(const vector<Function> &outputs,
                 if (m.name() != g_out.name() &&
                         inlines.find(m.name()) == inlines.end() && num_tile_dims > 0) {
                     //int compute_level = inner_tile_dim;
-                    // TODO
-                    // Parallelize within a tile
+
                     int compute_level = outer_dim - num_tile_dims +
                         num_fused_dims + 1;
                     m.schedule().store_level().func = g_out.name();
@@ -4949,6 +4973,10 @@ void schedule_advisor(const vector<Function> &outputs,
                     m.schedule().compute_level().func = g_out.name();
                     m.schedule().compute_level().var = dims[compute_level].var;
 
+                    // TODO
+                    // Parallelize within a tile
+                    pick_gpu_thread_dims(m, mem_estimates, num_block_dim,
+                                         block_sizes, thread_names);
                     /*
                     if (!m.is_pure()) {
                         int num_updates = m.updates().size();
