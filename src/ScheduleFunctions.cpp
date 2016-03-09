@@ -2621,12 +2621,12 @@ struct Partitioner {
                 get_dim_estimates(f.first, pipeline_bounds, analy.env);
         }
 
-        arch_params.parallelism = 8;
-        arch_params.vec_len = 8;
+        arch_params.parallelism = 12;
+        arch_params.vec_len = 16;
         if (!random_seed) {
             // Initialize machine params
             arch_params.balance = 10;
-            arch_params.fast_mem_size = 32 * 1024 * 8;
+            arch_params.fast_mem_size = 8 * 1024;
             // L1 = 32K
             // L2 = 256K
             // L3 = 8192K
@@ -4303,10 +4303,13 @@ void split_dim(Schedule &sched, int dim, int split_size,
 
 void split_dim_gpu(Schedule &sched, int dim, int split_size,
                    map<string, int> &dim_estimates,
-                   string outer_name, string inner_name) {
+                   string block_name, string thread_name) {
 
     vector<Dim> &dims = sched.dims();
     string old_name = dims[dim].var;
+    string outer_name = old_name + "." + block_name;
+    string inner_name = old_name + "." + thread_name;
+
     dims.insert(dims.begin() + dim, dims[dim]);
     dims[dim].var = inner_name;
     dims[dim+1].var = outer_name;
@@ -4831,7 +4834,7 @@ void schedule_advisor(const vector<Function> &outputs,
 
     // Schedule generation based on grouping
     // GPU schedule generation
-    if (false && (target.has_feature(Target::CUDA) ||
+    if ((target.has_feature(Target::CUDA) ||
         target.has_feature(Target::CUDACapability30)||
         target.has_feature(Target::CUDACapability32)||
         target.has_feature(Target::CUDACapability35)||
@@ -4891,6 +4894,7 @@ void schedule_advisor(const vector<Function> &outputs,
                                                 "__thread_id_z"};
 
             int num_tile_dims = 0;
+            int block_dim = 0;
             for(auto &v: pure_tile_vars) {
                 int index = -1;
                 for (int i = 0; i < (int)dims.size() - 1; i++) {
@@ -4907,8 +4911,9 @@ void schedule_advisor(const vector<Function> &outputs,
                     if (dims_left <= 3) {
                         // The outermost three dimensions should to mapped
                         // to gpu blocks and moved outer most
-                        string block_name = block_names[3-dims_left];
-                        string thread_name = thread_names[3-dims_left];
+                        string block_name = block_names[block_dim];
+                        string thread_name = thread_names[block_dim];
+                        block_dim++;
 
                         split_dim_gpu(g_out.schedule(), index, tile_sizes_pure[v],
                                       out_estimates, block_name, thread_name);
