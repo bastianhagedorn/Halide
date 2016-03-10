@@ -262,6 +262,17 @@ private:
         return add->a;
     }
 
+    Expr is_round_down(Expr e, int64_t *factor) {
+        if (!no_overflow(e.type())) return Expr();
+        const Mul *mul = e.as<Mul>();
+        if (!mul) return Expr();
+        if (!const_int(mul->b, factor)) return Expr();
+        const Div *div = mul->a.as<Div>();
+        if (!div) return Expr();
+        if (!is_const(div->b, *factor)) return Expr();
+        return div->a;
+    }
+
     void visit(const Cast *op) {
         Expr value = mutate(op->value);
         const Cast *cast = value.as<Cast>();
@@ -684,13 +695,15 @@ private:
         const Sub *sub_b = b.as<Sub>();
         const Mul *mul_a = a.as<Mul>();
         const Mul *mul_b = b.as<Mul>();
+        const Div *div_a = a.as<Div>();
+        const Div *div_b = b.as<Div>();
 
         const Min *min_b = b.as<Min>();
         const Add *add_b_a = min_b ? min_b->a.as<Add>() : NULL;
         const Add *add_b_b = min_b ? min_b->b.as<Add>() : NULL;
 
         const Min *min_a = a.as<Min>();
-        const Add *add_a_a = min_a ? min_a->a.as<Add>() : NULL;
+        const Add *add_a_a = min_a ? min_a->a.as<Add>() : div_a ? div_a->a.as<Add>() : NULL;
         const Add *add_a_b = min_a ? min_a->b.as<Add>() : NULL;
 
         const Max *max_a = a.as<Max>();
@@ -698,6 +711,9 @@ private:
 
         const Select *select_a = a.as<Select>();
         const Select *select_b = b.as<Select>();
+
+        int64_t a_round_down_factor = 0;
+        Expr a_round_down = is_round_down(a, &a_round_down_factor);
 
         if (is_zero(b)) {
             expr = a;
@@ -892,6 +908,12 @@ private:
                    mul_b &&
                    equal(mul_a->a, mul_b->b)) {
             expr = mutate(mul_a->a * (mul_a->b - mul_b->a));
+        } else if (div_a && div_b && add_a_a &&
+                   equal(add_a_a->a, div_b->a) && is_simple_const(div_a->b) &&
+                   equal(div_a->b, div_b->b)) {
+            expr = mutate((add_a_a->a % div_a->b + add_a_a->b) / div_a->b);
+        } else if (equal(a_round_down, b)) {
+            expr = mutate(-(b % make_const(op->type, a_round_down_factor)));
         } else if (add_a &&
                    add_b &&
                    equal(add_a->b, add_b->b)) {
@@ -1221,6 +1243,20 @@ private:
             // (y - x*4) / 2 -> y/2 - x*2
             Expr ratio = make_const(op->type, div_imp(ia, ib));
             expr = mutate((sub_a->a / b) - (mul_a_b->a * ratio));
+        } else if (no_overflow(op->type) &&
+                   add_a &&
+                   const_int(add_a->b, &ia) &&
+                   const_int(b, &ib) &&
+                   ib > 0 &&
+                   (ia % ib == 0)) {
+            expr = mutate((add_a->a / b) + make_const(op->type, div_imp(ia, ib)));
+        } else if (no_overflow(op->type) &&
+                   sub_a &&
+                   const_int(sub_a->b, &ia) &&
+                   const_int(b, &ib) &&
+                   ib > 0 &&
+                   (ia % ib == 0)) {
+            expr = mutate((sub_a->a / b) - make_const(op->type, div_imp(ia, ib)));
         } else if (b.type().is_float() && is_simple_const(b)) {
             // Convert const float division to multiplication
             // x / 2 -> x * 0.5
@@ -1738,6 +1774,9 @@ private:
         const Call *call_a = a.as<Call>();
         const Call *call_b = b.as<Call>();
 
+
+        expr = Expr();
+
         if (equal(a, b)) {
             expr = a;
             return;
@@ -1818,6 +1857,12 @@ private:
             } else {
                 expr = b;
             }
+        } else if (add_a &&
+                   const_int(add_a->b, &ia) &&
+                   add_b &&
+                   const_int(add_b->b, &ib)) {
+            // max(x + 3, y - 2) -> max(x + 5, y) - 2
+            expr = mutate(Max::make(add_a->a + (add_a->b - add_b->b), add_b->a)) + add_b->b;
         } else if (no_overflow(op->type) &&
                    add_a &&
                    const_int(add_a->b, &ia) &&
@@ -2006,7 +2051,45 @@ private:
                    is_const(b)) {
             // max(8 - x, 3) -> 8 - min(x, 5)
             expr = mutate(sub_a->a - min(sub_a->b, sub_a->a - b));
-        } else if (a.same_as(op->a) && b.same_as(op->b)) {
+        }
+
+        if (expr.defined())
+            return;
+
+        // If one of the operands is the round up/down of the other
+        // with an add/subtract added on, normalize it so the round up/down is alone.
+        // Detect if the lhs or rhs is a rounding-up operation
+
+        int64_t a_round_up_factor = 0, b_round_up_factor = 0;
+        int64_t a_round_down_factor = 0, b_round_down_factor = 0;
+        Expr a_round_up = is_round_up(a, &a_round_up_factor);
+        Expr b_round_up = is_round_up(b, &b_round_up_factor);
+        Expr a_round_down = is_round_down(a, &a_round_down_factor);
+        Expr b_round_down = is_round_down(b, &b_round_down_factor);
+
+        if (a_round_down.defined()) {
+            Expr a_worst = Add::make(a_round_down, make_const(a.type(), -(a_round_down_factor - 1)));
+            Expr test = mutate(Max::make(a_worst, b));
+            // If the max is still the worst case of a, the max must be a.
+            if (equal(test, a_worst)) {
+                expr = a;
+                return;
+            }
+        }
+        if (b_round_down.defined()) {
+            debug(0) << "Checking " << Expr(op) << "\n";
+            Expr b_worst = Add::make(b_round_down, make_const(b.type(), -(b_round_down_factor - 1)));
+            Expr test = mutate(Max::make(a, b_worst));
+            debug(0) << test << " " << b_worst << "\n";
+            // If the max is still the worst case of b, the max must be b.
+            if (equal(test, b_worst)) {
+                debug(0) << "Simplified " << Max::make(a, b) << " -> " << b << "\n";
+                expr = b;
+                return;
+            }
+        }
+
+        if (a.same_as(op->a) && b.same_as(op->b)) {
             expr = op;
         } else {
             expr = Max::make(a, b);
@@ -4108,6 +4191,10 @@ void simplify_test() {
         }
         check(e, e);
     }
+
+    check((x + 4)/2, x/2 + 2);
+    check(max(x + 3, y + 2), max(x + 1, y) + 2);
+    check((x + 4)/2 - x/2, 2);
 
     std::cout << "Simplify test passed" << std::endl;
 }
