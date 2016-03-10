@@ -2079,7 +2079,6 @@ private:
         if (b_round_down.defined()) {
             Expr b_worst = Add::make(b_round_down, make_const(b.type(), -(b_round_down_factor - 1)));
             Expr test = mutate(Max::make(a, b_worst));
-            debug(0) << test << " " << b_worst << "\n";
             // If the max is still the worst case of b, the max must be b.
             if (equal(test, b_worst)) {
                 expr = b;
