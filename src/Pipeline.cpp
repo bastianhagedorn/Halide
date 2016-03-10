@@ -227,8 +227,9 @@ void Pipeline::print_loop_nest(std::ostream &s) {
 void Pipeline::compile_to_lowered_stmt(const string &filename,
                                        const vector<Argument> &args,
                                        StmtOutputFormat fmt,
-                                       const Target &target) {
-    Module m = compile_to_module(args, "", target);
+                                       const Target &target,
+                                       bool auto_schedule) {
+    Module m = compile_to_module(args, "", target, auto_schedule);
     if (fmt == HTML) {
         compile_module_to_html(m, filename);
     } else {

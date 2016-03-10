@@ -504,7 +504,8 @@ public:
     EXPORT void compile_to_lowered_stmt(const std::string &filename,
                                         const std::vector<Argument> &args,
                                         StmtOutputFormat fmt = Text,
-                                        const Target &target = get_target_from_environment());
+                                        const Target &target = get_target_from_environment(),
+                                        bool auto_schedule = false);
 
     /** Write out the loop nests specified by the schedule for this
      * Function. Helpful for understanding what a schedule is
