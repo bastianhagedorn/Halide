@@ -399,13 +399,19 @@ public:
             }
 
             // Add a dummy allocation at the end to get the total size
-            SharedAllocation sentinel;
-            sentinel.name = "sentinel";
-            sentinel.type = UInt(8);
-            sentinel.size = 0;
-            allocations.push_back(sentinel);
+            const char *shared_mem_env = getenv("HL_SHARED_MEM_SIZE");
+            Expr total_size;
+            if (shared_mem_env) {
+                total_size = atoi(shared_mem_env);
+            } else {
+                SharedAllocation sentinel;
+                sentinel.name = "sentinel";
+                sentinel.type = UInt(8);
+                sentinel.size = 0;
+                allocations.push_back(sentinel);
 
-            Expr total_size = Variable::make(Int(32), allocations.back().name + ".shared_offset");
+                total_size = Variable::make(Int(32), allocations.back().name + ".shared_offset");
+            }
             s = Allocate::make(shared_mem_name, UInt(8), {total_size}, const_true(), s);
 
             // Define an offset for each allocation. The offsets are in
