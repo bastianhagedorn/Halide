@@ -92,7 +92,7 @@ struct Outputs {
         updated.bitcode_name = bitcode_name;
         return updated;
     }
-    
+
    /** Make a new Outputs struct that emits everything this one does
     * and also a header file with the given name. */
    Outputs header(const std::string &header_name) {
@@ -195,7 +195,8 @@ public:
     EXPORT void compile_to_lowered_stmt(const std::string &filename,
                                         const std::vector<Argument> &args,
                                         StmtOutputFormat fmt = Text,
-                                        const Target &target = get_target_from_environment());
+                                        const Target &target = get_target_from_environment(),
+                                        bool auto_schedule = false);
 
     /** Write out the loop nests specified by the schedule for this
      * Pipeline's Funcs. Helpful for understanding what a schedule is

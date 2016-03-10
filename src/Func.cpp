@@ -1639,8 +1639,9 @@ void Func::compile_to_c(const string &filename, const vector<Argument> &args,
 void Func::compile_to_lowered_stmt(const string &filename,
                                    const vector<Argument> &args,
                                    StmtOutputFormat fmt,
-                                   const Target &target) {
-    pipeline().compile_to_lowered_stmt(filename, args, fmt, target);
+                                   const Target &target,
+                                   bool auto_schedule) {
+    pipeline().compile_to_lowered_stmt(filename, args, fmt, target, auto_schedule);
 }
 
 void Func::print_loop_nest(std::ostream &s) {
