@@ -19,7 +19,7 @@ conv      = open(os.path.join(srcdir, 'conv.txt')).read().split()
 
 def ingest(app, path=''):
     c = ConfigParser.ConfigParser()
-    for f in 'ref_perf.txt', 'auto_perf.txt', 'naive_perf.txt', 'sweep_perf.txt', 'rand_perf.txt':
+    for f in 'ref_perf.txt', 'auto_perf.txt', 'naive_perf.txt', 'sweep_perf.txt':
         c.read(os.path.join(path, app, f))
     df = DataFrame([dict(c.items(s)) for s in c.sections()])
 

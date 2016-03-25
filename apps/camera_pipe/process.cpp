@@ -5,6 +5,7 @@
 #include "curved.h"
 #include "halide_image.h"
 #include "halide_image_io.h"
+#include "halide_malloc_trace.h"
 
 #include <cstdint>
 #include <cstdio>
@@ -20,8 +21,19 @@ int main(int argc, char **argv) {
         return 0;
     }
 
+#ifdef HL_MEMINFO
+    halide_enable_malloc_trace();
+#endif
+
+    fprintf(stderr, "input: %s\n", argv[1]);
     Image<uint16_t> input = load_image(argv[1]);
     Image<uint8_t> output(((input.width() - 32)/32)*32, ((input.height() - 24)/32)*32, 3);
+
+#ifdef HL_MEMINFO
+    info(input, "input");
+    stats(input, "input");
+    // dump(input, "input");
+#endif
 
     // These color matrices are for the sensor in the Nokia N900 and are
     // taken from the FCam source.
@@ -44,29 +56,18 @@ int main(int argc, char **argv) {
     float gamma = atof(argv[3]);
     float contrast = atof(argv[4]);
     int timing_iterations = atoi(argv[5]);
+    int blackLevel = 25;
+    int whiteLevel = 1023;
 
     double best;
 
     best = benchmark(timing_iterations, 1, [&]() {
-        curved(color_temp, gamma, contrast,
-                 input, matrix_3200, matrix_7000, output);
+        curved(color_temp, gamma, contrast, blackLevel, whiteLevel,
+               input, matrix_3200, matrix_7000,
+               output);
     });
-    fprintf(stdout, "runtime: %g\n", best * 1e3);
-    // save_image(output, argv[6]);
-
-    best = benchmark(timing_iterations, 1, [&]() {
-        FCam::demosaic(input, output, color_temp, contrast, true, 25, gamma);
-    });
-    //fprintf(stdout, "C++:\t%gus\n", best * 1e6);
-    // save_image(output, "fcam_c.png");
-
-#if 0
-    best = benchmark(timing_iterations, 1, [&]() {;
-        FCam::demosaic_ARM(input, output, color_temp, contrast, true, 25, gamma);
-    });
-    //fprintf(stdout, "ASM:\t%gus\n", best * 1e6);
-    // save_image(output, "fcam_arm.png");
-#endif
+    fprintf(stderr, "runtime:%g\n", best * 1e3);
+    //save_image(output, argv[6]);
 
     // Timings on N900 as of SIGGRAPH 2012 camera ready are (best of 10)
     // Halide: 722ms, FCam: 741ms
