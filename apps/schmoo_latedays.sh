@@ -2,7 +2,7 @@
 #apps=${APPS:-`cat apps.txt`}
 apps="local_laplacian"
 
-halide_dir=${HOME}/ravi
+halide_dir=${HOME}
 
 rand=`LC_CTYPE=C tr -dc a-f0-9 < /dev/urandom | fold -w 12 | head -n 1`
 

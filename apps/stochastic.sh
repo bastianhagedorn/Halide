@@ -1,12 +1,12 @@
 #!/bin/bash
-app=${1:-local_laplacian}
-num_samples=${NUM_SAMPLES:-100}
+app=${1:-lens_blur}
+num_samples=${NUM_SAMPLES:-300}
 threads=${THREADS:-6}
 
 echo "Threads: $threads"
 echo "Samples: $num_samples"
 
-halide="${HOME}/auto-halide"
+halide=`readlink -f ../`
 
 function datestamp {
     date "+%Y-%m-%d.%H%M%S"
@@ -22,7 +22,7 @@ mkdir -p $outdir
 errlog="${outdir}/${HOSTNAME}.err"
 
 cd $rundir
-
+echo $rundir
 function test_seed {
     seed=$1
     

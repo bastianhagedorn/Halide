@@ -24,10 +24,10 @@ errlog="${rundir}/err.log"
 echo "Testing $apps"
 echo "   in $rundir"
 
-MEMSIZE=${MEMSIZE:-32768 131072 262144 524288}
-BALANCE=${BALANCE:-10 20 40}
-VEC=${VEC:-8 16}
-PAR=${PAR:-12 18}
+MEMSIZE=${MEMSIZE:-32768 131072 262144}
+BALANCE=${BALANCE:-10 20}
+VEC=${VEC:-16}
+PAR=${PAR:-12}
 THREADS=${THREADS:-6 12}
 runtimeout=${RUNTIMEOUT:-120}
 

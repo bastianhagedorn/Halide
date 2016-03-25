@@ -23,7 +23,7 @@ int main(int argc, char **argv) {
     // Input must have four color channels - rgba
     input.set_bounds(2, 0, 4);
 
-    const int levels = 10;
+    const int levels = 4;
 
     std::vector<Func> downsampled;
     std::vector<Func> downx;

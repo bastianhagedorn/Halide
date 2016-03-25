@@ -345,6 +345,9 @@ int main(int argc, char **argv) {
     std::vector<Argument> args = {color_temp, gamma, contrast, blackLevel, whiteLevel,
                                   input, matrix_3200, matrix_7000};
     Target target = get_target_from_environment();
+    target.set_feature(Halide::Target::CUDA);
+    target.set_feature(Halide::Target::Debug);
+
     auto_build(processed, "curved", args, target, (schedule == -1));
     //processed.compile_to_assembly("curved.s", args);
     //processed.compile_to_c("cam_c.cpp", args, "camc");

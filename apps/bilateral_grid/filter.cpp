@@ -29,6 +29,7 @@ int main(int argc, char **argv) {
     // the gpu or copying the output back.
     double min_t = benchmark(timing_iterations, 20, [&]() {
         bilateral_grid(atof(argv[3]), input, output);
+        output.copy_to_host();
     });
     printf("runtime: %g\n", min_t * 1e3);
 

@@ -12,7 +12,7 @@ LIB_HALIDE = $(HALIDE_BIN_PATH)/lib/libHalide.a
 
 GENERATOR_DEPS ?= $(HALIDE_BIN_PATH)/bin/libHalide.a $(HALIDE_BIN_PATH)/include/Halide.h $(HALIDE_SRC_PATH)/tools/GenGen.cpp
 
-LLVM_CONFIG ?= llvm-config-3.6
+LLVM_CONFIG ?= llvm-config
 LLVM_VERSION_TIMES_10 = $(shell $(LLVM_CONFIG) --version | cut -b 1,3)
 LLVM_LDFLAGS = $(shell $(LLVM_CONFIG) --ldflags --system-libs)
 LLVM_FULL_VERSION = $(shell $(LLVM_CONFIG) --version)
@@ -55,13 +55,14 @@ print-%:
 # BENCHMARKING
 .NOTPARALLEL: # important not to parallelize the bench runs accidentally
 
-TESTS ?= test_ref test_auto test_naive test_sweep # overload before include if desired!
-THREADS_TO_TEST ?= 1 2 4 8
+TESTS ?= test_ref test_auto test_naive test_sweep test_rand # overload before include if desired!
+THREADS_TO_TEST ?= 1 6 12
 REF_BENCHES=$(patsubst %,.bench_ref.%.txt,$(THREADS_TO_TEST))
 AUTO_BENCHES=$(patsubst %,.bench_auto.%.txt,$(THREADS_TO_TEST))
 SWEEP_BENCHES=$(patsubst %,.bench_sweep.%.txt,$(THREADS_TO_TEST))
+RAND_BENCHES=$(patsubst %,.bench_rand.%.txt,$(THREADS_TO_TEST))
 NAIVE_BENCHES=$(patsubst %,.bench_naive.%.txt,$(THREADS_TO_TEST))
-BENCHES=$(REF_BENCHES) $(AUTO_BENCHES) $(NAIVE_BENCHES) $(SWEEP_BENCHES)
+BENCHES=$(REF_BENCHES) $(AUTO_BENCHES) $(NAIVE_BENCHES) $(SWEEP_BENCHES) $(RAND_BENCHES)
 
 gen: $(TESTS)
 
@@ -72,7 +73,7 @@ clean_%:
 	rm -rf *.dSYM*
 	rm -f $(patsubst clean_%,*_%*,$@)
 
-clean_variants: clean_auto clean_ref clean_naive clean_sweep
+clean_variants: clean_auto clean_ref clean_naive clean_sweep clean_rand
 
 regen: cleangen gen
 
@@ -93,10 +94,13 @@ bench_auto: auto_perf.txt
 sweep_perf.txt: $(SWEEP_BENCHES)
 	cat $^ > $@
 bench_sweep: sweep_perf.txt
+rand_perf.txt: $(RAND_BENCHES)
+	cat $^ > $@
+bench_rand: rand_perf.txt
 naive_perf.txt: $(NAIVE_BENCHES)
 	cat $^ > $@
 bench_naive: naive_perf.txt
-bench: bench_ref bench_auto bench_naive bench_sweep
+bench: bench_ref bench_auto bench_naive bench_sweep bench_rand
 
 clean_bench:
-	rm -f $(BENCHES) auto_perf.txt ref_perf.txt naive_perf.txt sweep_perf.txt
+	rm -f $(BENCHES) auto_perf.txt ref_perf.txt naive_perf.txt sweep_perf.txt rand_perf.txt
