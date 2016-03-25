@@ -19,8 +19,9 @@ int main(int argc, char **argv) {
 
     // Timing code. Timing doesn't include copying the input data to
     // the gpu or copying the output back.
-    double min_t = benchmark(1, 10, [&]() {
+    double min_t = benchmark(10, 10, [&]() {
         unsharp(input, output);
+        output.copy_to_host();
     });
     printf("runtime: %g\n", min_t * 1e3);
 

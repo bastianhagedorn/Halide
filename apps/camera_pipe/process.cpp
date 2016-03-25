@@ -47,14 +47,15 @@ int main(int argc, char **argv) {
 
     double best;
 
-    best = benchmark(timing_iterations, 1, [&]() {
+    best = benchmark(timing_iterations, 10, [&]() {
         curved(color_temp, gamma, contrast,
                  input, matrix_3200, matrix_7000, output);
+        output.copy_to_host();
     });
     fprintf(stdout, "runtime: %g\n", best * 1e3);
     // save_image(output, argv[6]);
 
-    best = benchmark(timing_iterations, 1, [&]() {
+    best = benchmark(timing_iterations, 10, [&]() {
         FCam::demosaic(input, output, color_temp, contrast, true, 25, gamma);
     });
     //fprintf(stdout, "C++:\t%gus\n", best * 1e6);

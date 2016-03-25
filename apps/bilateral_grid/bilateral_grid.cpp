@@ -29,7 +29,7 @@ int main(int argc, char **argv) {
     histogram(x, y, z, c) = 0.0f;
     histogram(x, y, zi, c) += select(c == 0, val, 1.0f);
 
-    histogram.bound(z, -2, 16);
+    //histogram.bound(z, -2, 16);
 
     // Blur the grid using a five-tap filter
     Func blurx("blurx"), blury("blury"), blurz("blurz");
@@ -49,9 +49,9 @@ int main(int argc, char **argv) {
                          blurx(x, y+1, z, c)*4 +
                          blurx(x, y+2, z, c));
 
-    blurz.bound(z, 0, 12);
-    blurx.bound(z, 0, 12);
-    blury.bound(z, 0, 12);
+    //blurz.bound(z, 0, 12);
+    //blurx.bound(z, 0, 12);
+    //blury.bound(z, 0, 12);
 
     // Take trilinear samples to compute the output
     val = clamp(input(x, y), 0.0f, 1.0f);
@@ -78,6 +78,7 @@ int main(int argc, char **argv) {
     int schedule = atoi(argv[2]);
 
     Target target = get_target_from_environment();
+
     if (target.has_gpu_feature()) {
         // Schedule blurz in 8x8 tiles. This is a tile in
         // grid-space, which means it represents something like
@@ -101,6 +102,7 @@ int main(int argc, char **argv) {
         blurx.compute_root().gpu_tile(x, y, z, 8, 8, 1);
         blury.compute_root().gpu_tile(x, y, z, 8, 8, 1);
         bilateral_grid.compute_root().gpu_tile(x, y, s_sigma, s_sigma);
+        bilateral_grid.print_loop_nest();
     } else if (schedule == 0) {
         // The CPU schedule.
         blurz.compute_root().reorder(c, z, x, y).parallel(y).vectorize(x, 8).unroll(c);
@@ -112,6 +114,10 @@ int main(int argc, char **argv) {
         blury.compute_root().reorder(c, x, y, z).parallel(z).vectorize(x, 8).unroll(c);
         bilateral_grid.compute_root().parallel(y).vectorize(x, 8);
     }
+
+    target.set_feature(Halide::Target::CUDA);
+    target.set_feature(Halide::Target::Debug);
+
     auto_build(bilateral_grid, "bilateral_grid", {r_sigma, input},
                                     target, (schedule == -1));
     return 0;

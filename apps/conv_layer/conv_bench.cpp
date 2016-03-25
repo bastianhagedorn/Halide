@@ -125,11 +125,14 @@ int main(int argc, char **argv) {
     }
 
     Target target = get_target_from_environment();
+    target.set_feature(Halide::Target::CUDA);
+    //target.set_feature(Halide::Target::Debug);
+
     if (sched == -1)
         f_ReLU.compile_jit(target, true);
     else
         f_ReLU.compile_jit(target, false);
-
-    double best = benchmark(3, 1, [&]() { f_ReLU.realize(conv_out); });
+    
+    double best = benchmark(5, 5, [&]() { f_ReLU.realize(conv_out); conv_out.copy_to_host();});
     std::cout << "runtime: " << best * 1e3 << std::endl;
 }
