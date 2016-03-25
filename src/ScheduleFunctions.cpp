@@ -3884,7 +3884,7 @@ void Partitioner::tile_for_input_locality() {
         // For the dimensions with reuse along multiple dimensions tile
         // the dimensions in such a way that the reuse is maximized and
         // the porition of inputs fit in fast memory
-        Const char *tile_size_1_var = getenv("HL_POLYMAGE_TILE_SIZE1");
+        const char *tile_size_1_var = getenv("HL_POLYMAGE_TILE_SIZE1");
 
         int tile_size_1 = 0;
         if (tile_size_1_var) {
