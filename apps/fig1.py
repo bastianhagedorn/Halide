@@ -44,27 +44,32 @@ data$threads <- factor(data$threads)
 data$app <- factor(data$app)
 
 t = theme(
-          axis.line=element_blank(),
-          axis.text.x=element_blank(),
-          axis.text.y=element_blank(),
-          axis.ticks=element_blank(),
           axis.title.x=element_blank(),
           axis.title.y=element_blank(),
+          axis.line = element_line(colour = "grey20", size = 0.15),
+          axis.text.x = element_text(colour="grey20",size=2, face="plain"),
+          axis.text.y = element_text(colour="grey20",size=2, face="plain"),
 
+          axis.ticks=element_blank(),
           panel.grid.major=element_blank(),
           panel.background=element_blank(),
           panel.grid.minor=element_blank(),
           panel.border=element_blank(),
 
+          axis.ticks.margin = unit(1,'pt'),
+          axis.ticks.length = unit(0,'pt'),
           panel.margin=unit(0,'pt'),
-          plot.margin= unit(c(0.25, 0.25, 0, 0), "lines"),
-          plot.title = element_text(size=3),
+          plot.title = element_text(size=2.5),
+          plot.margin= unit(c(-0.1, -0.25, -0.45, -0.5), "lines"),
 
           plot.background=element_blank(),
 
           legend.position="none"
           )
 """
+#          axis.line=element_blank(),
+#          axis.text.x=element_blank(),
+#          axis.text.y=element_blank(),
 
 #          panel.background=element_rect(fill='grey97'),
 #          panel.grid.major=element_line(size=0.25),
@@ -89,11 +94,12 @@ printable_name = {
 
 def plot(app):
     pl = ggplot("subset(data, (data$app == '{0}') & (data$threads == 1 | data$threads == 6 | data$threads == 12))".format(app),
-                aes(x='threads', y='throughput_norm')) + ylim(0,1) + labs(x='NULL',y='NULL') #+ guides(fill='FALSE')
-    pl+= geom_bar(aes(fill='version'), width='0.75', stat="'identity'",
-            position="position_dodge(width=0.85)")
+                aes(x='threads', y='throughput_norm')) + ylim(0,1) # + labs(x='NULL',y='NULL') + guides(fill='FALSE')
+    pl+= geom_bar(aes(fill='version'), width='0.75', stat="'identity'", position="position_dodge(width=0.85)")
     pl+= scale_fill_manual('values=c("#F2BB57","#456B92","#EB053F", "#BD2A4E", "#99173C")')
     pl+= ggtitle("'{0}'".format(printable_name[app]))
+    pl+= scale_x_discrete('expand=c(0, 0), labels=c("1 thread", "6 threads", "12 threads")')
+    pl+= scale_y_continuous('expand=c(0, 0), breaks=c(0, 0.5, 1), labels = c("0", "0.5", "1")')
     pl+= coord_fixed(ratio = 1.75)
 
     return str(pl)
@@ -135,7 +141,6 @@ for app in apps:
     prog += prolog.format(csvfile=csvfile) + '\n'
 
     arrange_str += "p{0},".format(plot_num)
-    prog += "ggsave('{0}', {1} + t, width=0.9883, height=0.7392, units = 'in')".format(fname, plot(app)) + '\n'
     prog += "p{0} <- {1} + t".format(plot_num, plot(app)) + '\n'
 prog += "pdf('final.pdf', width = 7, height = 1.25)" + '\n'
 prog += "grid.arrange(" + arrange_str + "ncol = 7, clip=TRUE)" + '\n'

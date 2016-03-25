@@ -273,7 +273,7 @@ struct Allocate : public StmtNode<Allocate> {
 
     // These override the code generator dependent malloc and free
     // equivalents if provided. If the new_expr succeeds, that is it
-    // returns non-NULL, the function named be free_function is
+    // returns non-nullptr, the function named be free_function is
     // guaranteed to be called. The free function signature must match
     // that of the code generator dependent free (typically
     // halide_free). If free_function is left empty, code generator
@@ -285,6 +285,14 @@ struct Allocate : public StmtNode<Allocate> {
     EXPORT static Stmt make(std::string name, Type type, const std::vector<Expr> &extents,
                             Expr condition, Stmt body,
                             Expr new_expr = Expr(), std::string free_function = std::string());
+
+    /** A routine to check if the extents are all constants, and if so verify
+     * the total size is less than 2^31 - 1. If the result is constant, but
+     * overflows, this routine asserts. This returns 0 if the extents are
+     * not all constants; otherwise, it returns the total constant allocation
+     * size. */
+    EXPORT static int32_t constant_allocation_size(const std::vector<Expr> &extents, const std::string &name);
+    EXPORT int32_t constant_allocation_size() const;
 };
 
 /** Free the resources associated with the given buffer. */

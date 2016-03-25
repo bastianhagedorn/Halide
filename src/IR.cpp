@@ -7,33 +7,33 @@ namespace Internal {
 
 namespace {
 
-IntImm make_immortal_int(int x) {
-    IntImm i;
-    i.ref_count.increment();
-    i.type = Int(32);
-    i.value = x;
+const IntImm *make_immortal_int(int x) {
+    IntImm *i = new IntImm;
+    i->ref_count.increment();
+    i->type = Int(32);
+    i->value = x;
     return i;
 }
 
 }
 
-IntImm IntImm::small_int_cache[] = {make_immortal_int(-8),
-                                    make_immortal_int(-7),
-                                    make_immortal_int(-6),
-                                    make_immortal_int(-5),
-                                    make_immortal_int(-4),
-                                    make_immortal_int(-3),
-                                    make_immortal_int(-2),
-                                    make_immortal_int(-1),
-                                    make_immortal_int(0),
-                                    make_immortal_int(1),
-                                    make_immortal_int(2),
-                                    make_immortal_int(3),
-                                    make_immortal_int(4),
-                                    make_immortal_int(5),
-                                    make_immortal_int(6),
-                                    make_immortal_int(7),
-                                    make_immortal_int(8)};
+const IntImm *IntImm::small_int_cache[] = {make_immortal_int(-8),
+                                           make_immortal_int(-7),
+                                           make_immortal_int(-6),
+                                           make_immortal_int(-5),
+                                           make_immortal_int(-4),
+                                           make_immortal_int(-3),
+                                           make_immortal_int(-2),
+                                           make_immortal_int(-1),
+                                           make_immortal_int(0),
+                                           make_immortal_int(1),
+                                           make_immortal_int(2),
+                                           make_immortal_int(3),
+                                           make_immortal_int(4),
+                                           make_immortal_int(5),
+                                           make_immortal_int(6),
+                                           make_immortal_int(7),
+                                           make_immortal_int(8)};
 
 
 Expr Cast::make(Type t, Expr v) {
@@ -410,6 +410,41 @@ Stmt Allocate::make(std::string name, Type type, const std::vector<Expr> &extent
     node->condition = condition;
     node->body = body;
     return node;
+}
+
+int32_t Allocate::constant_allocation_size(const std::vector<Expr> &extents, const std::string &name) {
+    int64_t result = 1;
+
+    for (size_t i = 0; i < extents.size(); i++) {
+        if (const IntImm *int_size = extents[i].as<IntImm>()) {
+            // Check if the individual dimension is > 2^31 - 1. Not
+            // currently necessary because it's an int32_t, which is
+            // always smaller than 2^31 - 1. If we ever upgrade the
+            // type of IntImm but not the maximum allocation size, we
+            // should re-enable this.
+            /*
+            if ((int64_t)int_size->value > (((int64_t)(1)<<31) - 1)) {
+                user_error
+                    << "Dimension " << i << " for allocation " << name << " has size " <<
+                    int_size->value << " which is greater than 2^31 - 1.";
+            }
+            */
+            result *= int_size->value;
+            if (result > (static_cast<int64_t>(1)<<31) - 1) {
+                user_error
+                    << "Total size for allocation " << name
+                    << " is constant but exceeds 2^31 - 1.\n";
+            }
+        } else {
+            return 0;
+        }
+    }
+
+    return static_cast<int32_t>(result);
+}
+
+int32_t Allocate::constant_allocation_size() const {
+    return Allocate::constant_allocation_size(extents, name);
 }
 
 Stmt Free::make(std::string name) {

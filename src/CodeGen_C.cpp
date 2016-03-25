@@ -61,7 +61,7 @@ const string globals =
     "void halide_free(void *ctx, void *ptr);\n"
     "void *halide_print(void *ctx, const void *str);\n"
     "void *halide_error(void *ctx, const void *str);\n"
-    "int halide_debug_to_file(void *ctx, const char *filename, void *data, int, int, int, int, int, int);\n"
+    "int halide_debug_to_file(void *ctx, const char *filename, int, struct buffer_t *buf);\n"
     "int halide_start_clock(void *ctx);\n"
     "int64_t halide_current_time_ns(void *ctx);\n"
     "void halide_profiler_pipeline_end(void *, void *);\n"
@@ -498,7 +498,7 @@ void CodeGen_C::push_buffer(Type t, const std::string &buffer_name) {
     stream << "const bool "
            << name
            << "_host_and_dev_are_null = ("
-           << buf_name << "->host == NULL) && ("
+           << buf_name << "->host == nullptr) && ("
            << buf_name << "->dev == 0);\n";
     do_indent();
     stream << "(void)" << name << "_host_and_dev_are_null;\n";
@@ -775,25 +775,17 @@ void CodeGen_C::visit(const Call *op) {
     // Handle intrinsics first
     if (op->call_type == Call::Intrinsic) {
         if (op->name == Call::debug_to_file) {
-            internal_assert(op->args.size() == 9);
+            internal_assert(op->args.size() == 3);
             const StringImm *string_imm = op->args[0].as<StringImm>();
             internal_assert(string_imm);
             string filename = string_imm->value;
-            const Load *load = op->args[1].as<Load>();
-            internal_assert(load);
-            string func = print_name(load->name);
-
-            vector<string> args(6);
-            for (size_t i = 0; i < args.size(); i++) {
-                args[i] = print_expr(op->args[i+3]);
-            }
+            string typecode = print_expr(op->args[1]);
+            string buffer = print_name(print_expr(op->args[2]));
 
             rhs << "halide_debug_to_file(";
-            rhs << (have_user_context ? "__user_context_" : "NULL");
-            rhs << ", \"" + filename + "\", " + func;
-            for (size_t i = 0; i < args.size(); i++) {
-                rhs << ", " << args[i];
-            }
+            rhs << (have_user_context ? "__user_context_" : "nullptr");
+            rhs << ", \"" + filename + "\", " + typecode;
+            rhs << ", (struct buffer_t *)" << buffer;
             rhs << ")";
         } else if (op->name == Call::bitwise_and) {
             internal_assert(op->args.size() == 2);
@@ -859,7 +851,7 @@ void CodeGen_C::visit(const Call *op) {
             Expr e = select(a < b, b - a, a - b);
             rhs << print_expr(e);
         } else if (op->name == Call::null_handle) {
-            rhs << "NULL";
+            rhs << "nullptr";
         } else if (op->name == Call::address_of) {
             const Load *l = op->args[0].as<Load>();
             internal_assert(op->args.size() == 1 && l);
@@ -1047,7 +1039,7 @@ void CodeGen_C::visit(const Call *op) {
 
             string call =
                 fn->value + "(" +
-                (have_user_context ? "__user_context_, " : "NULL, ")
+                (have_user_context ? "__user_context_, " : "nullptr, ")
                 + "arg);";
 
             do_indent();
@@ -1074,7 +1066,7 @@ void CodeGen_C::visit(const Call *op) {
         rhs << op->name << "(";
 
         if (function_takes_user_context(op->name)) {
-            rhs << (have_user_context ? "__user_context_, " : "NULL, ");
+            rhs << (have_user_context ? "__user_context_, " : "nullptr, ");
         }
 
         for (size_t i = 0; i < op->args.size(); i++) {
@@ -1254,7 +1246,8 @@ void CodeGen_C::visit(const Allocate *op) {
         heap_allocations.push(op->name, 0);
         stream << print_type(op->type) << "*" << print_name(op->name) << " = (" << print_expr(op->new_expr) << ");\n";
     } else {
-        if (constant_allocation_size(op->extents, op->name, constant_size)) {
+        constant_size = op->constant_allocation_size();
+        if (constant_size > 0) {
             int64_t stack_bytes = constant_size * op->type.bytes();
 
             if (stack_bytes > ((int64_t(1) << 31) - 1)) {
@@ -1262,7 +1255,7 @@ void CodeGen_C::visit(const Allocate *op) {
                            << op->name << " is constant but exceeds 2^31 - 1.\n";
             } else {
                 size_id = print_expr(Expr(static_cast<int32_t>(constant_size)));
-                if (stack_bytes <= 1024 * 8) {
+                if (can_allocation_fit_on_stack(stack_bytes)) {
                     on_stack = true;
                 }
             }
@@ -1290,7 +1283,7 @@ void CodeGen_C::visit(const Allocate *op) {
             open_scope();
             do_indent();
             stream << "halide_error("
-                   << (have_user_context ? "__user_context_" : "NULL")
+                   << (have_user_context ? "__user_context_" : "nullptr")
                    << ", \"32-bit signed overflow computing size of allocation "
                    << op->name << "\\n\");\n";
             do_indent();
@@ -1326,7 +1319,7 @@ void CodeGen_C::visit(const Allocate *op) {
                    << " = ("
                    << print_type(op->type)
                    << " *)halide_malloc("
-                   << (have_user_context ? "__user_context_" : "NULL")
+                   << (have_user_context ? "__user_context_" : "nullptr")
                    << ", sizeof("
                    << print_type(op->type)
                    << ")*" << size_id << ");\n";
@@ -1351,7 +1344,7 @@ void CodeGen_C::visit(const Free *op) {
 
         do_indent();
         stream << free_function << "("
-               << (have_user_context ? "__user_context_, " : "NULL, ")
+               << (have_user_context ? "__user_context_, " : "nullptr, ")
                << print_name(op->name)
                << ");\n";
         heap_allocations.pop(op->name);
@@ -1434,7 +1427,7 @@ void CodeGen_C::test() {
         "int test1(buffer_t *_buf_buffer, const float _alpha, const int32_t _beta, const void * __user_context) HALIDE_FUNCTION_ATTRS {\n"
         " int32_t *_buf = (int32_t *)(_buf_buffer->host);\n"
         " (void)_buf;\n"
-        " const bool _buf_host_and_dev_are_null = (_buf_buffer->host == NULL) && (_buf_buffer->dev == 0);\n"
+        " const bool _buf_host_and_dev_are_null = (_buf_buffer->host == nullptr) && (_buf_buffer->dev == 0);\n"
         " (void)_buf_host_and_dev_are_null;\n"
         " const int32_t _buf_min_0 = _buf_buffer->min[0];\n"
         " (void)_buf_min_0;\n"

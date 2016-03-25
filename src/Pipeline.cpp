@@ -114,7 +114,7 @@ EXPORT void destroy<PipelineContents>(const PipelineContents *p) {
 }
 }
 
-Pipeline::Pipeline() : contents(NULL) {
+Pipeline::Pipeline() : contents(nullptr) {
 }
 
 bool Pipeline::defined() const {
@@ -190,6 +190,13 @@ void Pipeline::compile_to_bitcode(const string &filename,
     compile_module_to_llvm_bitcode(compile_to_module(args, fn_name, target), filename);
 }
 
+void Pipeline::compile_to_llvm_assembly(const string &filename,
+                                        const vector<Argument> &args,
+                                        const string &fn_name,
+                                        const Target &target) {
+    compile_module_to_llvm_assembly(compile_to_module(args, fn_name, target), filename);
+}
+
 void Pipeline::compile_to_object(const string &filename,
                                  const vector<Argument> &args,
                                  const string &fn_name,
@@ -227,8 +234,9 @@ void Pipeline::print_loop_nest(std::ostream &s) {
 void Pipeline::compile_to_lowered_stmt(const string &filename,
                                        const vector<Argument> &args,
                                        StmtOutputFormat fmt,
-                                       const Target &target) {
-    Module m = compile_to_module(args, "", target);
+                                       const Target &target,
+                                       bool auto_schedule) {
+    Module m = compile_to_module(args, "", target, auto_schedule);
     if (fmt == HTML) {
         compile_module_to_html(m, filename);
     } else {
@@ -625,9 +633,19 @@ void *Pipeline::compile_jit(const Target &target_arg, bool auto_schedule) {
     JITModule jit_module(module, module.functions.back(),
                          make_externs_jit_module(target_arg, lowered_externs));
 
-    if (debug::debug_level >= 3) {
-        compile_module_to_native(module, name + ".bc", name + ".s");
-        compile_module_to_text(module, name + ".stmt");
+    // Dump bitcode to a file if the environment variable
+    // HL_GENBITCODE is non-zero.
+    size_t gen;
+    get_env_variable("HL_GENBITCODE", gen);
+    if (gen) {
+        string program_name = running_program_name();
+        if (program_name.empty()) {
+            program_name = "unknown" + unique_name('_').substr(1);
+        }
+
+        string function_name = name + "_" + unique_name('g').substr(1);
+        compile_to_bitcode(program_name + "_" + function_name + ".bc",
+                           infer_arguments(), function_name);
     }
 
     contents.ptr->jit_module = jit_module;
@@ -799,9 +817,9 @@ struct JITFuncCallContext {
 
     JITFuncCallContext(const JITHandlers &handlers, Parameter &user_context_param)
         : user_context_param(user_context_param) {
-        void *user_context = NULL;
+        void *user_context = nullptr;
         JITHandlers local_handlers = handlers;
-        if (local_handlers.custom_error == NULL) {
+        if (local_handlers.custom_error == nullptr) {
             custom_error_handler = false;
             local_handlers.custom_error = ErrorBuffer::handler;
             user_context = &error_buffer;
@@ -836,7 +854,7 @@ struct JITFuncCallContext {
 
     void finalize(int exit_status) {
         report_if_error(exit_status);
-        user_context_param.set_scalar((void *)NULL); // Don't leave param hanging with pointer to stack.
+        user_context_param.set_scalar((void *)nullptr); // Don't leave param hanging with pointer to stack.
     }
 };
 }
@@ -904,7 +922,7 @@ vector<const void *> Pipeline::prepare_jit_call_arguments(Realization dst, const
                 arg_values.push_back(buf.raw_buffer());
             } else {
                 // Unbound
-                arg_values.push_back(NULL);
+                arg_values.push_back(nullptr);
             }
             debug(1) << "JIT input ImageParam argument ";
         } else if (arg.param.defined()) {
@@ -1003,7 +1021,7 @@ void Pipeline::realize(Realization dst, const Target &t) {
         const InferredArgument &arg = contents.ptr->inferred_args[i];
         const void *arg_value = args[i];
         if (arg.param.defined()) {
-            user_assert(arg_value != NULL)
+            user_assert(arg_value != nullptr)
                 << "Can't realize a pipeline because ImageParam "
                 << arg.param.name() << " is not bound to a Buffer\n";
         }
@@ -1109,7 +1127,7 @@ void Pipeline::infer_input_bounds(Realization dst) {
 
     vector<size_t> query_indices;
     for (size_t i = 0; i < args.size(); i++) {
-        if (args[i] == NULL) {
+        if (args[i] == nullptr) {
             query_indices.push_back(i);
             memset(&tracked_buffers[i], 0, sizeof(TrackedBuffer));
             args[i] = &tracked_buffers[i].query;
@@ -1227,11 +1245,11 @@ void Pipeline::invalidate_cache() {
 }
 
 JITExtern::JITExtern(Pipeline pipeline)
-    : pipeline(pipeline), c_function(NULL) {
+    : pipeline(pipeline), c_function(nullptr) {
 }
 
 JITExtern::JITExtern(Func func)
-    : pipeline(func), c_function(NULL) {
+    : pipeline(func), c_function(nullptr) {
 }
 
 }  // namespace Halide
