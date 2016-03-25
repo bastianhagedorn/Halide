@@ -2626,7 +2626,7 @@ struct Partitioner {
         if (!random_seed) {
             // Initialize machine params
             arch_params.balance = 10;
-            arch_params.fast_mem_size = 8 * 1024;
+            arch_params.fast_mem_size = 8 * 1024 * 32;
             // L1 = 32K
             // L2 = 256K
             // L3 = 8192K
@@ -3393,7 +3393,27 @@ Partitioner::Option Partitioner::choose_candidate(
     // intensity of the child group in the pair.
 
     vector<Option> options;
+    const char *tile_size_1_var = getenv("HL_POLYMAGE_TILE_SIZE1");
+
+    int tile_size_1 = 0;
+    if (tile_size_1_var) {
+        tile_size_1 = atoi(tile_size_1_var);
+    }
+
+    const char *tile_size_2_var = getenv("HL_POLYMAGE_TILE_SIZE2");
+
+    int tile_size_2 = 0;
+    if (tile_size_2_var) {
+        tile_size_2 = atoi(tile_size_2_var);
+    }
+
     vector<int> size_variants = {256, 128, 64, 32, 16, 8, 4};
+
+    if (tile_size_2_var && tile_size_1_var)  {
+        size_variants.clear();
+        size_variants.push_back(tile_size_1);
+        size_variants.push_back(tile_size_2);
+    }
 
     if(random_seed) {
         vector<int> rand_variants;
@@ -3864,7 +3884,27 @@ void Partitioner::tile_for_input_locality() {
         // For the dimensions with reuse along multiple dimensions tile
         // the dimensions in such a way that the reuse is maximized and
         // the porition of inputs fit in fast memory
+        Const char *tile_size_1_var = getenv("HL_POLYMAGE_TILE_SIZE1");
+
+        int tile_size_1 = 0;
+        if (tile_size_1_var) {
+            tile_size_1 = atoi(tile_size_1_var);
+        }
+
+        const char *tile_size_2_var = getenv("HL_POLYMAGE_TILE_SIZE2");
+
+        int tile_size_2 = 0;
+        if (tile_size_2_var) {
+            tile_size_2 = atoi(tile_size_2_var);
+        }
+
         vector<int> size_variants = {256, 128, 64, 32, 16, 8, 4};
+
+        if (tile_size_2_var && tile_size_1_var)  {
+            size_variants.clear();
+            size_variants.push_back(tile_size_1);
+            size_variants.push_back(tile_size_2);
+        }
 
         if(random_seed) {
             // Truncate tile size variants randomly
@@ -4859,6 +4899,7 @@ void schedule_advisor(const vector<Function> &outputs,
 
     // Schedule generation based on grouping
     // GPU schedule generation
+    /*
     if ((target.has_feature(Target::CUDA) ||
         target.has_feature(Target::CUDACapability30)||
         target.has_feature(Target::CUDACapability32)||
@@ -4914,9 +4955,11 @@ void schedule_advisor(const vector<Function> &outputs,
             std::vector<string> block_names = {"__block_id_x",
                                                "__block_id_y",
                                                "__block_id_z"};
+
             std::vector<string> thread_names = {"__thread_id_x",
                                                 "__thread_id_y",
                                                 "__thread_id_z"};
+
             std::vector<int> block_sizes;
             int num_tile_dims = 0;
             int num_block_dim = 0;
@@ -4978,24 +5021,13 @@ void schedule_advisor(const vector<Function> &outputs,
                     // Parallelize within a tile
                     pick_gpu_thread_dims(m, mem_estimates, num_block_dim,
                                          block_sizes, thread_names);
-                    /*
-                    if (!m.is_pure()) {
-                        int num_updates = m.updates().size();
-                        for (int i = 0; i < num_updates; i ++) {
-                            // Start with fresh bounds estimates for each update
-                            map<string, int> mem_up_estimates =
-                                org_mem_estimates;
-                            set<string> par_vars;
-                            vectorize_update(m, i, mem_up_estimates, vec_len,
-                                    par_vars);
-                        }
-                    }*/
                 }
             }
             // std::cerr << "Finished group members "  <<  g_out.name() << std::endl;
         }
         return;
     }
+    */
 
     // CPU schedule generation
     for (auto& g: part.groups) {
