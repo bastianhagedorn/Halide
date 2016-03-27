@@ -2626,7 +2626,8 @@ struct Partitioner {
         if (!random_seed) {
             // Initialize machine params
             arch_params.balance = 10;
-            arch_params.fast_mem_size = 8 * 1024 * 32;
+            //arch_params.fast_mem_size = 8 * 1024 * 32;
+            arch_params.fast_mem_size = 8 * 1024;
             // L1 = 32K
             // L2 = 256K
             // L3 = 8192K
@@ -5033,7 +5034,7 @@ void synthesize_gpu_schedule(string g_name, Partitioner &part,
             // TODO
             // Parallelize within a tile
             pick_gpu_thread_dims(m, mem_estimates, num_block_dim,
-                    block_sizes, thread_names);
+                                 block_sizes, thread_names);
         }
     }
     // std::cerr << "Finished group members "  <<  g_out.name() << std::endl;

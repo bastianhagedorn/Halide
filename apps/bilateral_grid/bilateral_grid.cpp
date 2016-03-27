@@ -49,9 +49,9 @@ int main(int argc, char **argv) {
                          blurx(x, y+1, z, c)*4 +
                          blurx(x, y+2, z, c));
 
-    //blurz.bound(z, 0, 12);
-    //blurx.bound(z, 0, 12);
-    //blury.bound(z, 0, 12);
+    blurz.bound(z, 0, 12);
+    blurx.bound(z, 0, 12);
+    blury.bound(z, 0, 12);
 
     // Take trilinear samples to compute the output
     val = clamp(input(x, y), 0.0f, 1.0f);
@@ -117,6 +117,7 @@ int main(int argc, char **argv) {
 
     target.set_feature(Halide::Target::CUDA);
     target.set_feature(Halide::Target::Debug);
+    //target.set_feature(Halide::Target::NoAsserts);
 
     auto_build(bilateral_grid, "bilateral_grid", {r_sigma, input},
                                     target, (schedule == -1));
