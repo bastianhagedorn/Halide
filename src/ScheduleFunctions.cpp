@@ -2479,6 +2479,7 @@ struct Partitioner {
         int vec_len;
         long long fast_mem_size;
         int balance;
+        int threads_per_block;
     };
 
     map<string, Box> &pipeline_bounds;
@@ -2499,6 +2500,7 @@ struct Partitioner {
 
     map<pair<string, string>, Option> option_cache;
 
+    bool gpu_schedule;
     int random_seed;
     bool debug_info;
 
@@ -2507,9 +2509,10 @@ struct Partitioner {
     Partitioner(map<string, Box> &_pipeline_bounds,
                 map<string, vector<string> > &_inlines, DependenceAnalysis &_analy,
                 map<string, pair<long long, long long> > &_func_cost,
-                int _random_seed, bool _debug_info):
+                bool _gpu_schedule, int _random_seed, bool _debug_info):
                 pipeline_bounds(_pipeline_bounds), inlines(_inlines),
-                analy(_analy), func_cost(_func_cost), random_seed(_random_seed),
+                analy(_analy), func_cost(_func_cost), gpu_schedule(_gpu_schedule),
+                random_seed(_random_seed),
                 debug_info(_debug_info) {
 
         // Place each function in its own group
@@ -2622,7 +2625,7 @@ struct Partitioner {
         }
 
         arch_params.parallelism = 12;
-        arch_params.vec_len = 16;
+        arch_params.vec_len = 32;
         if (!random_seed) {
             // Initialize machine params
             arch_params.balance = 10;
@@ -2631,6 +2634,7 @@ struct Partitioner {
             // L1 = 32K
             // L2 = 256K
             // L3 = 8192K
+            arch_params.threads_per_block = 1024;
 
             char *var;
             var = getenv("HL_AUTO_PARALLELISM");
@@ -3034,13 +3038,14 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
 
     // Count the number of tiles
     long long estimate_tiles = 1;
+    int num_ele_per_tile = 1;
     float partial_tiles = 1;
     for (unsigned int i = 0; i < args.size(); i++) {
         if (opt.tile_sizes[i] != -1) {
             estimate_tiles *= std::ceil((float)dim_estimates_cons[i]/opt.tile_sizes[i]);
             partial_tiles *= (float)dim_estimates_cons[i]/opt.tile_sizes[i];
+            num_ele_per_tile *= opt.tile_sizes[i];
         }
-
     }
 
     conc_reg = analy.concrete_dep_regions(opt.cons_group, eval,
@@ -3189,6 +3194,14 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
 
     if ((arch_params.parallelism > estimate_tiles) && opt.prod_group != "") {
         // Option did not satisfy the parallelism constraint
+        opt.benefit = -1;
+    }
+
+    if (gpu_schedule && l != Partitioner::INLINE &&
+        ((arch_params.threads_per_block < num_ele_per_tile)
+            ||((num_ele_per_tile) < arch_params.vec_len))) {
+        // Constrain the number of elements in a tile to be less than the
+        // number of threads that are allowed in a single block
         opt.benefit = -1;
     }
 
@@ -5282,7 +5295,16 @@ void schedule_advisor(const vector<Function> &outputs,
     }
 
     // Initialize the partitioner
-    Partitioner part(pipeline_bounds, inlines, analy, func_cost,
+    bool gpu_schedule = false;
+    if ((target.has_feature(Target::CUDA) ||
+                target.has_feature(Target::CUDACapability30)||
+                target.has_feature(Target::CUDACapability32)||
+                target.has_feature(Target::CUDACapability35)||
+                target.has_feature(Target::CUDACapability50))) {
+        gpu_schedule = true;
+    }
+
+    Partitioner part(pipeline_bounds, inlines, analy, func_cost, gpu_schedule,
                      random_seed, debug_info);
 
     if (debug_info) {
@@ -5332,11 +5354,7 @@ void schedule_advisor(const vector<Function> &outputs,
     // Schedule generation based on grouping
     for (auto& g: part.groups) {
 
-        if ((target.has_feature(Target::CUDA) ||
-                    target.has_feature(Target::CUDACapability30)||
-                    target.has_feature(Target::CUDACapability32)||
-                    target.has_feature(Target::CUDACapability35)||
-                    target.has_feature(Target::CUDACapability50))) {
+        if (gpu_schedule) {
             synthesize_gpu_schedule(g.first, part, env, pipeline_bounds, inlines, debug_info);
         } else {
             synthesize_cpu_schedule(g.first, part, env, pipeline_bounds,
