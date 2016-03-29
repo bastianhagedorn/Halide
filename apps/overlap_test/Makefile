@@ -11,6 +11,12 @@ overlap_ref.o: overlap_test
 overlap_auto.o: overlap_test
 	./overlap_test -1
 
+overlap_naive.o: overlap_test
+	HL_AUTO_NAIVE=1 ./overlap_test -1
+
+overlap_sweep.o: overlap_test
+	HL_AUTO_SWEEP=1 ./overlap_test -1
+
 test_%: test.cpp overlap_%.o
 	$(CXX) $(CXXFLAGS) $^ -o $@ -lpthread -ldl $(PNGFLAGS)
 

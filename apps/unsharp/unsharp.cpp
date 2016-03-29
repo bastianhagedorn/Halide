@@ -62,6 +62,9 @@ int main(int argc, char **argv) {
         unsharp.vectorize(x, 8).parallel(y).reorder(x, c, y);
     }
 
+    target.set_feature(Halide::Target::CUDA);
+    target.set_feature(Halide::Target::Debug);
+
     auto_build(unsharp, "unsharp", {in}, target, (schedule == -1));
 
     return 0;

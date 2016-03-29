@@ -1,4 +1,4 @@
-TESTS=process_ref process_auto process_naive
+TESTS=process_ref process_auto process_naive process_sweep process_rand
 include ../support/Makefile.inc
 
 auto: clean_auto process_auto
@@ -15,6 +15,12 @@ local_laplacian_auto.o: local_laplacian_gen
 
 local_laplacian_naive.o: local_laplacian_gen
 	HL_AUTO_NAIVE=1 ./local_laplacian_gen 8 -1
+
+local_laplacian_rand.o: local_laplacian_gen
+	HL_AUTO_RAND=1 HL_AUTO_PARALLELISM=8 HL_AUTO_VEC_LEN=16 HL_AUTO_BALANCE=15 HL_AUTO_FAST_MEM_SIZE=1048576 ./local_laplacian_gen 8 -1
+
+local_laplacian_sweep.o: local_laplacian_gen
+	HL_AUTO_SWEEP=1 HL_AUTO_PARALLELISM=12 HL_AUTO_VEC_LEN=16 HL_AUTO_BALANCE=20 HL_AUTO_FAST_MEM_SIZE=131072 ./local_laplacian_gen 8 -1
 
 process_%: process.cpp local_laplacian_%.o
 	$(CXX) $(CXXFLAGS) $^ \
@@ -36,6 +42,7 @@ local_laplacian.mp4: process_viz
 	bash viz.sh
 
 clean: clean_bench clean_variants
-	rm -f out.png process local_laplacian local_laplacian*.o process_viz \
+	rm -f out.png process_ref process_auto process_rand process_naive process_sweep \
+		local_laplacian local_laplacian*.o process_viz \
 		local_laplacian_viz.o local_laplacian_gen \
 		local_laplacian.mp4 local_laplacian.h

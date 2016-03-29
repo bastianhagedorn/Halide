@@ -439,8 +439,31 @@ Stage &Stage::fuse(VarOrRVar inner, VarOrRVar outer, VarOrRVar fused) {
     return *this;
 }
 
+namespace Internal {
+class CheckForFreeVars : public IRGraphVisitor {
+public:
+    string offending_var;
+protected:
+    using IRGraphVisitor::visit;
+    void visit(const Variable *var) {
+        if (!var->param.defined() && !var->image.defined()) {
+            offending_var = var->name;
+        }
+    }
+};
+}
+
 Stage Stage::specialize(Expr condition) {
     user_assert(condition.type().is_bool()) << "Argument passed to specialize must be of type bool\n";
+
+    // The condition may not depend on Vars or RVars
+    Internal::CheckForFreeVars check;
+    condition.accept(&check);
+    if (!check.offending_var.empty()) {
+        user_error << "Specialization condition " << condition << " for " << stage_name
+                   << " depends on Var or RVar " << check.offending_var << ". "
+                   << "Specialization conditions may not depend on any Vars or RVars.\n";
+    }
 
     // The user may be retrieving a reference to an existing
     // specialization.
@@ -1616,6 +1639,16 @@ void Func::compile_to_bitcode(const string &filename, const vector<Argument> &ar
     pipeline().compile_to_bitcode(filename, args, "", target);
 }
 
+void Func::compile_to_llvm_assembly(const string &filename, const vector<Argument> &args, const string &fn_name,
+                                    const Target &target) {
+    pipeline().compile_to_llvm_assembly(filename, args, fn_name, target);
+}
+
+void Func::compile_to_llvm_assembly(const string &filename, const vector<Argument> &args,
+                                    const Target &target) {
+    pipeline().compile_to_llvm_assembly(filename, args, "", target);
+}
+
 void Func::compile_to_object(const string &filename, const vector<Argument> &args,
                              const string &fn_name, const Target &target) {
     pipeline().compile_to_object(filename, args, fn_name, target);
@@ -1639,8 +1672,9 @@ void Func::compile_to_c(const string &filename, const vector<Argument> &args,
 void Func::compile_to_lowered_stmt(const string &filename,
                                    const vector<Argument> &args,
                                    StmtOutputFormat fmt,
-                                   const Target &target) {
-    pipeline().compile_to_lowered_stmt(filename, args, fmt, target);
+                                   const Target &target,
+                                   bool auto_schedule) {
+    pipeline().compile_to_lowered_stmt(filename, args, fmt, target, auto_schedule);
 }
 
 void Func::print_loop_nest(std::ostream &s) {

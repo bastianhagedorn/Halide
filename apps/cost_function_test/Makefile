@@ -14,6 +14,9 @@ cost_auto.o: cost_function_test
 cost_naive.o: cost_function_test
 	HL_AUTO_NAIVE=1 ./cost_function_test -1
 
+cost_sweep.o: cost_function_test
+	HL_AUTO_SWEEP=1 ./cost_function_test -1
+
 test_%: test.cpp cost_%.o
 	$(CXX) $(CXXFLAGS) $^ -o $@ -lpthread -ldl $(PNGFLAGS)
 

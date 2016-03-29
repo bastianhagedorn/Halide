@@ -183,7 +183,7 @@ namespace {
 // If e is a ramp expression with stride 1, return the base, otherwise undefined.
 Expr is_ramp_one(Expr e) {
     const Ramp *r = e.as<Ramp>();
-    if (r == NULL) {
+    if (r == nullptr) {
         return Expr();
     }
 
@@ -347,9 +347,8 @@ void CodeGen_Metal_Dev::CodeGen_Metal_C::visit(const Allocate *op) {
 
         // Allocation is not a shared memory allocation, just make a local declaration.
         // It must have a constant size.
-        int32_t size;
-        bool is_constant = constant_allocation_size(op->extents, op->name, size);
-        user_assert(is_constant)
+        int32_t size = op->constant_allocation_size();
+        user_assert(size > 0)
             << "Allocation " << op->name << " has a dynamic size. "
             << "Only fixed-size allocations are supported on the gpu. "
             << "Try storing into shared memory instead.";
@@ -391,7 +390,7 @@ void CodeGen_Metal_Dev::CodeGen_Metal_C::visit(const Cast *op) {
 
 void CodeGen_Metal_Dev::add_kernel(Stmt s,
                                    const string &name,
-                                   const vector<GPU_Argument> &args) {
+                                   const vector<DeviceArgument> &args) {
     debug(2) << "CodeGen_Metal_Dev::compile " << name << "\n";
 
     // TODO: do we have to uniquify these names, or can we trust that they are safe?
@@ -415,7 +414,7 @@ struct BufferSize {
 
 void CodeGen_Metal_Dev::CodeGen_Metal_C::add_kernel(Stmt s,
                                                     const string &name,
-                                                    const vector<GPU_Argument> &args) {
+                                                    const vector<DeviceArgument> &args) {
 
     debug(2) << "Adding Metal kernel " << name << "\n";
 

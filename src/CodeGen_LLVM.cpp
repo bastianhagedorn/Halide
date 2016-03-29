@@ -1,6 +1,7 @@
 #include <iostream>
 #include <limits>
 #include <sstream>
+#include <mutex>
 
 #include "IRPrinter.h"
 #include "CodeGen_LLVM.h"
@@ -14,11 +15,13 @@
 #include "Util.h"
 #include "LLVM_Runtime_Linker.h"
 #include "MatlabWrapper.h"
+#include "IntegerDivisionTable.h"
 
 #include "CodeGen_X86.h"
 #include "CodeGen_GPU_Host.h"
 #include "CodeGen_ARM.h"
 #include "CodeGen_MIPS.h"
+#include "CodeGen_PowerPC.h"
 #include "CodeGen_PNaCl.h"
 
 #if !(__cplusplus > 199711L || _MSC_VER >= 1800)
@@ -31,11 +34,9 @@
 
 namespace Halide {
 
-llvm::Module *codegen_llvm(const Module &module, llvm::LLVMContext &context) {
-    Internal::CodeGen_LLVM *cg = Internal::CodeGen_LLVM::new_for_target(module.target(), context);
-    llvm::Module *out = cg->compile(module);
-    delete cg;
-    return out;
+std::unique_ptr<llvm::Module> codegen_llvm(const Module &module, llvm::LLVMContext &context) {
+    std::unique_ptr<Internal::CodeGen_LLVM> cg(Internal::CodeGen_LLVM::new_for_target(module.target(), context));
+    return cg->compile(module);
 }
 
 namespace Internal {
@@ -110,6 +111,12 @@ using std::stack;
 #define InitializeMipsAsmPrinter()   InitializeAsmPrinter(Mips)
 #endif
 
+#ifdef WITH_POWERPC
+#define InitializePowerPCTarget()       InitializeTarget(PowerPC)
+#define InitializePowerPCAsmParser()    InitializeAsmParser(PowerPC)
+#define InitializePowerPCAsmPrinter()   InitializeAsmPrinter(PowerPC)
+#endif
+
 namespace {
 
 // Get the LLVM linkage corresponding to a Halide linkage type.
@@ -128,36 +135,35 @@ llvm::GlobalValue::LinkageTypes llvm_linkage(LoweredFunc::LinkageType t) {
 }
 
 CodeGen_LLVM::CodeGen_LLVM(Target t) :
-    module(NULL),
-    function(NULL), context(NULL),
-    builder(NULL),
-    value(NULL),
-    very_likely_branch(NULL),
+    function(nullptr), context(nullptr),
+    builder(nullptr),
+    value(nullptr),
+    very_likely_branch(nullptr),
     target(t),
-    void_t(NULL), i1(NULL), i8(NULL), i16(NULL), i32(NULL), i64(NULL),
-    f16(NULL), f32(NULL), f64(NULL),
-    buffer_t_type(NULL),
-    metadata_t_type(NULL),
-    argument_t_type(NULL),
-    scalar_value_t_type(NULL),
+    void_t(nullptr), i1(nullptr), i8(nullptr), i16(nullptr), i32(nullptr), i64(nullptr),
+    f16(nullptr), f32(nullptr), f64(nullptr),
+    buffer_t_type(nullptr),
+    metadata_t_type(nullptr),
+    argument_t_type(nullptr),
+    scalar_value_t_type(nullptr),
 
     // Vector types. These need an LLVMContext before they can be initialized.
-    i8x8(NULL),
-    i8x16(NULL),
-    i8x32(NULL),
-    i16x4(NULL),
-    i16x8(NULL),
-    i16x16(NULL),
-    i32x2(NULL),
-    i32x4(NULL),
-    i32x8(NULL),
-    i64x2(NULL),
-    i64x4(NULL),
-    f32x2(NULL),
-    f32x4(NULL),
-    f32x8(NULL),
-    f64x2(NULL),
-    f64x4(NULL),
+    i8x8(nullptr),
+    i8x16(nullptr),
+    i8x32(nullptr),
+    i16x4(nullptr),
+    i16x8(nullptr),
+    i16x16(nullptr),
+    i32x2(nullptr),
+    i32x4(nullptr),
+    i32x8(nullptr),
+    i64x2(nullptr),
+    i64x4(nullptr),
+    f32x2(nullptr),
+    f32x4(nullptr),
+    f32x8(nullptr),
+    f64x2(nullptr),
+    f64x4(nullptr),
 
     // Wildcards for pattern matching
     wild_i8x8(Variable::make(Int(8, 8), "*")),
@@ -230,7 +236,7 @@ CodeGen_LLVM::CodeGen_LLVM(Target t) :
 
     min_f64(Float(64).min()),
     max_f64(Float(64).max()),
-    destructor_block(NULL) {
+    destructor_block(nullptr) {
     initialize_llvm();
 }
 
@@ -274,6 +280,11 @@ CodeGen_LLVM *CodeGen_LLVM::new_for_target(const Target &target,
             return make_codegen<CodeGen_GPU_Host<CodeGen_MIPS>>(target, context);
         }
 #endif
+#ifdef WITH_POWERPC
+        if (target.arch == Target::POWERPC) {
+            return make_codegen<CodeGen_GPU_Host<CodeGen_PowerPC>>(target, context);
+        }
+#endif
 #ifdef WITH_NATIVE_CLIENT
         if (target.arch == Target::PNaCl) {
             return make_codegen<CodeGen_GPU_Host<CodeGen_PNaCl>>(target, context);
@@ -282,7 +293,7 @@ CodeGen_LLVM *CodeGen_LLVM::new_for_target(const Target &target,
 
         user_error << "Invalid target architecture for GPU backend: "
                    << target.to_string() << "\n";
-        return NULL;
+        return nullptr;
 
     } else if (target.arch == Target::X86) {
         return make_codegen<CodeGen_X86>(target, context);
@@ -290,18 +301,40 @@ CodeGen_LLVM *CodeGen_LLVM::new_for_target(const Target &target,
         return make_codegen<CodeGen_ARM>(target, context);
     } else if (target.arch == Target::MIPS) {
         return make_codegen<CodeGen_MIPS>(target, context);
+    } else if (target.arch == Target::POWERPC) {
+        return make_codegen<CodeGen_PowerPC>(target, context);
     } else if (target.arch == Target::PNaCl) {
         return make_codegen<CodeGen_PNaCl>(target, context);
     }
     user_error << "Unknown target architecture: "
                << target.to_string() << "\n";
-    return NULL;
+    return nullptr;
 }
 
 void CodeGen_LLVM::initialize_llvm() {
+    static std::mutex initialize_llvm_mutex;
+    std::lock_guard<std::mutex> lock(initialize_llvm_mutex);
+
     // Initialize the targets we want to generate code for which are enabled
     // in llvm configuration
     if (!llvm_initialized) {
+
+        #if LLVM_VERSION >= 36
+        // You can hack in command-line args to llvm with the
+        // environment variable HL_LLVM_ARGS, e.g. HL_LLVM_ARGS="-print-after-all"
+        size_t defined = 0;
+        std::string args = get_env_variable("HL_LLVM_ARGS", defined);
+        if (!args.empty()) {
+            vector<std::string> arg_vec = split_string(args, " ");
+            vector<const char *> c_arg_vec;
+            c_arg_vec.push_back("llc");
+            for (const std::string &s : arg_vec) {
+                c_arg_vec.push_back(s.c_str());
+            }
+            cl::ParseCommandLineOptions((int)(c_arg_vec.size()), &c_arg_vec[0], "Halide compiler\n");
+        }
+        #endif
+
         InitializeNativeTarget();
         InitializeNativeTargetAsmPrinter();
         InitializeNativeTargetAsmParser();
@@ -368,7 +401,6 @@ void CodeGen_LLVM::init_module() {
     init_context();
 
     // Start with a module containing the initial module for this target.
-    delete module;
     module = get_initial_module_for_target(target, context);
 }
 
@@ -382,64 +414,8 @@ bool CodeGen_LLVM::llvm_ARM_enabled = false;
 bool CodeGen_LLVM::llvm_AArch64_enabled = false;
 bool CodeGen_LLVM::llvm_NVPTX_enabled = false;
 bool CodeGen_LLVM::llvm_Mips_enabled = false;
+bool CodeGen_LLVM::llvm_PowerPC_enabled = false;
 
-llvm::Module *CodeGen_LLVM::compile(const Module &input) {
-    init_module();
-
-    debug(1) << "Target triple of initial module: " << module->getTargetTriple() << "\n";
-
-    module->setModuleIdentifier(input.name());
-
-    // Add some target specific info to the module as metadata.
-    module->addModuleFlag(llvm::Module::Warning, "halide_use_soft_float_abi", use_soft_float_abi() ? 1 : 0);
-    #if LLVM_VERSION < 36
-    module->addModuleFlag(llvm::Module::Warning, "halide_mcpu", ConstantDataArray::getString(*context, mcpu()));
-    module->addModuleFlag(llvm::Module::Warning, "halide_mattrs", ConstantDataArray::getString(*context, mattrs()));
-    #else
-    module->addModuleFlag(llvm::Module::Warning, "halide_mcpu", MDString::get(*context, mcpu()));
-    module->addModuleFlag(llvm::Module::Warning, "halide_mattrs", MDString::get(*context, mattrs()));
-    #endif
-
-    internal_assert(module && context && builder)
-        << "The CodeGen_LLVM subclass should have made an initial module before calling CodeGen_LLVM::compile\n";
-
-    // Ensure some types we need are defined
-    buffer_t_type = module->getTypeByName("struct.buffer_t");
-    internal_assert(buffer_t_type) << "Did not find buffer_t in initial module";
-
-    metadata_t_type = module->getTypeByName("struct.halide_filter_metadata_t");
-    internal_assert(metadata_t_type) << "Did not find halide_filter_metadata_t in initial module";
-
-    argument_t_type = module->getTypeByName("struct.halide_filter_argument_t");
-    internal_assert(argument_t_type) << "Did not find halide_filter_argument_t in initial module";
-
-    scalar_value_t_type = module->getTypeByName("struct.halide_scalar_value_t");
-    internal_assert(scalar_value_t_type) << "Did not find halide_scalar_value_t in initial module";
-
-
-    // Generate the code for this module.
-    debug(1) << "Generating llvm bitcode...\n";
-    for (size_t i = 0; i < input.buffers.size(); i++) {
-        compile_buffer(input.buffers[i]);
-    }
-    for (size_t i = 0; i < input.functions.size(); i++) {
-        compile_func(input.functions[i]);
-    }
-
-    debug(2) << module << "\n";
-
-    // Verify the module is ok
-    verifyModule(*module);
-    debug(2) << "Done generating llvm bitcode\n";
-
-    // Optimize
-    CodeGen_LLVM::optimize_module();
-
-    // Disown the module and return it.
-    llvm::Module *m = module;
-    module = NULL;
-    return m;
-}
 
 namespace {
 
@@ -481,12 +457,80 @@ llvm::Function *add_argv_wrapper(llvm::Module *m, llvm::Function *fn, const std:
     return wrapper;
 }
 
+}  // namespace
+
+std::unique_ptr<llvm::Module> CodeGen_LLVM::compile(const Module &input) {
+    init_module();
+
+    debug(1) << "Target triple of initial module: " << module->getTargetTriple() << "\n";
+
+    module->setModuleIdentifier(input.name());
+
+    // Add some target specific info to the module as metadata.
+    module->addModuleFlag(llvm::Module::Warning, "halide_use_soft_float_abi", use_soft_float_abi() ? 1 : 0);
+    #if LLVM_VERSION < 36
+    module->addModuleFlag(llvm::Module::Warning, "halide_mcpu", ConstantDataArray::getString(*context, mcpu()));
+    module->addModuleFlag(llvm::Module::Warning, "halide_mattrs", ConstantDataArray::getString(*context, mattrs()));
+    #else
+    module->addModuleFlag(llvm::Module::Warning, "halide_mcpu", MDString::get(*context, mcpu()));
+    module->addModuleFlag(llvm::Module::Warning, "halide_mattrs", MDString::get(*context, mattrs()));
+    #endif
+
+    internal_assert(module && context && builder)
+        << "The CodeGen_LLVM subclass should have made an initial module before calling CodeGen_LLVM::compile\n";
+
+    // Ensure some types we need are defined
+    buffer_t_type = module->getTypeByName("struct.buffer_t");
+    internal_assert(buffer_t_type) << "Did not find buffer_t in initial module";
+
+    metadata_t_type = module->getTypeByName("struct.halide_filter_metadata_t");
+    internal_assert(metadata_t_type) << "Did not find halide_filter_metadata_t in initial module";
+
+    argument_t_type = module->getTypeByName("struct.halide_filter_argument_t");
+    internal_assert(argument_t_type) << "Did not find halide_filter_argument_t in initial module";
+
+    scalar_value_t_type = module->getTypeByName("struct.halide_scalar_value_t");
+    internal_assert(scalar_value_t_type) << "Did not find halide_scalar_value_t in initial module";
+
+    // Generate the code for this module.
+    debug(1) << "Generating llvm bitcode...\n";
+    for (size_t i = 0; i < input.buffers.size(); i++) {
+        compile_buffer(input.buffers[i]);
+    }
+    for (size_t i = 0; i < input.functions.size(); i++) {
+        const LoweredFunc &f = input.functions[i];
+        compile_func(f);
+
+        // If the Func is externally visible, also create the argv wrapper
+        // (useful for calling from JIT and other machine interfaces).
+        if (f.linkage == LoweredFunc::External) {
+            llvm::Function *wrapper = add_argv_wrapper(module.get(), function, f.name + "_argv");
+            llvm::Constant *metadata = embed_metadata(f.name + "_metadata", f.name, f.args);
+            if (target.has_feature(Target::RegisterMetadata)) {
+                register_metadata(f.name, metadata, wrapper);
+            }
+
+            if (target.has_feature(Target::Matlab)) {
+                define_matlab_wrapper(module.get(), f.name);
+            }
+        }
+    }
+
+    debug(2) << module.get() << "\n";
+
+    // Verify the module is ok
+    verifyModule(*module);
+    debug(2) << "Done generating llvm bitcode\n";
+
+    // Optimize
+    CodeGen_LLVM::optimize_module();
+
+    // Disown the module and return it.
+    return std::move(module);
 }
 
-void CodeGen_LLVM::compile_func(const LoweredFunc &f) {
-    const std::string &name = f.name;
-    const std::vector<Argument> &args = f.args;
-
+void CodeGen_LLVM::begin_func(LoweredFunc::LinkageType linkage, const std::string& name,
+                              const std::vector<Argument>& args) {
     // Deduce the types of the arguments to our function
     vector<llvm::Type *> arg_types(args.size());
     for (size_t i = 0; i < args.size(); i++) {
@@ -499,7 +543,7 @@ void CodeGen_LLVM::compile_func(const LoweredFunc &f) {
 
     // Make our function
     FunctionType *func_t = FunctionType::get(i32, arg_types, false);
-    function = llvm::Function::Create(func_t, llvm_linkage(f.linkage), name, module);
+    function = llvm::Function::Create(func_t, llvm_linkage(linkage), name, module.get());
 
     // Mark the buffer args as no alias
     for (size_t i = 0; i < args.size(); i++) {
@@ -508,10 +552,10 @@ void CodeGen_LLVM::compile_func(const LoweredFunc &f) {
         }
     }
 
-    debug(1) << "Generating llvm bitcode for function " << name << "...\n";
+    debug(1) << "Generating llvm bitcode prolog for function " << name << "...\n";
 
     // Null out the destructor block.
-    destructor_block = NULL;
+    destructor_block = nullptr;
 
     // Make the initial basic block
     BasicBlock *block = BasicBlock::Create(*context, "entry", function);
@@ -529,11 +573,9 @@ void CodeGen_LLVM::compile_func(const LoweredFunc &f) {
             i++;
         }
     }
+}
 
-    // Ok, we have a module, function, context, and a builder
-    // pointing at a brand new basic block. We're good to go.
-    f.body.accept(this);
-
+void CodeGen_LLVM::end_func(const std::vector<Argument>& args) {
     return_with_error_code(ConstantInt::get(i32, 0));
 
     // Remove the arguments from the symbol table
@@ -544,24 +586,19 @@ void CodeGen_LLVM::compile_func(const LoweredFunc &f) {
         }
     }
 
-    module->setModuleIdentifier("halide_module_" + name);
-    debug(2) << module << "\n";
-
     internal_assert(!verifyFunction(*function));
+}
 
-    // If the Func is externally visible, also create the argv wrapper
-    // (useful for calling from JIT and other machine interfaces).
-    if (f.linkage == LoweredFunc::External) {
-        llvm::Function *wrapper = add_argv_wrapper(module, function, name + "_argv");
-        llvm::Constant *metadata = embed_metadata(name + "_metadata", name, args);
-        if (target.has_feature(Target::RegisterMetadata)) {
-            register_metadata(name, metadata, wrapper);
-        }
+void CodeGen_LLVM::compile_func(const LoweredFunc &f) {
+    // Generate the function declaration and argument unpacking code.
+    begin_func(f.linkage, f.name, f.args);
 
-        if (target.has_feature(Target::Matlab)) {
-            define_matlab_wrapper(module, name);
-        }
-    }
+    // Generate the function body.
+    debug(1) << "Generating llvm bitcode for function " << f.name << "...\n";
+    f.body.accept(this);
+
+    // Clean up and return.
+    end_func(f.args);
 }
 
 // Given a range of iterators of constant ints, get a corresponding vector of llvm::Constant.
@@ -619,7 +656,7 @@ Value *CodeGen_LLVM::register_destructor(llvm::Function *destructor_fn, Value *o
     }
 
     // Switch to the destructor block, and add code that cleans up
-    // this object if the contents of the stack slot is not NULL.
+    // this object if the contents of the stack slot is not nullptr.
     IRBuilderBase::InsertPoint here = builder->saveIP();
     BasicBlock *dtors = get_destructor_block();
 
@@ -809,7 +846,7 @@ void CodeGen_LLVM::register_metadata(const std::string &name, llvm::Constant *me
         ConstantStruct::get(register_t_type, list_node_fields));
 
     llvm::FunctionType *func_t = llvm::FunctionType::get(void_t, false);
-    llvm::Function *ctor = llvm::Function::Create(func_t, llvm::GlobalValue::PrivateLinkage, name + ".register_metadata", module);
+    llvm::Function *ctor = llvm::Function::Create(func_t, llvm::GlobalValue::PrivateLinkage, name + ".register_metadata", module.get());
     llvm::BasicBlock *block = llvm::BasicBlock::Create(module->getContext(), "entry", ctor);
     builder->SetInsertPoint(block);
     llvm::Value *call_args[] = {list_node};
@@ -833,10 +870,10 @@ void CodeGen_LLVM::optimize_module() {
     }
 
     #if LLVM_VERSION < 37
-    FunctionPassManager function_pass_manager(module);
+    FunctionPassManager function_pass_manager(module.get());
     PassManager module_pass_manager;
     #else
-    legacy::FunctionPassManager function_pass_manager(module);
+    legacy::FunctionPassManager function_pass_manager(module.get());
     legacy::PassManager module_pass_manager;
     #endif
 
@@ -892,7 +929,7 @@ llvm::Value *CodeGen_LLVM::sym_get(const string &name, bool must_succeed) const 
 
             internal_error << err.str();
         } else {
-            return NULL;
+            return nullptr;
         }
     }
     return symbol_table.get(name);
@@ -905,6 +942,11 @@ bool CodeGen_LLVM::sym_exists(const string &name) const {
 // Take an llvm Value representing a pointer to a buffer_t,
 // and populate the symbol table with its constituent parts
 void CodeGen_LLVM::push_buffer(const string &name, llvm::Value *buffer) {
+    // Make sure the buffer object itself is not null
+    create_assertion(builder->CreateIsNotNull(buffer),
+                     Call::make(Int(32), "halide_error_buffer_argument_is_null",
+                                {name}, Call::Extern));
+
     Value *host_ptr = buffer_host(buffer);
     Value *dev_ptr = buffer_dev(buffer);
 
@@ -925,11 +967,6 @@ void CodeGen_LLVM::push_buffer(const string &name, llvm::Value *buffer) {
     // Instead track this buffer name so that loads and stores from it
     // don't try to be too aligned.
     might_be_misaligned.insert(name);
-
-    // Make sure the buffer object itself is not null
-    create_assertion(builder->CreateIsNotNull(buffer),
-                     Call::make(Int(32), "halide_error_buffer_argument_is_null",
-                                {name}, Call::Extern));
 
     // Push the buffer pointer as well, for backends that care.
     sym_push(name + ".buffer", buffer);
@@ -1111,7 +1148,7 @@ Value *CodeGen_LLVM::buffer_elem_size_ptr(Value *buffer) {
 Value *CodeGen_LLVM::codegen(Expr e) {
     internal_assert(e.defined());
     debug(4) << "Codegen: " << e.type() << ", " << e << "\n";
-    value = NULL;
+    value = nullptr;
     e.accept(this);
     internal_assert(value) << "Codegen of an expr did not produce an llvm value\n";
     return value;
@@ -1120,7 +1157,7 @@ Value *CodeGen_LLVM::codegen(Expr e) {
 void CodeGen_LLVM::codegen(Stmt s) {
     internal_assert(s.defined());
     debug(3) << "Codegen: " << s << "\n";
-    value = NULL;
+    value = nullptr;
     s.accept(this);
 }
 
@@ -1160,7 +1197,18 @@ void CodeGen_LLVM::visit(const Cast *op) {
     } else if (src.is_float() && dst.is_int()) {
         value = builder->CreateFPToSI(value, llvm_dst);
     } else if (src.is_float() && dst.is_uint()) {
-        value = builder->CreateFPToUI(value, llvm_dst);
+        // fptoui has undefined behavior on overflow. Seems reasonable
+        // to get an unspecified uint on overflow, but because uint1s
+        // are stored in uint8s for float->uint1 casts this undefined
+        // behavior manifests itself as uint1 values greater than 1,
+        // which could in turn break our bounds inference
+        // guarantees. So go via uint8 in this case.
+        if (dst.bits() < 8) {
+            value = builder->CreateFPToUI(value, llvm_type_of(dst.with_bits(8)));
+            value = builder->CreateIntCast(value, llvm_dst, false);
+        } else {
+            value = builder->CreateFPToUI(value, llvm_dst);
+        }
     } else if (src.is_int() && dst.is_float()) {
         value = builder->CreateSIToFP(value, llvm_dst);
     } else if (src.is_uint() && dst.is_float()) {
@@ -1212,9 +1260,130 @@ void CodeGen_LLVM::visit(const Mul *op) {
     }
 }
 
+Value *CodeGen_LLVM::unsigned_mulhi_shr(Value *a, Value *b, int shr) {
+    llvm::Type *ty = a->getType();
+    llvm::VectorType *vty = dyn_cast<VectorType>(ty);
+    llvm::Type *element_ty = vty ? vty->getElementType() : ty;
+    llvm::Type *wide_ty = llvm::IntegerType::get(ty->getContext(), element_ty->getIntegerBitWidth() * 2);
+    if (vty) {
+        wide_ty = llvm::VectorType::get(wide_ty, vty->getNumElements());
+    }
+
+    // We assume the inputs are unsigned, so we zero extend.
+    Value *a_wide = builder->CreateIntCast(a, wide_ty, false);
+    Value *b_wide = builder->CreateIntCast(b, wide_ty, false);
+    Value *p_wide = builder->CreateMul(a_wide, b_wide);
+
+    // Do the shift (add 8 or 16 or 32 to narrow back down)
+    Constant *shift_amount = ConstantInt::get(wide_ty, shr + element_ty->getIntegerBitWidth());
+    Value *p = builder->CreateLShr(p_wide, shift_amount);
+    return builder->CreateIntCast(p, ty, true);
+}
+
+Value *CodeGen_LLVM::sorted_avg(Value *a, Value *b) {
+    // b > a, so the following works without widening:
+    // a + (b - a)/2
+    Value *diff = builder->CreateSub(b, a);
+    diff = builder->CreateLShr(diff, ConstantInt::get(diff->getType(), 1));
+    return builder->CreateAdd(a, diff);
+}
+
+
 void CodeGen_LLVM::visit(const Div *op) {
+    user_assert(!is_zero(op->b)) << "Division by constant zero in expression: " << Expr(op) << "\n";
+
+    // Detect if it's a small int division
+    const int64_t *const_int_divisor = as_const_int(op->b);
+    const uint64_t *const_uint_divisor = as_const_uint(op->b);
+
+    int shift_amount;
+    bool power_of_two = is_const_power_of_two_integer(op->b, &shift_amount);
+
     if (op->type.is_float()) {
         value = builder->CreateFDiv(codegen(op->a), codegen(op->b));
+    } else if (power_of_two && op->type.is_int()) {
+        Value *numerator = codegen(op->a);
+        Constant *shift = ConstantInt::get(llvm_type_of(op->type), shift_amount);
+        value = builder->CreateAShr(numerator, shift);
+    } else if (power_of_two && op->type.is_uint()) {
+        Value *numerator = codegen(op->a);
+        Constant *shift = ConstantInt::get(llvm_type_of(op->type), shift_amount);
+        value = builder->CreateLShr(numerator, shift);
+    } else if (const_int_divisor &&
+               op->type.is_int() &&
+               (op->type.bits() == 8 || op->type.bits() == 16 || op->type.bits() == 32) &&
+               *const_int_divisor > 1 &&
+               ((op->type.bits() > 8 && *const_int_divisor < 256) || *const_int_divisor < 128)) {
+
+        int64_t multiplier, shift;
+        if (op->type.bits() == 32) {
+            multiplier = IntegerDivision::table_s32[*const_int_divisor][2];
+            shift      = IntegerDivision::table_s32[*const_int_divisor][3];
+        } else if (op->type.bits() == 16) {
+            multiplier = IntegerDivision::table_s16[*const_int_divisor][2];
+            shift      = IntegerDivision::table_s16[*const_int_divisor][3];
+        } else {
+            // 8 bit
+            multiplier = IntegerDivision::table_s8[*const_int_divisor][2];
+            shift      = IntegerDivision::table_s8[*const_int_divisor][3];
+        }
+
+        Value *val = codegen(op->a);
+
+        // Make an all-ones mask if the numerator is negative
+        Value *sign = builder->CreateAShr(val, codegen(make_const(op->type, op->type.bits()-1)));
+        // Flip the numerator bits if the mask is high.
+        Value *flipped = builder->CreateXor(sign, val);
+
+        // Grab the multiplier.
+        Value *mult = ConstantInt::get(llvm_type_of(op->type), multiplier);
+
+        // Widening multiply, keep high half, shift
+        val = unsigned_mulhi_shr(flipped, mult, shift);
+
+        // Maybe flip the bits again
+        value = builder->CreateXor(val, sign);
+
+    } else if (const_uint_divisor &&
+               op->type.is_uint() &&
+               (op->type.bits() == 8 || op->type.bits() == 16 || op->type.bits() == 32) &&
+               *const_uint_divisor > 1 && *const_uint_divisor < 256) {
+
+        int64_t method, multiplier, shift;
+        if (op->type.bits() == 32) {
+            method     = IntegerDivision::table_u32[*const_uint_divisor][1];
+            multiplier = IntegerDivision::table_u32[*const_uint_divisor][2];
+            shift      = IntegerDivision::table_u32[*const_uint_divisor][3];
+        } else if (op->type.bits() == 16) {
+            method     = IntegerDivision::table_u16[*const_uint_divisor][1];
+            multiplier = IntegerDivision::table_u16[*const_uint_divisor][2];
+            shift      = IntegerDivision::table_u16[*const_uint_divisor][3];
+        } else {
+            method     = IntegerDivision::table_u8[*const_uint_divisor][1];
+            multiplier = IntegerDivision::table_u8[*const_uint_divisor][2];
+            shift      = IntegerDivision::table_u8[*const_uint_divisor][3];
+        }
+
+        internal_assert(method != 0)
+            << "method 0 division is for powers of two and should have been handled elsewhere\n";
+
+        Value *num = codegen(op->a);
+
+        // Widen, multiply, narrow
+        Value *mult = ConstantInt::get(llvm_type_of(op->type), multiplier);
+        Value *val = unsigned_mulhi_shr(num, mult, method == 1 ? shift : 0);
+
+        if (method == 2) {
+            // Average with original numerator.
+            val = sorted_avg(val, num);
+
+            // Do the final shift
+            if (shift) {
+                val = builder->CreateLShr(val, ConstantInt::get(llvm_type_of(op->type), shift));
+            }
+        }
+
+        value = val;
     } else if (op->type.is_uint()) {
         value = builder->CreateUDiv(codegen(op->a), codegen(op->b));
     } else {
@@ -1483,7 +1652,7 @@ Expr promote_64(Expr e) {
 
 Value *CodeGen_LLVM::codegen_buffer_pointer(string buffer, Halide::Type type, Expr index) {
     // Promote index to 64-bit on targets that use 64-bit pointers.
-    llvm::DataLayout d(module);
+    llvm::DataLayout d(module.get());
     if (promote_indices() && d.getPointerSize() == 8) {
         index = promote_64(index);
     }
@@ -1511,7 +1680,7 @@ Value *CodeGen_LLVM::codegen_buffer_pointer(string buffer, Halide::Type type, Va
     }
 
     // Promote index to 64-bit on targets that use 64-bit pointers.
-    llvm::DataLayout d(module);
+    llvm::DataLayout d(module.get());
     if (d.getPointerSize() == 8) {
         index = builder->CreateIntCast(index, i64, true);
     }
@@ -1608,19 +1777,25 @@ void CodeGen_LLVM::visit(const Load *op) {
         value = load;
     } else {
         const Ramp *ramp = op->index.as<Ramp>();
-        const IntImm *stride = ramp ? ramp->stride.as<IntImm>() : NULL;
+        const IntImm *stride = ramp ? ramp->stride.as<IntImm>() : nullptr;
 
         if (ramp && stride && stride->value == 1) {
             int alignment = op->type.bytes(); // The size of a single element
 
             int native_bits = native_vector_bits();
+            int native_bytes = native_bits / 8;
+            // We assume halide_malloc for the platform returns
+            // buffers aligned to at least the native vector
+            // width. (i.e. 16-byte alignment on arm, and 32-byte
+            // alignment on x86), so this is the maximum alignment we
+            // can infer based on the index alone.
 
             // Boost the alignment if possible, up to the native vector width.
             ModulusRemainder mod_rem = modulus_remainder(ramp->base, alignment_info);
             if (!possibly_misaligned) {
                 while ((mod_rem.remainder & 1) == 0 &&
                        (mod_rem.modulus & 1) == 0 &&
-                       alignment < native_bits) {
+                       alignment < native_bytes) {
                     mod_rem.modulus /= 2;
                     mod_rem.remainder /= 2;
                     alignment *= 2;
@@ -1665,7 +1840,7 @@ void CodeGen_LLVM::visit(const Load *op) {
                 // and do a different shuffle. This helps expressions like
                 // (f(2*x) + f(2*x+1) share loads
                 const Add *add = ramp->base.as<Add>();
-                const IntImm *offset = add ? add->b.as<IntImm>() : NULL;
+                const IntImm *offset = add ? add->b.as<IntImm>() : nullptr;
                 if (offset && offset->value & 1) {
                     base_a -= 1;
                     shifted_a = true;
@@ -2004,10 +2179,9 @@ void CodeGen_LLVM::visit(const Call *op) {
             internal_assert(0 < op->args.size());
             value = interleave_vectors(op->type, op->args);
         } else if (op->name == Call::debug_to_file) {
-            internal_assert(op->args.size() == 9);
+            internal_assert(op->args.size() == 3);
             const StringImm *filename = op->args[0].as<StringImm>();
-            const Load *func = op->args[1].as<Load>();
-            internal_assert(func && filename) << "Malformed debug_to_file node\n";
+            internal_assert(filename) << "Malformed debug_to_file node\n";
             // Grab the function from the initial module
             llvm::Function *debug_to_file = module->getFunction("halide_debug_to_file");
             internal_assert(debug_to_file) << "Could not find halide_debug_to_file function in initial module\n";
@@ -2015,13 +2189,11 @@ void CodeGen_LLVM::visit(const Call *op) {
             // Make the filename a global string constant
             Value *user_context = get_user_context();
             Value *char_ptr = codegen(Expr(filename));
-            Value *data_ptr = symbol_table.get(func->name + ".host");
-            data_ptr = builder->CreatePointerCast(data_ptr, i8->getPointerTo());
-            vector<Value *> args = {user_context, char_ptr, data_ptr};
-            for (size_t i = 3; i < 9; i++) {
-                debug(4) << op->args[i];
-                args.push_back(codegen(op->args[i]));
-            }
+            vector<Value *> args = {user_context, char_ptr, codegen(op->args[1])};
+
+            Value *buffer = codegen(op->args[2]);
+            buffer = builder->CreatePointerCast(buffer, buffer_t_type->getPointerTo());
+            args.push_back(buffer);
 
             debug(4) << "Creating call to debug_to_file\n";
 
@@ -2048,7 +2220,7 @@ void CodeGen_LLVM::visit(const Call *op) {
                 internal_assert(dst.is_uint() && dst.bits() == 64);
 
                 // Handle -> UInt64
-                llvm::DataLayout d(module);
+                llvm::DataLayout d(module.get());
                 if (d.getPointerSize() == 4) {
                     llvm::Type *intermediate = llvm_type_of(UInt(32, dst.lanes()));
                     value = builder->CreatePtrToInt(value, intermediate);
@@ -2063,7 +2235,7 @@ void CodeGen_LLVM::visit(const Call *op) {
                 internal_assert(src.is_uint() && src.bits() == 64);
 
                 // UInt64 -> Handle
-                llvm::DataLayout d(module);
+                llvm::DataLayout d(module.get());
                 if (d.getPointerSize() == 4) {
                     llvm::Type *intermediate = llvm_type_of(UInt(32, src.lanes()));
                     value = builder->CreateTrunc(value, intermediate);
@@ -2364,7 +2536,7 @@ void CodeGen_LLVM::visit(const Call *op) {
             internal_assert(op->args.size() == 1);
             std::vector<llvm::Type*> arg_type(1);
             arg_type[0] = llvm_type_of(op->args[0].type());
-            llvm::Function *fn = Intrinsic::getDeclaration(module, Intrinsic::ctpop, arg_type);
+            llvm::Function *fn = Intrinsic::getDeclaration(module.get(), Intrinsic::ctpop, arg_type);
             CallInst *call = builder->CreateCall(fn, codegen(op->args[0]));
             value = call;
         } else if (op->name == Call::count_leading_zeros ||
@@ -2372,7 +2544,7 @@ void CodeGen_LLVM::visit(const Call *op) {
             internal_assert(op->args.size() == 1);
             std::vector<llvm::Type*> arg_type(1);
             arg_type[0] = llvm_type_of(op->args[0].type());
-            llvm::Function *fn = Intrinsic::getDeclaration(module,
+            llvm::Function *fn = Intrinsic::getDeclaration(module.get(),
                 (op->name == Call::count_leading_zeros) ? Intrinsic::ctlz :
                                                           Intrinsic::cttz,
                 arg_type);
@@ -2548,7 +2720,7 @@ void CodeGen_LLVM::visit(const Call *op) {
             if (!f) {
                 llvm::Type *arg_types[] = {i8->getPointerTo(), i8->getPointerTo()};
                 FunctionType *func_t = FunctionType::get(void_t, arg_types, false);
-                f = llvm::Function::Create(func_t, llvm::Function::ExternalLinkage, fn->value, module);
+                f = llvm::Function::Create(func_t, llvm::Function::ExternalLinkage, fn->value, module.get());
                 f->setCallingConv(CallingConv::C);
             }
             register_destructor(f, codegen(arg), Always);
@@ -2614,7 +2786,7 @@ void CodeGen_LLVM::visit(const Call *op) {
 
             FunctionType *func_t = FunctionType::get(scalar_result_type, arg_types, false);
 
-            fn = llvm::Function::Create(func_t, llvm::Function::ExternalLinkage, op->name, module);
+            fn = llvm::Function::Create(func_t, llvm::Function::ExternalLinkage, op->name, module.get());
             fn->setCallingConv(CallingConv::C);
             debug(4) << "Did not find " << op->name << ". Declared it extern \"C\".\n";
         } else {
@@ -2705,7 +2877,9 @@ void CodeGen_LLVM::visit(const Call *op) {
                         call->setDoesNotAccessMemory();
                     }
                     call->setDoesNotThrow();
-                    value = builder->CreateInsertElement(value, call, idx);
+                    if (!call->getType()->isVoidTy()) {
+                        value = builder->CreateInsertElement(value, call, idx);
+                    } // otherwise leave it as undef.
                 }
             }
         }
@@ -2896,14 +3070,14 @@ void CodeGen_LLVM::visit(const For *op) {
 
         // Find every symbol that the body of this loop refers to
         // and dump it into a closure
-        Closure closure(op->body, op->name, buffer_t_type);
+        Closure closure(op->body, op->name);
 
         // Allocate a closure
-        StructType *closure_t = closure.build_type(context);
+        StructType *closure_t = build_closure_type(closure, buffer_t_type, context);
         Value *ptr = create_alloca_at_entry(closure_t, 1);
 
         // Fill in the closure
-        closure.pack_struct(closure_t, ptr, symbol_table, builder);
+        pack_closure(closure_t, ptr, closure, symbol_table, buffer_t_type, builder);
 
         // Make a new function that does one iteration of the body of the loop
         llvm::Type *voidPointerType = (llvm::Type *)(i8->getPointerTo());
@@ -2911,7 +3085,7 @@ void CodeGen_LLVM::visit(const For *op) {
         FunctionType *func_t = FunctionType::get(i32, args_t, false);
         llvm::Function *containing_function = function;
         function = llvm::Function::Create(func_t, llvm::Function::InternalLinkage,
-                                          "par for " + function->getName() + "_" + op->name, module);
+                                          "par for " + function->getName() + "_" + op->name, module.get());
         function->setDoesNotAlias(3);
 
         // Make the initial basic block and jump the builder into the new function
@@ -2924,7 +3098,7 @@ void CodeGen_LLVM::visit(const For *op) {
 
         // Save the destructor block
         BasicBlock *parent_destructor_block = destructor_block;
-        destructor_block = NULL;
+        destructor_block = nullptr;
 
         // Make a new scope to use
         Scope<Value *> saved_symbol_table;
@@ -2949,7 +3123,7 @@ void CodeGen_LLVM::visit(const For *op) {
         Value *closure_handle = builder->CreatePointerCast(iterator_to_pointer(iter),
                                                            closure_t->getPointerTo());
         // Load everything from the closure into the new scope
-        closure.unpack_struct(symbol_table, closure_t, closure_handle, builder);
+        unpack_closure(closure, symbol_table, closure_t, closure_handle, builder);
 
         // Generate the new function body
         codegen(op->body);
@@ -3009,13 +3183,14 @@ void CodeGen_LLVM::visit(const Store *op) {
         if (ramp && is_one(ramp->stride)) {
 
             int native_bits = native_vector_bits();
+            int native_bytes = native_bits / 8;
 
             // Boost the alignment if possible, up to the native vector width.
             ModulusRemainder mod_rem = modulus_remainder(ramp->base, alignment_info);
             if (!possibly_misaligned) {
                 while ((mod_rem.remainder & 1) == 0 &&
                        (mod_rem.modulus & 1) == 0 &&
-                       alignment < native_bits) {
+                       alignment < native_bytes) {
                     mod_rem.modulus /= 2;
                     mod_rem.remainder /= 2;
                     alignment *= 2;
@@ -3117,7 +3292,7 @@ void CodeGen_LLVM::visit(const Evaluate *op) {
     codegen(op->value);
 
     // Discard result
-    value = NULL;
+    value = nullptr;
 }
 
 Value *CodeGen_LLVM::create_alloca_at_entry(llvm::Type *t, int n, bool zero_initialize, const string &name) {
@@ -3129,7 +3304,10 @@ Value *CodeGen_LLVM::create_alloca_at_entry(llvm::Type *t, int n, bool zero_init
         builder->SetInsertPoint(entry, entry->getFirstInsertionPt());
     }
     Value *size = ConstantInt::get(i32, n);
-    Value *ptr = builder->CreateAlloca(t, size, name);
+    AllocaInst *ptr = builder->CreateAlloca(t, size, name);
+    if (t->isVectorTy() || n > 1) {
+        ptr->setAlignment(native_vector_bits() / 8);
+    }
 
     if (zero_initialize) {
         internal_assert(n == 1) << "Zero initialization for stack arrays not implemented\n";
@@ -3199,7 +3377,7 @@ Value *CodeGen_LLVM::call_intrin(llvm::Type *result_type, int intrin_lanes,
     if (!fn) {
         llvm::Type *intrinsic_result_type = VectorType::get(result_type->getScalarType(), intrin_lanes);
         FunctionType *func_t = FunctionType::get(intrinsic_result_type, arg_types, false);
-        fn = llvm::Function::Create(func_t, llvm::Function::ExternalLinkage, name, module);
+        fn = llvm::Function::Create(func_t, llvm::Function::ExternalLinkage, name, module.get());
         fn->setCallingConv(CallingConv::C);
     }
 
@@ -3314,7 +3492,7 @@ std::pair<llvm::Function *, int> CodeGen_LLVM::find_vector_runtime_function(cons
         }
     }
 
-    return std::make_pair<llvm::Function *, int>(NULL, 0);
+    return std::make_pair<llvm::Function *, int>(nullptr, 0);
 }
 
 }}

@@ -81,6 +81,9 @@ int main(int argc, char **argv) {
         shifted.print_loop_nest();
     }
 
+    
+    target.set_feature(Halide::Target::CUDA);
+    target.set_feature(Halide::Target::Debug);
     auto_build(shifted, "harris", {in}, target, (schedule == -1));
 
     return 0;

@@ -156,6 +156,7 @@ int main(int argc, char **argv) {
     remap.compute_root();
 
     Target target = get_target_from_environment();
+    
     if (target.has_gpu_feature()) {
         // gpu schedule
         output.compute_root().gpu_tile(x, y, 16, 8, DeviceAPI::Default_GPU);
@@ -171,6 +172,7 @@ int main(int argc, char **argv) {
             }
             outGPyramid[j].compute_root().gpu_tile(x, y, blockw, blockh, DeviceAPI::Default_GPU);
         }
+        output.print_loop_nest();
     } else if(schedule == 0){
         // cpu schedule
         Var yi;
@@ -194,6 +196,7 @@ int main(int argc, char **argv) {
         output.print_loop_nest();
     }
 
+    target.set_feature(Halide::Target::CUDA);
     auto_build(output, "local_laplacian", {levels, alpha, beta, input},
                             target, (schedule == -1));
 

@@ -14,6 +14,7 @@
 #include "ParallelRVar.h"
 #include "Derivative.h"
 #include "CodeGen_GPU_Dev.h"
+#include "IRPrinter.h"
 #include "RealizationOrder.h"
 
 #include <cstdlib>
@@ -628,12 +629,13 @@ bool function_is_used_in_stmt(Function f, Stmt s) {
 class InjectRealization : public IRMutator {
 public:
     const Function &func;
-    bool is_output, found_store_level, found_compute_level, inject_asserts;
+    bool is_output, found_store_level, found_compute_level;
+    const Target &target;
 
-    InjectRealization(const Function &f, bool o, bool asserts) :
+    InjectRealization(const Function &f, bool o, const Target &t) :
         func(f), is_output(o),
         found_store_level(false), found_compute_level(false),
-        inject_asserts(asserts) {}
+        target(t) {}
 
 private:
 
@@ -661,10 +663,10 @@ private:
 
         // This is also the point at which we inject explicit bounds
         // for this realization.
-        if (inject_asserts) {
-            return inject_explicit_bounds(s, func);
-        } else {
+        if (target.has_feature(Target::NoAsserts)) {
             return s;
+        } else {
+            return inject_explicit_bounds(s, func);
         }
     }
 
@@ -958,18 +960,7 @@ public:
     PrintUsesOfFunc(string f, std::ostream &s) : func(f), stream(s) {}
 };
 
-std::ostream &operator<<(std::ostream &stream, LoopLevel l) {
-    stream << "LoopLevel(";
-    if (l.is_index) {
-        stream << l.index;
-    } else {
-        stream << l.func << ", " << l.var;
-    }
-    stream << ")";
-    return stream;
-}
-
-void validate_schedule(Function f, Stmt s, bool is_output) {
+void validate_schedule(Function f, Stmt s, const Target &target, bool is_output) {
 
     // If f is extern, check that none of its inputs are scheduled inline.
     if (f.has_extern_definition()) {
@@ -1001,6 +992,29 @@ void validate_schedule(Function f, Stmt s, bool is_output) {
                           << " schedule it. If this was intentional, call "
                           << f.name() << ".update(" << i << ") to suppress"
                           << " this warning.\n";
+            }
+        }
+    }
+
+    // If the func is scheduled on the gpu, check that the relevant
+    // api is enabled in the target.
+    vector<Schedule> schedules;
+    schedules.push_back(f.schedule());
+    for (const UpdateDefinition &u : f.updates()) {
+        schedules.push_back(u.schedule);
+    }
+    for (size_t i = 0; i < schedules.size(); i++) {
+        for (const Specialization &s : schedules[i].specializations()) {
+            schedules.push_back(s.schedule);
+        }
+    }
+    for (const Schedule &s : schedules) {
+        for (const Dim &d : s.dims()) {
+            if (!target.supports_device_api(d.device_api)) {
+                user_error << "Schedule for Func " << f.name()
+                           << " requires " << d.device_api
+                           << " but no compatible target feature is enabled in target "
+                           << target.to_string() << "\n";
             }
         }
     }
@@ -1175,8 +1189,8 @@ public:
 Stmt schedule_functions(const vector<Function> &outputs,
                         const vector<string> &order,
                         const map<string, Function> &env,
-                        bool &any_memoized,
-                        bool inject_asserts) {
+                        const Target &target,
+                        bool &any_memoized) {
 
     string root_var = LoopLevel::root().func + "." + LoopLevel::root().var;
     Stmt s = For::make(root_var, 0, 1, ForType::Serial, DeviceAPI::Host, Evaluate::make(0));
@@ -1191,7 +1205,7 @@ Stmt schedule_functions(const vector<Function> &outputs,
             is_output |= o.same_as(f);
         }
 
-        validate_schedule(f, s, is_output);
+        validate_schedule(f, s, target, is_output);
 
         if (f.has_pure_definition() &&
             !f.has_update_definition() &&
@@ -1200,7 +1214,7 @@ Stmt schedule_functions(const vector<Function> &outputs,
             s = inline_function(s, f);
         } else {
             debug(1) << "Injecting realization of " << order[i-1] << '\n';
-            InjectRealization injector(f, is_output, inject_asserts);
+            InjectRealization injector(f, is_output, target);
             s = injector.mutate(s);
             internal_assert(injector.found_store_level && injector.found_compute_level);
         }
@@ -1242,6 +1256,25 @@ class FindCallArgs : public IRVisitor {
         }
 };
 
+class FindAllCallArgs : public IRVisitor {
+    public:
+        map<string, std::vector<const Call*> > calls;
+        vector<vector<Expr>> load_args;
+
+        using IRVisitor::visit;
+
+        void visit(const Call *call) {
+            // See if images need to be included
+            if (call->call_type == Call::Halide ||
+                call->call_type == Call::Image) {
+                calls[call->func.name()].push_back(call);
+                load_args.push_back(call->args);
+            }
+            for (size_t i = 0; (i < call->args.size()); i++)
+                call->args[i].accept(this);
+        }
+};
+
 class FindAllCalls : public IRVisitor {
     public:
         set<string> calls;
@@ -1268,6 +1301,20 @@ long long get_func_out_size(Function &f) {
         size = 4;
     return size;
 }
+
+class UsesVarCheck : public IRVisitor {
+    public:
+        bool uses_var;
+        string var;
+
+        UsesVarCheck(string _var): var(_var) {
+            uses_var = false;
+        }
+        using IRVisitor::visit;
+
+        void visit(const Variable *v) { uses_var = uses_var
+                                        || (v->name == var); }
+};
 
 class VectorExprCheck : public IRVisitor {
     public:
@@ -2432,6 +2479,7 @@ struct Partitioner {
         int vec_len;
         long long fast_mem_size;
         int balance;
+        int threads_per_block;
     };
 
     map<string, Box> &pipeline_bounds;
@@ -2452,6 +2500,7 @@ struct Partitioner {
 
     map<pair<string, string>, Option> option_cache;
 
+    bool gpu_schedule;
     int random_seed;
     bool debug_info;
 
@@ -2460,9 +2509,10 @@ struct Partitioner {
     Partitioner(map<string, Box> &_pipeline_bounds,
                 map<string, vector<string> > &_inlines, DependenceAnalysis &_analy,
                 map<string, pair<long long, long long> > &_func_cost,
-                int _random_seed, bool _debug_info):
+                bool _gpu_schedule, int _random_seed, bool _debug_info):
                 pipeline_bounds(_pipeline_bounds), inlines(_inlines),
-                analy(_analy), func_cost(_func_cost), random_seed(_random_seed),
+                analy(_analy), func_cost(_func_cost), gpu_schedule(_gpu_schedule),
+                random_seed(_random_seed),
                 debug_info(_debug_info) {
 
         // Place each function in its own group
@@ -2574,15 +2624,17 @@ struct Partitioner {
                 get_dim_estimates(f.first, pipeline_bounds, analy.env);
         }
 
-        arch_params.parallelism = 8;
-        arch_params.vec_len = 8;
+        arch_params.parallelism = 12;
+        arch_params.vec_len = 32;
         if (!random_seed) {
             // Initialize machine params
             arch_params.balance = 10;
-            arch_params.fast_mem_size = 32 * 1024 * 8;
+            //arch_params.fast_mem_size = 8 * 1024 * 32;
+            arch_params.fast_mem_size = 8 * 1024;
             // L1 = 32K
             // L2 = 256K
             // L3 = 8192K
+            arch_params.threads_per_block = 1024;
 
             char *var;
             var = getenv("HL_AUTO_PARALLELISM");
@@ -2610,7 +2662,7 @@ struct Partitioner {
             arch_params.balance = balance[balance_idx];
             arch_params.fast_mem_size = fast_mem_kb[fast_mem_kb_idx]*1024*8;
         }
-        
+
         fprintf(stdout,
                 "auto_sched_par: %d\n"
                 "auto_sched_vec: %d\n"
@@ -2986,13 +3038,14 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
 
     // Count the number of tiles
     long long estimate_tiles = 1;
+    int num_ele_per_tile = 1;
     float partial_tiles = 1;
     for (unsigned int i = 0; i < args.size(); i++) {
         if (opt.tile_sizes[i] != -1) {
             estimate_tiles *= std::ceil((float)dim_estimates_cons[i]/opt.tile_sizes[i]);
             partial_tiles *= (float)dim_estimates_cons[i]/opt.tile_sizes[i];
+            num_ele_per_tile *= opt.tile_sizes[i];
         }
-
     }
 
     conc_reg = analy.concrete_dep_regions(opt.cons_group, eval,
@@ -3141,6 +3194,14 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
 
     if ((arch_params.parallelism > estimate_tiles) && opt.prod_group != "") {
         // Option did not satisfy the parallelism constraint
+        opt.benefit = -1;
+    }
+
+    if (gpu_schedule && l != Partitioner::INLINE &&
+        ((arch_params.threads_per_block < num_ele_per_tile)
+            ||((num_ele_per_tile) < arch_params.vec_len))) {
+        // Constrain the number of elements in a tile to be less than the
+        // number of threads that are allowed in a single block
         opt.benefit = -1;
     }
 
@@ -3346,7 +3407,29 @@ Partitioner::Option Partitioner::choose_candidate(
     // intensity of the child group in the pair.
 
     vector<Option> options;
+
+    // Restricting tile sizes when trying to emulate polymage mode
+    const char *tile_size_1_var = getenv("HL_POLYMAGE_TILE_SIZE1");
+
+    int tile_size_1 = 0;
+    if (tile_size_1_var) {
+        tile_size_1 = atoi(tile_size_1_var);
+    }
+
+    const char *tile_size_2_var = getenv("HL_POLYMAGE_TILE_SIZE2");
+
+    int tile_size_2 = 0;
+    if (tile_size_2_var) {
+        tile_size_2 = atoi(tile_size_2_var);
+    }
+
     vector<int> size_variants = {256, 128, 64, 32, 16, 8, 4};
+
+    if (tile_size_2_var && tile_size_1_var)  {
+        size_variants.clear();
+        size_variants.push_back(tile_size_1);
+        size_variants.push_back(tile_size_2);
+    }
 
     if(random_seed) {
         vector<int> rand_variants;
@@ -3814,10 +3897,28 @@ void Partitioner::tile_for_input_locality() {
             std::cerr << std::endl;
         }
 
-        // For the dimensions with reuse along multiple dimensions tile
-        // the dimensions in such a way that the reuse is maximized and
-        // the porition of inputs fit in fast memory
+        // Restricting tile sizes when trying to emulate polymage mode
+        const char *tile_size_1_var = getenv("HL_POLYMAGE_TILE_SIZE1");
+
+        int tile_size_1 = 0;
+        if (tile_size_1_var) {
+            tile_size_1 = atoi(tile_size_1_var);
+        }
+
+        const char *tile_size_2_var = getenv("HL_POLYMAGE_TILE_SIZE2");
+
+        int tile_size_2 = 0;
+        if (tile_size_2_var) {
+            tile_size_2 = atoi(tile_size_2_var);
+        }
+
         vector<int> size_variants = {256, 128, 64, 32, 16, 8, 4};
+
+        if (tile_size_2_var && tile_size_1_var)  {
+            size_variants.clear();
+            size_variants.push_back(tile_size_1);
+            size_variants.push_back(tile_size_2);
+        }
 
         if(random_seed) {
             // Truncate tile size variants randomly
@@ -3831,6 +3932,9 @@ void Partitioner::tile_for_input_locality() {
             size_variants = rand_variants;
         }
 
+        // For the dimensions with reuse along multiple dimensions tile
+        // the dimensions in such a way that the reuse is maximized and
+        // the porition of inputs fit in fast memory
         // If the pair has not been evaluated before create all the options
         // and evaluate them
 
@@ -4089,8 +4193,39 @@ void reorder_dims(Schedule &sched, vector<string> &var_order) {
     }
 }
 
+string get_spatially_coherent_innermost_dim(Function &f, const UpdateDefinition &u) {
+    // Collect all the load args
+    FindAllCallArgs find;
+    for (auto &e: u.values)
+        e.accept(&find);
+    for (auto &arg: u.args)
+        arg.accept(&find);
+
+    string inner_store_var = f.schedule().storage_dims()[0];
+    int inner_dim = 0;
+    assert(f.args()[0] == inner_store_var);
+    // For all the loads find the stride of the loop corresponding
+    // to the innermost storage dim across inputs and outputs
+    for(auto& larg: find.load_args) {
+        for (unsigned int dim = 0; dim < larg.size(); dim++) {
+            UsesVarCheck check(f.args()[inner_dim]);
+            Expr acc = larg[dim];
+            acc.accept(&check);
+            //std::cout << larg[dim] << std::endl;
+            if (dim > 0 && check.uses_var) {
+                //std::cout << dim << " "  << f.args()[inner_dim]
+                //          << " " << acc << std::endl;
+                // Stick to the ordering specified in the program when there
+                // is disruption in spaital locality
+                return u.schedule.dims()[0].var;
+            }
+        }
+    }
+    return inner_store_var;
+}
+
 void reorder_by_reuse(Schedule &sched, map<string, float> &reuse,
-                      string innermost_storage_dim,
+                      string innermost_dim,
                       map<string, int> &dim_estimates, int vec_len) {
     vector<string> var_order;
     vector<Dim> &dims = sched.dims();
@@ -4103,15 +4238,17 @@ void reorder_by_reuse(Schedule &sched, map<string, float> &reuse,
                 // Count up the number of dimensions with reuse
                 // significantly less than that of j
                 if (k!=j) {
-                    if (reuse[dims[j].var] > 2 * reuse[dims[k].var] ||
-                            (j < k))
+                    bool better_reuse =
+                        (reuse[dims[j].var] > 2 * reuse[dims[k].var]);
+                    if (better_reuse || (j < k) )
                         rank++;
                 }
             }
             // If the update definition is pure in the dimension corresponding
             // to the innermost storage dimension, vectorize that to get a
             // dense vector store instead of a scatter.
-            if (rank == i && dims[j].var != innermost_storage_dim) {
+
+            if (rank == i && dims[j].var != innermost_dim) {
                 //std::cerr << dims[j].var << " " << reuse[dims[j].var] << std::endl;
                 var_order.push_back(dims[j].var);
             }
@@ -4129,7 +4266,7 @@ void reorder_by_reuse(Schedule &sched, map<string, float> &reuse,
 
     }
 
-    var_order.insert(var_order.begin() + vector_dim, innermost_storage_dim);
+    var_order.insert(var_order.begin() + vector_dim, innermost_dim);
 
     //std::cerr << "Reuse order :";
     //for (auto &v: var_order)
@@ -4208,6 +4345,84 @@ void split_dim(Schedule &sched, int dim, int split_size,
     // Add the split to the splits list
     Split split = {old_name, outer_name, inner_name, split_size,
                    false, partial, Split::SplitVar};
+    sched.splits().push_back(split);
+
+    // Updating the estimates to reflect the splitting
+    dim_estimates[inner_name] = split_size;
+    if (dim_estimates[old_name] != -1) {
+        dim_estimates[outer_name] =
+            std::ceil((float)dim_estimates[old_name]/split_size);
+    } else {
+        dim_estimates[inner_name] = -1;
+    }
+    dim_estimates.erase(old_name);
+}
+
+void rename_dim(Schedule &sched, int dim, string suffix) {
+
+    vector<Dim> &dims = sched.dims();
+
+    string old_name = dims[dim].var;
+    string new_name = old_name + "." + suffix;
+
+    dims[dim].var = new_name;
+
+    /*
+    bool found = false;
+    for (size_t i = sched.splits().size(); i > 0; i--) {
+        if (sched.splits()[i-1].is_fuse()) {
+            if (sched.splits()[i-1].inner == old_name ||
+                sched.splits()[i-1].outer == old_name) {
+                assert(false);
+            }
+            if (sched.splits()[i-1].old_var == old_name) {
+                sched.splits()[i-1].old_var = new_name;
+                found = true;
+                break;
+            }
+        } else {
+            if (sched.splits()[i-1].inner == old_name) {
+                sched.splits()[i-1].inner = new_name;
+                found = true;
+                break;
+            }
+            if (sched.splits()[i-1].outer == old_name) {
+                sched.splits()[i-1].outer = new_name;
+                found = true;
+                break;
+            }
+        }
+    }*/
+
+    //if (!found) {
+    Split split = {old_name, new_name, "", 1, false, false, Split::RenameVar};
+    sched.splits().push_back(split);
+    //}
+}
+
+void split_dim_gpu(Schedule &sched, int dim, int split_size,
+                   map<string, int> &dim_estimates,
+                   string block_name, string thread_name) {
+
+    vector<Dim> &dims = sched.dims();
+    string old_name = dims[dim].var;
+    string outer_name = old_name + "." + block_name;
+    string inner_name = old_name + "." + thread_name;
+
+    dims.insert(dims.begin() + dim, dims[dim]);
+    dims[dim].var = inner_name;
+    dims[dim+1].var = outer_name;
+    dims[dim+1].pure = dims[dim].pure;
+
+    dims[dim+1].for_type = ForType::Parallel;
+    dims[dim+1].device_api = DeviceAPI::Default_GPU;
+
+    dims[dim].for_type = ForType::Parallel;
+    dims[dim].device_api = DeviceAPI::Default_GPU;
+
+    // Add the split to the splits list
+    Split split = {old_name, outer_name, inner_name, split_size,
+                   false, false, Split::SplitVar};
     sched.splits().push_back(split);
 
     // Updating the estimates to reflect the splitting
@@ -4317,6 +4532,8 @@ void vectorize_update(Function &func, int stage,
     const UpdateDefinition &u = func.updates()[stage];
     vector<Dim> &dims = s.dims();
 
+    int iterations_unrolled = 1;
+    int unroll_limit = 16;
     for (unsigned int dim = 0; dim < dims.size(); dim++) {
         bool dim_par = can_parallelize_rvar(dims[dim].var, func.name(), u);
         dim_par = dim_par || (par_vars.find(dims[dim].var) != par_vars.end());
@@ -4328,8 +4545,26 @@ void vectorize_update(Function &func, int stage,
             break;
         } else {
             int dim_size = get_dim_size(s, dim, dim_estimates);
-            if (dim_size < vec_len)
+            iterations_unrolled *= dim_size;
+            if (dim_size < vec_len && iterations_unrolled <= unroll_limit) {
                 unroll_dim(s, dim);
+            }
+        }
+    }
+}
+
+void pick_gpu_thread_dims(Function &f, map<string, int> &dim_estimates,
+                          int num_block_dim, vector<int> &block_sizes,
+                          vector<string> &thread_names) {
+
+    vector<Dim> &dims = f.schedule().dims();
+    int outer_dim = dims.size() - 2;
+    int marked_block_dims = 0;
+    for (int i = 0; marked_block_dims < num_block_dim && i <= outer_dim; i++) {
+        if(dims[i].pure) {
+            rename_dim(f.schedule(), i, thread_names[marked_block_dims]);
+            dims[i].for_type = ForType::Parallel;
+            marked_block_dims++;
         }
     }
 }
@@ -4391,10 +4626,438 @@ bool check_bounds_on_outputs(const vector<Function> &outputs) {
     return bounds_avail;
 }
 
+void synthesize_cpu_schedule(string g_name, Partitioner &part,
+        map<string, Function> &env,
+        map<string, Box> &pipeline_bounds,
+        map<string, vector<string> > &inlines,
+        bool debug_info, bool auto_par, bool auto_vec,
+        int vec_len) {
+
+    // CPU schedule generation
+    // Create a tiled traversal for the output of the group
+    Function &g_out = env[g_name];
+    assert(inlines.find(g_out.name()) == inlines.end());
+
+    // std::cerr << "Start scheduling "  <<  g_out.name() << std::endl;
+    // The dimension names that will be tiled
+    vector<string> pure_vars;
+    vector<Dim> &dims = g_out.schedule().dims();
+    Partitioner::GroupSched sched = part.group_sched[g_name];
+
+    assert(!(sched.locality && sched.fusion));
+
+    // Get estimates of pipeline bounds
+    map<string, int> org_out_estimates =
+        get_dim_estimates(g_out.name(), pipeline_bounds, env);
+    map<string, int> out_estimates = org_out_estimates;
+
+    map<string, int> tile_sizes_pure;
+    if (sched.locality || sched.fusion) {
+
+        for(int i = 0; i < (int)dims.size() - 1; i++) {
+            if (sched.tile_sizes[i] != -1) {
+                pure_vars.push_back(dims[i].var);
+                tile_sizes_pure[dims[i].var] = sched.tile_sizes[i];
+            }
+        }
+
+        if (debug_info) {
+            std::cerr << g_out.name() << " tile sizes and reuse" << std::endl;
+            std::cerr << "[";
+            for(int i = 0; i < (int)dims.size() - 1; i++) {
+                if (debug_info) {
+                    std::cerr << "("  << dims[i].var  << "," << sched.tile_sizes[i] << ","
+                        << sched.reuse[i] << ")" << ",";
+                }
+            }
+            std::cerr << "]" << std::endl;
+        }
+
+        // Reordering by reuse
+        /*
+        for(int i = (int)dims.size() - 1; i >= 0; i--) {
+            // Find the variable with ith most reuse and move to innermost
+            for(int j = 0; j < (int)dims.size() - 1; j++) {
+                int rank = 0;
+                for (int k = 0; k < (int)dims.size() - 1; k++) {
+                    // Count up the number of dimensions with reuse
+                    // greater than that of j
+                    if (k!=j) {
+                        if (sched.reuse[k] > sched.reuse[j] ||
+                                (sched.reuse[k] == sched.reuse[j] && k < j))
+                            rank++;
+                    }
+                }
+                if (rank == i)
+                    move_dim_before_innermost(g_out.schedule(), j);
+            }
+        }
+        */
+    }
+
+    //for (auto &e: out_estimates)
+    //    std::cout << e.first << " " << e.second << std::endl;
+
+    // Realizing the tiling and updating the dimension estimates
+    int num_tile_dims = 0;
+    for(auto &v: pure_vars) {
+        int index = -1;
+        for (int i = 0; i < (int)dims.size() - 1; i++) {
+            if (dims[i].var == v) {
+                index = i;
+                break;
+            }
+        }
+        assert(index!=-1);
+        if (tile_sizes_pure[v] > 1) {
+            split_dim(g_out.schedule(), index, tile_sizes_pure[v],
+                    out_estimates, "tile", false);
+            move_dim_to_outermost(g_out.schedule(), index + 1);
+        } else if (tile_sizes_pure[v] == 1) {
+            move_dim_to_outermost(g_out.schedule(), index);
+        }
+        num_tile_dims++;
+    }
+
+    int num_fused_dims = 0;
+    int parallelism = part.arch_params.parallelism;
+
+    //std::cerr << "Start vectorization pure dims "
+    //            <<  g_out.name() << std::endl;
+    {
+        // Vectorize first
+        Schedule &s = g_out.schedule();
+        if (check_dim_size(s, 0, vec_len, out_estimates))
+            simple_vectorize(g_out, out_estimates, 0, vec_len);
+
+        /*
+        if (auto_vec) {
+            int vec_dim = 0;
+            int can_vec = true;
+            while (can_vec && (vec_dim < (int)dims.size() - 1)) {
+                can_vec = false;
+                if (check_dim_size(s, vec_dim, vec_len, out_estimates)){
+                    simple_vectorize(g_out, out_estimates, vec_dim, vec_len);
+                    break;
+                }
+                else {
+                    int dim_size = get_dim_size(s, vec_dim, out_estimates);
+                    if(dim_size < vec_len) {
+                        // unroll
+                        unroll_dim(s, vec_dim);
+                        can_vec = true;
+                        vec_dim++;
+                    }
+                }
+
+            }
+        }
+        */
+        int outer_dim = -1;
+        bool can_par = pick_dim_to_parallelize(g_out, out_estimates,
+                parallelism, num_tile_dims,
+                outer_dim, num_fused_dims);
+
+        if (auto_par && outer_dim !=-1 && can_par)
+            parallelize_dim(g_out.schedule(), outer_dim);
+    }
+
+    //std::cerr << "Finished pure dims "  <<  g_out.name() << std::endl;
+    if (!g_out.is_pure()) {
+
+        int num_updates = g_out.updates().size();
+        for (int i = 0; i < num_updates; i ++) {
+            // Start with fresh bounds estimates for each update
+            map<string, int> out_up_estimates = org_out_estimates;
+
+            Schedule &s = g_out.update_schedule(i);
+            vector<Dim> &dims = s.dims();
+
+            const UpdateDefinition &u = g_out.updates()[i];
+
+            // Tiling now includes reduction dimensions
+            map<string, int> tile_sizes_update;
+            vector<string> update_vars;
+
+            unsigned int num_pure_dims = g_out.args().size();
+            unsigned int num_red_dims = (dims.size() - 1) - num_pure_dims;
+
+            map<string, float> var_reuse;
+            if (sched.locality) {
+                assert(part.analy.reductions.find(g_out.name()) !=
+                        part.analy.reductions.end());
+                assert(sched.tile_sizes.size() ==
+                        num_pure_dims + num_red_dims);
+                // The tile sizes for the reduction dimensions are at
+                // the end
+                for(unsigned int i = 0; i < num_red_dims; i++) {
+                    var_reuse[dims[i].var] = sched.reuse[num_pure_dims + i];
+                    if (sched.tile_sizes[num_pure_dims + i] != -1) {
+                        update_vars.push_back(dims[i].var);
+                        tile_sizes_update[dims[i].var] =
+                            sched.tile_sizes[num_pure_dims + i];
+                        //std::cerr << dims[i].var << " "
+                        //          << sched.tile_sizes[num_pure_dims + i]
+                        //          << std::endl;
+                    }
+                }
+            }
+
+            if (sched.fusion || sched.locality) {
+                if (sched.fusion)
+                    assert(sched.tile_sizes.size() == num_pure_dims);
+                for(unsigned int i = 0; i < num_pure_dims; i++) {
+                    var_reuse[dims[num_red_dims + i].var] =
+                        sched.reuse[i];
+                    if (sched.tile_sizes[i] != -1) {
+                        update_vars.push_back(dims[num_red_dims + i].var);
+                        tile_sizes_update[dims[num_red_dims + i].var]
+                            = sched.tile_sizes[i];
+                        //std::cerr << dims[num_red_dims + i].var << " "
+                        //          << sched.tile_sizes[i] << std::endl;
+                    }
+                }
+            }
+
+            // Determine which dimension if any can be moved inner most
+            // while not disrupting spatial locality both on inputs and
+            // outputs
+            string inner_dim =
+                get_spatially_coherent_innermost_dim(g_out, u);
+
+            if (sched.locality) {
+                reorder_by_reuse(s, var_reuse, inner_dim,
+                        out_up_estimates, vec_len);
+            }
+
+            set<string> par_vars;
+            for(auto &v: update_vars) {
+                int index = -1;
+                for (int i = 0; i < (int)dims.size() - 1; i++) {
+                    if (dims[i].var == v) {
+                        index = i;
+                        break;
+                    }
+                }
+                assert(index!=-1);
+                if (tile_sizes_update[v] > 1) {
+                    split_dim(s, index, tile_sizes_update[v],
+                            out_up_estimates, "tile", false);
+                    move_dim_to_outermost(s, index + 1);
+                    if (can_parallelize_rvar(v, g_out.name(), u)) {
+                        int o_dim = s.dims().size() - 2;
+                        par_vars.insert(s.dims()[o_dim].var);
+                        par_vars.insert(s.dims()[index].var);
+                    }
+                } else if (tile_sizes_update[v] == 1) {
+                    move_dim_to_outermost(s, index);
+                }
+            }
+
+            // Vectorization of update definitions
+            if(auto_vec) {
+                vectorize_update(g_out, i, out_up_estimates, vec_len,
+                        par_vars);
+            }
+
+            if(auto_par) {
+                int curr_par = 1;
+                bool no_par = true;
+                // Exploiting nested parallelism
+                for (int i = (int)dims.size() - 2; i > 0 ; i--) {
+                    bool dim_par = can_parallelize_rvar(dims[i].var,
+                            g_out.name(), u);
+                    dim_par = dim_par ||
+                        (par_vars.find(dims[i].var) != par_vars.end());
+                    if (dim_par) {
+                        curr_par = curr_par * out_up_estimates[dims[i].var];
+                        parallelize_dim(s, i);
+                        no_par = false;
+                        if (curr_par > parallelism)
+                            break;
+                    } else {
+                        break;
+                    }
+                }
+                if (no_par) {
+                    for (int i = (int)dims.size() - 2; i > 0 ; i--) {
+                        bool dim_par = can_parallelize_rvar(dims[i].var,
+                                g_out.name(), u);
+                        dim_par = dim_par ||
+                            (par_vars.find(dims[i].var) != par_vars.end());
+                        if (dim_par &&
+                                out_up_estimates[dims[i].var] > parallelism) {
+                            move_dim_to_outermost(s, i);
+                            int outer_dim = dims.size() - 2;
+                            parallelize_dim(s, outer_dim);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // std::cerr << "Finished updates "  <<  g_out.name() << std::endl;
+    for (auto &m: part.groups[g_name]) {
+        int outer_dim = dims.size() - 2;
+        map<string, int> org_mem_estimates =
+            get_dim_estimates(m.name(), pipeline_bounds, env);
+        map<string, int> mem_estimates = org_mem_estimates;
+        if (m.name() != g_out.name() &&
+                inlines.find(m.name()) == inlines.end() && num_tile_dims > 0) {
+            //int compute_level = inner_tile_dim;
+            int compute_level = outer_dim - num_tile_dims +
+                num_fused_dims + 1;
+            m.schedule().store_level().func = g_out.name();
+            //m.schedule().store_level().var = dims[compute_level+1].var;
+            m.schedule().store_level().var = dims[compute_level].var;
+            m.schedule().compute_level().func = g_out.name();
+            m.schedule().compute_level().var = dims[compute_level].var;
+            if (auto_vec)
+                if (check_dim_size(m.schedule(), 0, vec_len, mem_estimates))
+                    simple_vectorize(m, mem_estimates, 0, vec_len);
+            if (!m.is_pure()) {
+                int num_updates = m.updates().size();
+                for (int i = 0; i < num_updates; i ++) {
+                    // Start with fresh bounds estimates for each update
+                    map<string, int> mem_up_estimates =
+                        org_mem_estimates;
+                    set<string> par_vars;
+                    vectorize_update(m, i, mem_up_estimates, vec_len,
+                            par_vars);
+                }
+            }
+        }
+    }
+    // std::cerr << "Finished group members "  <<  g_out.name() << std::endl;
+}
+
+void synthesize_gpu_schedule(string g_name, Partitioner &part,
+        map<string, Function> &env,
+        map<string, Box> &pipeline_bounds,
+        map<string, vector<string> > &inlines,
+        bool debug_info) {
+
+    Function &g_out = env[g_name];
+
+    // The dimension names that will be tiled
+    vector<string> pure_tile_vars;
+    vector<Dim> &dims = g_out.schedule().dims();
+
+    Partitioner::GroupSched sched = part.group_sched[g_name];
+
+    assert(!(sched.locality && sched.fusion));
+
+    // Get estimates of pipeline bounds
+    map<string, int> org_out_estimates =
+        get_dim_estimates(g_out.name(), pipeline_bounds, env);
+    map<string, int> out_estimates = org_out_estimates;
+
+    map<string, int> tile_sizes_pure;
+    if (sched.locality || sched.fusion) {
+
+        for(int i = 0; i < (int)dims.size() - 1; i++) {
+            if (sched.tile_sizes[i] != -1) {
+                pure_tile_vars.push_back(dims[i].var);
+                tile_sizes_pure[dims[i].var] = sched.tile_sizes[i];
+            }
+        }
+
+        if (debug_info) {
+            std::cerr << g_out.name() << " tile sizes and reuse" << std::endl;
+            std::cerr << "[";
+            for(int i = 0; i < (int)dims.size() - 1; i++) {
+                std::cerr << "("  << dims[i].var  << "," << sched.tile_sizes[i] << ","
+                    << sched.reuse[i] << ")" << ",";
+            }
+            std::cerr << "]" << std::endl;
+        }
+    }
+
+    //for (auto &e: out_estimates)
+    //    std::cout << e.first << " " << e.second << std::endl;
+
+    // Mapping tiling to GPU block and thread mapping
+    std::vector<string> block_names = {"__block_id_x",
+                                       "__block_id_y",
+                                       "__block_id_z"};
+
+    std::vector<string> thread_names = {"__thread_id_x",
+                                        "__thread_id_y",
+                                        "__thread_id_z"};
+
+    std::vector<int> block_sizes;
+    int num_tile_dims = 0;
+    int num_block_dim = 0;
+    for(auto &v: pure_tile_vars) {
+        int index = -1;
+        for (int i = 0; i < (int)dims.size() - 1; i++) {
+            if (dims[i].var == v) {
+                index = i;
+                break;
+            }
+        }
+        assert(index!=-1);
+        if (tile_sizes_pure[v] >= 1) {
+            if (num_block_dim < 3) {
+                string block_name = block_names[num_block_dim];
+                string thread_name = thread_names[num_block_dim];
+                num_block_dim++;
+                block_sizes.push_back(tile_sizes_pure[v]);
+
+                split_dim_gpu(g_out.schedule(), index, tile_sizes_pure[v],
+                        out_estimates, block_name, thread_name);
+                //for (auto &est: out_estimates)
+                //    std::cerr << est.second << "," << est.first << std::endl;
+                //std::cerr << std::endl;
+                move_dim_to_outermost(g_out.schedule(), index + 1);
+            } else {
+                if (tile_sizes_pure[v] > 1) {
+                    split_dim(g_out.schedule(), index, tile_sizes_pure[v],
+                            out_estimates, "tile", false);
+                    move_dim_to_outermost(g_out.schedule(), index + 1);
+                } else if (tile_sizes_pure[v] == 1) {
+                    move_dim_to_outermost(g_out.schedule(), index);
+                }
+            }
+        }
+        num_tile_dims++;
+    }
+
+    // TODO: Handle groups with no tiling
+
+    int num_fused_dims = 0;
+    for (auto &m: part.groups[g_name]) {
+        int outer_dim = dims.size() - 2;
+        map<string, int> org_mem_estimates =
+            get_dim_estimates(m.name(), pipeline_bounds, env);
+        map<string, int> mem_estimates = org_mem_estimates;
+        if (m.name() != g_out.name() &&
+                inlines.find(m.name()) == inlines.end() && num_tile_dims > 0) {
+            //int compute_level = inner_tile_dim;
+
+            int compute_level = outer_dim - num_tile_dims +
+                                num_fused_dims + 1;
+            m.schedule().store_level().func = g_out.name();
+            //m.schedule().store_level().var = dims[compute_level+1].var;
+            m.schedule().store_level().var = dims[compute_level].var;
+            m.schedule().compute_level().func = g_out.name();
+            m.schedule().compute_level().var = dims[compute_level].var;
+
+            // Parallelize within a tile
+            pick_gpu_thread_dims(m, mem_estimates, num_block_dim,
+                                 block_sizes, thread_names);
+        }
+    }
+    // std::cerr << "Finished group members "  <<  g_out.name() << std::endl;
+}
+
 void schedule_advisor(const vector<Function> &outputs,
                       const vector<string> &order,
                       map<string, Function> &env,
                       const FuncValueBounds &func_val_bounds,
+                      const Target &target,
                       bool root_default, bool auto_inline,
                       bool auto_par, bool auto_vec) {
 
@@ -4632,7 +5295,16 @@ void schedule_advisor(const vector<Function> &outputs,
     }
 
     // Initialize the partitioner
-    Partitioner part(pipeline_bounds, inlines, analy, func_cost,
+    bool gpu_schedule = false;
+    if ((target.has_feature(Target::CUDA) ||
+                target.has_feature(Target::CUDACapability30)||
+                target.has_feature(Target::CUDACapability32)||
+                target.has_feature(Target::CUDACapability35)||
+                target.has_feature(Target::CUDACapability50))) {
+        gpu_schedule = true;
+    }
+
+    Partitioner part(pipeline_bounds, inlines, analy, func_cost, gpu_schedule,
                      random_seed, debug_info);
 
     if (debug_info) {
@@ -4681,286 +5353,13 @@ void schedule_advisor(const vector<Function> &outputs,
 
     // Schedule generation based on grouping
     for (auto& g: part.groups) {
-        // Create a tiled traversal for the output of the group
-        Function &g_out = env[g.first];
-        // std::cerr << "Start scheduling "  <<  g_out.name() << std::endl;
 
-        assert(inlines.find(g_out.name()) == inlines.end());
-        // The dimension names that will be tiled
-        vector<string> pure_vars;
-        vector<Dim> &dims = g_out.schedule().dims();
-
-        Partitioner::GroupSched sched = part.group_sched[g.first];
-
-        assert(!(sched.locality && sched.fusion));
-
-        // Get estimates of pipeline bounds
-        map<string, int> org_out_estimates =
-                      get_dim_estimates(g_out.name(), pipeline_bounds, env);
-        map<string, int> out_estimates = org_out_estimates;
-
-        map<string, int> tile_sizes_pure;
-        if (sched.locality || sched.fusion) {
-
-            for(int i = 0; i < (int)dims.size() - 1; i++) {
-                if (sched.tile_sizes[i] != -1) {
-                    pure_vars.push_back(dims[i].var);
-                    tile_sizes_pure[dims[i].var] = sched.tile_sizes[i];
-                }
-            }
-
-            if (debug_info) {
-                std::cerr << g_out.name() << " tile sizes and reuse" << std::endl;
-                std::cerr << "[";
-                for(int i = 0; i < (int)dims.size() - 1; i++) {
-                    if (debug_info) {
-                        std::cerr << "("  << dims[i].var  << "," << sched.tile_sizes[i] << ","
-                                  << sched.reuse[i] << ")" << ",";
-                    }
-                }
-                std::cerr << "]" << std::endl;
-            }
-
-            // Reordering by reuse
-            /*
-            for(int i = (int)dims.size() - 1; i >= 0; i--) {
-                // Find the variable with ith most reuse and move to innermost
-                for(int j = 0; j < (int)dims.size() - 1; j++) {
-                    int rank = 0;
-                    for (int k = 0; k < (int)dims.size() - 1; k++) {
-                        // Count up the number of dimensions with reuse
-                        // greater than that of j
-                        if (k!=j) {
-                            if (sched.reuse[k] > sched.reuse[j] ||
-                                    (sched.reuse[k] == sched.reuse[j] && k < j))
-                                rank++;
-                        }
-                    }
-                    if (rank == i)
-                        move_dim_before_innermost(g_out.schedule(), j);
-                }
-            }*/
+        if (gpu_schedule) {
+            synthesize_gpu_schedule(g.first, part, env, pipeline_bounds, inlines, debug_info);
+        } else {
+            synthesize_cpu_schedule(g.first, part, env, pipeline_bounds,
+                                    inlines, debug_info, auto_par, auto_vec, vec_len);
         }
-
-        //for (auto &e: out_estimates)
-        //    std::cout << e.first << " " << e.second << std::endl;
-
-        // Realizing the tiling and updating the dimension estimates
-        int num_tile_dims = 0;
-        for(auto &v: pure_vars) {
-            int index = -1;
-            for (int i = 0; i < (int)dims.size() - 1; i++) {
-                if (dims[i].var == v) {
-                    index = i;
-                    break;
-                }
-            }
-            assert(index!=-1);
-            if (tile_sizes_pure[v] > 1) {
-                split_dim(g_out.schedule(), index, tile_sizes_pure[v],
-                          out_estimates, "tile", false);
-                move_dim_to_outermost(g_out.schedule(), index + 1);
-            } else if (tile_sizes_pure[v] == 1) {
-                move_dim_to_outermost(g_out.schedule(), index);
-            }
-            num_tile_dims++;
-        }
-
-        int num_fused_dims = 0;
-        int parallelism = part.arch_params.parallelism;
-
-        //std::cerr << "Start vectorization pure dims "
-        //            <<  g_out.name() << std::endl;
-        {
-            // Vectorize first
-            Schedule &s = g_out.schedule();
-            if (check_dim_size(s, 0, vec_len, out_estimates))
-                simple_vectorize(g_out, out_estimates, 0, vec_len);
-            /*
-            if (auto_vec) {
-                int vec_dim = 0;
-                int can_vec = true;
-                while (can_vec && (vec_dim < (int)dims.size() - 1)) {
-                    can_vec = false;
-                    if (check_dim_size(s, vec_dim, vec_len, out_estimates)){
-                        simple_vectorize(g_out, out_estimates, vec_dim, vec_len);
-                        break;
-                    }
-                    else {
-                        int dim_size = get_dim_size(s, vec_dim, out_estimates);
-                        if(dim_size < vec_len) {
-                            // unroll
-                            unroll_dim(s, vec_dim);
-                            can_vec = true;
-                            vec_dim++;
-                        }
-                    }
-
-                }
-            } */
-            int outer_dim = -1;
-            bool can_par = pick_dim_to_parallelize(g_out, out_estimates,
-                                                   parallelism, num_tile_dims,
-                                                   outer_dim, num_fused_dims);
-
-            if (auto_par && outer_dim !=-1 && can_par)
-                parallelize_dim(g_out.schedule(), outer_dim);
-        }
-
-        //std::cerr << "Finished pure dims "  <<  g_out.name() << std::endl;
-        if (!g_out.is_pure()) {
-
-            int num_updates = g_out.updates().size();
-            for (int i = 0; i < num_updates; i ++) {
-                // Start with fresh bounds estimates for each update
-                map<string, int> out_up_estimates = org_out_estimates;
-
-                Schedule &s = g_out.update_schedule(i);
-                vector<Dim> &dims = s.dims();
-
-                const UpdateDefinition &u = g_out.updates()[i];
-
-                // Tiling now includes reduction dimensions
-                map<string, int> tile_sizes_update;
-                vector<string> update_vars;
-
-                unsigned int num_pure_dims = g_out.args().size();
-                unsigned int num_red_dims = (dims.size() - 1) - num_pure_dims;
-
-                map<string, float> var_reuse;
-                if (sched.locality) {
-                    assert(part.analy.reductions.find(g_out.name()) !=
-                            part.analy.reductions.end());
-                    assert(sched.tile_sizes.size() ==
-                                    num_pure_dims + num_red_dims);
-                    // The tile sizes for the reduction dimensions are at
-                    // the end
-                    for(unsigned int i = 0; i < num_red_dims; i++) {
-                        var_reuse[dims[i].var] = sched.reuse[num_pure_dims + i];
-                        if (sched.tile_sizes[num_pure_dims + i] != -1) {
-                            update_vars.push_back(dims[i].var);
-                            tile_sizes_update[dims[i].var] =
-                                sched.tile_sizes[num_pure_dims + i];
-                            //std::cerr << dims[i].var << " "
-                            //          << sched.tile_sizes[num_pure_dims + i]
-                            //          << std::endl;
-                        }
-                    }
-                }
-
-                if (sched.fusion || sched.locality) {
-                    if (sched.fusion)
-                        assert(sched.tile_sizes.size() == num_pure_dims);
-                    for(unsigned int i = 0; i < num_pure_dims; i++) {
-                        var_reuse[dims[num_red_dims + i].var] =
-                                                        sched.reuse[i];
-                        if (sched.tile_sizes[i] != -1) {
-                            update_vars.push_back(dims[num_red_dims + i].var);
-                            tile_sizes_update[dims[num_red_dims + i].var]
-                                                        = sched.tile_sizes[i];
-                            //std::cerr << dims[num_red_dims + i].var << " "
-                            //          << sched.tile_sizes[i] << std::endl;
-                        }
-                    }
-                }
-
-                if (sched.locality) {
-                    reorder_by_reuse(s, var_reuse,
-                                     g_out.schedule().storage_dims()[0],
-                                     out_up_estimates, vec_len);
-                }
-
-                set<string> par_vars;
-                for(auto &v: update_vars) {
-                    int index = -1;
-                    for (int i = 0; i < (int)dims.size() - 1; i++) {
-                        if (dims[i].var == v) {
-                            index = i;
-                            break;
-                        }
-                    }
-                    assert(index!=-1);
-                    if (tile_sizes_update[v] > 1) {
-                        split_dim(s, index, tile_sizes_update[v],
-                                  out_up_estimates, "tile", false);
-                        move_dim_to_outermost(s, index + 1);
-                        if (can_parallelize_rvar(v, g_out.name(), u)) {
-                            int o_dim = s.dims().size() - 2;
-                            par_vars.insert(s.dims()[o_dim].var);
-                            par_vars.insert(s.dims()[index].var);
-                        }
-                    } else if (tile_sizes_update[v] == 1) {
-                        move_dim_to_outermost(s, index);
-                    }
-                }
-
-                // Vectorization of update definitions
-                if(auto_vec) {
-                    vectorize_update(g_out, i, out_up_estimates, vec_len,
-                                     par_vars);
-                }
-
-                if(auto_par) {
-                    int curr_par = 1;
-                    // Exploiting nested parallelism
-                    for (int i = (int)dims.size() - 2; i > 0 ; i--) {
-                        bool dim_par = can_parallelize_rvar(dims[i].var,
-                                g_out.name(), u);
-                        dim_par = dim_par ||
-                            (par_vars.find(dims[i].var) != par_vars.end());
-                        if (dim_par) {
-                            curr_par = curr_par * out_up_estimates[dims[i].var];
-                            parallelize_dim(s, i);
-                            if (curr_par > parallelism)
-                                break;
-                        } else {
-                            break;
-                        }
-                        /*
-                        if (dim_par && out_up_estimates[dims[i].var] > parallelism) {
-                            move_dim_to_outermost(s, i);
-                            int outer_dim = dims.size() - 2;
-                            parallelize_dim(s, outer_dim);
-                            break;
-                        }*/
-                    }
-                }
-            }
-        }
-
-        // std::cerr << "Finished updates "  <<  g_out.name() << std::endl;
-        for (auto &m: g.second) {
-            int outer_dim = dims.size() - 2;
-            map<string, int> org_mem_estimates =
-                      get_dim_estimates(m.name(), pipeline_bounds, env);
-            map<string, int> mem_estimates = org_mem_estimates;
-            if (m.name() != g_out.name() &&
-               inlines.find(m.name()) == inlines.end() && num_tile_dims > 0) {
-                //int compute_level = inner_tile_dim;
-                int compute_level = outer_dim - num_tile_dims +
-                                                num_fused_dims + 1;
-                m.schedule().store_level().func = g_out.name();
-                //m.schedule().store_level().var = dims[compute_level+1].var;
-                m.schedule().store_level().var = dims[compute_level].var;
-                m.schedule().compute_level().func = g_out.name();
-                m.schedule().compute_level().var = dims[compute_level].var;
-                if (auto_vec)
-                    if (check_dim_size(m.schedule(), 0, vec_len, mem_estimates))
-                        simple_vectorize(m, mem_estimates, 0, vec_len);
-                if (!m.is_pure()) {
-                    int num_updates = m.updates().size();
-                    for (int i = 0; i < num_updates; i ++) {
-                        // Start with fresh bounds estimates for each update
-                        map<string, int> mem_up_estimates =
-                                            org_mem_estimates;
-                        set<string> par_vars;
-                        vectorize_update(m, i, mem_up_estimates, vec_len,
-                                         par_vars);
-                    }
-                }
-            }
-        }
-        // std::cerr << "Finished group members "  <<  g_out.name() << std::endl;
     }
 
     //if (root_default || auto_vec || auto_par || auto_inline)

@@ -4,6 +4,8 @@ if [[ $1 == "ref" ]]; then
 else
     if [[ $1 == "naive"]]; then
         export HL_AUTO_NAIVE=1
+    elif [[ $1 == "sweep" ]]; then
+        export HL_AUTO_SWEEP=1
     fi
     sched=-1
 fi

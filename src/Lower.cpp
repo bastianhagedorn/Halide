@@ -89,22 +89,23 @@ Stmt lower(const vector<Function> &outputs, const string &pipeline_name,
         std::chrono::high_resolution_clock::time_point t1 =
                                         std::chrono::high_resolution_clock::now();
 
-        schedule_advisor(outputs, order, env, func_bounds, root_default,
-                         auto_inline, auto_par, auto_vec);
+        schedule_advisor(outputs, order, env, func_bounds, t,
+                         root_default, auto_inline, auto_par, auto_vec);
 
         std::chrono::high_resolution_clock::time_point t2 =
                                         std::chrono::high_resolution_clock::now();
 
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>( t2 - t1 ).count();
 
-        //std::cerr << print_loop_nest(outputs) << std::endl;
+        std::cerr << print_loop_nest(outputs) << std::endl;
         std::cout << "auto_schedule_time: " << duration << std::endl;
+        //assert(false);
     }
 
     bool any_memoized = false;
 
     debug(1) << "Creating initial loop nests...\n";
-    Stmt s = schedule_functions(outputs, order, env, any_memoized, !t.has_feature(Target::NoAsserts));
+    Stmt s = schedule_functions(outputs, order, env, t, any_memoized);
     debug(2) << "Lowering after creating initial loop nests:\n" << s << '\n';
 
     if (any_memoized) {
@@ -118,12 +119,6 @@ Stmt lower(const vector<Function> &outputs, const string &pipeline_name,
     debug(1) << "Injecting tracing...\n";
     s = inject_tracing(s, pipeline_name, env, outputs);
     debug(2) << "Lowering after injecting tracing:\n" << s << '\n';
-
-    if (t.has_feature(Target::Profile)) {
-        debug(1) << "Injecting profiling...\n";
-        s = inject_profiling(s, pipeline_name);
-        debug(2) << "Lowering after injecting profiling:\n" << s << '\n';
-    }
 
     debug(1) << "Adding checks for parameters\n";
     s = add_parameter_checks(s, t);
@@ -256,6 +251,12 @@ Stmt lower(const vector<Function> &outputs, const string &pipeline_name,
     s = inject_early_frees(s);
     debug(2) << "Lowering after injecting early frees:\n" << s << "\n\n";
 
+    if (t.has_feature(Target::Profile)) {
+        debug(1) << "Injecting profiling...\n";
+        s = inject_profiling(s, pipeline_name);
+        debug(2) << "Lowering after injecting profiling:\n" << s << '\n';
+    }
+
     debug(1) << "Simplifying...\n";
     s = common_subexpression_elimination(s);
 
@@ -269,6 +270,7 @@ Stmt lower(const vector<Function> &outputs, const string &pipeline_name,
         debug(2) << "Lowering after removing varying attributes:\n" << s << "\n\n";
     }
 
+    s = remove_dead_allocations(s);
     s = remove_trivial_for_loops(s);
     s = simplify(s);
     debug(1) << "Lowering after final simplification:\n" << s << "\n\n";

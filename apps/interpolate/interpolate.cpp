@@ -23,7 +23,7 @@ int main(int argc, char **argv) {
     // Input must have four color channels - rgba
     input.set_bounds(2, 0, 4);
 
-    const int levels = 10;
+    const int levels = 4;
 
     std::vector<Func> downsampled;
     std::vector<Func> downx;
@@ -202,6 +202,9 @@ int main(int argc, char **argv) {
         final.bound(x, 0, 1536).bound(y, 0, 2560).bound(c, 0, 3);
     }
     }
+
+    target.set_feature(Halide::Target::CUDA);
+    target.set_feature(Halide::Target::Debug);
 
     // JIT compile the pipeline eagerly, so we don't interfere with timing
     if (sched == -1)

@@ -11,9 +11,17 @@ namespace llvm {
 class Value;
 class Module;
 class Function;
+#if LLVM_VERSION >= 39
+class IRBuilderDefaultInserter;
+#else
 template<bool> class IRBuilderDefaultInserter;
+#endif
 class ConstantFolder;
+#if LLVM_VERSION >= 39
+template<typename, typename> class IRBuilder;
+#else
 template<bool, typename, typename> class IRBuilder;
+#endif
 class LLVMContext;
 class Type;
 class StructType;
@@ -33,6 +41,7 @@ class GlobalVariable;
 #include <map>
 #include <string>
 #include <vector>
+#include <memory>
 
 #include "IRVisitor.h"
 #include "Module.h"
@@ -58,7 +67,7 @@ public:
     virtual ~CodeGen_LLVM();
 
     /** Takes a halide Module and compiles it to an llvm Module. */
-    virtual llvm::Module *compile(const Module &module);
+    virtual std::unique_ptr<llvm::Module> compile(const Module &module);
 
     /** The target we're generating code for */
     const Target &get_target() const { return target; }
@@ -73,6 +82,18 @@ protected:
     // @{
     virtual void compile_func(const LoweredFunc &func);
     virtual void compile_buffer(const Buffer &buffer);
+    // @}
+
+    /** Helper functions for compiling Halide functions to llvm
+     * functions. begin_func performs all the work necessary to begin
+     * generating code for a function with a given argument list with
+     * the IRBuilder. A call to begin_func should be a followed by a
+     * call to end_func with the same arguments, to generate the
+     * appropriate cleanup code. */
+    // @{
+    virtual void begin_func(LoweredFunc::LinkageType linkage, const std::string &name,
+                            const std::vector<Argument> &args);
+    virtual void end_func(const std::vector<Argument> &args);
     // @}
 
     /** What should be passed as -mcpu, -mattrs, and related for
@@ -104,11 +125,16 @@ protected:
     static bool llvm_AArch64_enabled;
     static bool llvm_NVPTX_enabled;
     static bool llvm_Mips_enabled;
+    static bool llvm_PowerPC_enabled;
 
-    llvm::Module *module;
+    std::unique_ptr<llvm::Module> module;
     llvm::Function *function;
     llvm::LLVMContext *context;
+#if LLVM_VERSION >= 39
+    llvm::IRBuilder<llvm::ConstantFolder, llvm::IRBuilderDefaultInserter> *builder;
+#else
     llvm::IRBuilder<true, llvm::ConstantFolder, llvm::IRBuilderDefaultInserter<true>> *builder;
+#endif
     llvm::Value *value;
     llvm::MDNode *very_likely_branch;
     //@}
@@ -137,7 +163,7 @@ protected:
 
     /** Fetch an entry from the symbol table. If the symbol is not
      * found, it either errors out (if the second arg is true), or
-     * returns NULL. */
+     * returns nullptr. */
     llvm::Value* sym_get(const std::string &name,
                          bool must_succeed = true) const;
 
@@ -229,7 +255,7 @@ protected:
      * null), or evaluates and returns the message, which must be an
      * Int(32) expression. */
     // @{
-    void create_assertion(llvm::Value *condition, Expr message, llvm::Value *error_code = NULL);
+    void create_assertion(llvm::Value *condition, Expr message, llvm::Value *error_code = nullptr);
     // @}
 
     /** Return the the pipeline with the given error code. Will run
@@ -279,6 +305,17 @@ protected:
      * so that llvm knows it can reorder loads and stores across
      * different buffers */
     void add_tbaa_metadata(llvm::Instruction *inst, std::string buffer, Expr index);
+
+    /** Helpers for implementing fast integer division. */
+    // @{
+    // Compute high_half(a*b) >> shr. Note that this is a shift in
+    // addition to the implicit shift due to taking the upper half of
+    // the multiply result.
+    virtual llvm::Value *unsigned_mulhi_shr(llvm::Value *a, llvm::Value *b, int shr);
+    // Compute (a+b)/2, assuming a < b.
+    virtual llvm::Value *sorted_avg(llvm::Value *a, llvm::Value *b);
+    // @}
+
 
     using IRVisitor::visit;
 
@@ -404,7 +441,7 @@ protected:
      *
      * So for a 5-wide vector, it tries: 5, 8, 4, 2, 16.
      *
-     * If there's no match, returns (NULL, 0).
+     * If there's no match, returns (nullptr, 0).
      */
     std::pair<llvm::Function *, int> find_vector_runtime_function(const std::string &name, int lanes);
 
@@ -442,7 +479,8 @@ private:
 }
 
 /** Given a Halide module, generate an llvm::Module. */
-EXPORT llvm::Module *codegen_llvm(const Module &module, llvm::LLVMContext &context);
+EXPORT std::unique_ptr<llvm::Module> codegen_llvm(const Module &module,
+                                                  llvm::LLVMContext &context);
 
 }
 

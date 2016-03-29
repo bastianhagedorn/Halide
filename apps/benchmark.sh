@@ -56,11 +56,11 @@ echo ${rand}
 start_time=`date "+%Y-%m-%d.%H%M%S"`
 rundirname="bench-${HOSTNAME}-${rand}${LABEL}"
 mkdir -p $rundirname
-rundir=`myrealpath $rundirname`
+rundir=`readlink -f $rundirname`
 
 echo "Running in $rundirname"
 
-halide_hash=`openssl md5 ../bin/libHalide.a  | sed 's/^.* //'`
+halide_hash=`openssl md5 ../lib/libHalide.a  | sed 's/^.* //'`
 
 echo "hostname: ${HOSTNAME}" >> $rundir/config.txt
 echo "start_time: ${start_time}" >> $rundir/config.txt
