@@ -29,7 +29,7 @@ int main(int argc, char **argv) {
     histogram(x, y, z, c) = 0.0f;
     histogram(x, y, zi, c) += select(c == 0, val, 1.0f);
 
-    //histogram.bound(z, -2, 16);
+    histogram.bound(z, -2, 16);
 
     // Blur the grid using a five-tap filter
     Func blurx("blurx"), blury("blury"), blurz("blurz");
@@ -117,7 +117,7 @@ int main(int argc, char **argv) {
 
     target.set_feature(Halide::Target::CUDA);
     target.set_feature(Halide::Target::Debug);
-    //target.set_feature(Halide::Target::NoAsserts);
+    target.set_feature(Halide::Target::NoAsserts);
 
     auto_build(bilateral_grid, "bilateral_grid", {r_sigma, input},
                                     target, (schedule == -1));

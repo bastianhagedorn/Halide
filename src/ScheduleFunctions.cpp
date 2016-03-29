@@ -4559,11 +4559,12 @@ void pick_gpu_thread_dims(Function &f, map<string, int> &dim_estimates,
 
     vector<Dim> &dims = f.schedule().dims();
     int outer_dim = dims.size() - 2;
-    for (int i = outer_dim; num_block_dim > 0 && i >= 0; i--) {
+    int marked_block_dims = 0;
+    for (int i = 0; marked_block_dims < num_block_dim && i <= outer_dim; i++) {
         if(dims[i].pure) {
-            rename_dim(f.schedule(), i, thread_names[num_block_dim - 1]);
+            rename_dim(f.schedule(), i, thread_names[marked_block_dims]);
             dims[i].for_type = ForType::Parallel;
-            num_block_dim--;
+            marked_block_dims++;
         }
     }
 }
@@ -4967,10 +4968,8 @@ void synthesize_gpu_schedule(string g_name, Partitioner &part,
             std::cerr << g_out.name() << " tile sizes and reuse" << std::endl;
             std::cerr << "[";
             for(int i = 0; i < (int)dims.size() - 1; i++) {
-                if (debug_info) {
-                    std::cerr << "("  << dims[i].var  << "," << sched.tile_sizes[i] << ","
-                        << sched.reuse[i] << ")" << ",";
-                }
+                std::cerr << "("  << dims[i].var  << "," << sched.tile_sizes[i] << ","
+                    << sched.reuse[i] << ")" << ",";
             }
             std::cerr << "]" << std::endl;
         }
@@ -5001,12 +5000,7 @@ void synthesize_gpu_schedule(string g_name, Partitioner &part,
         }
         assert(index!=-1);
         if (tile_sizes_pure[v] >= 1) {
-            // total_tile_dims - num_tile_dims is the number of tile
-            // dimensions remaining
-            int dims_left = pure_tile_vars.size() - num_tile_dims;
-            if (dims_left <= 3) {
-                // The outermost three dimensions should to mapped
-                // to gpu blocks and moved outer most
+            if (num_block_dim < 3) {
                 string block_name = block_names[num_block_dim];
                 string thread_name = thread_names[num_block_dim];
                 num_block_dim++;
@@ -5014,11 +5008,18 @@ void synthesize_gpu_schedule(string g_name, Partitioner &part,
 
                 split_dim_gpu(g_out.schedule(), index, tile_sizes_pure[v],
                         out_estimates, block_name, thread_name);
+                //for (auto &est: out_estimates)
+                //    std::cerr << est.second << "," << est.first << std::endl;
+                //std::cerr << std::endl;
                 move_dim_to_outermost(g_out.schedule(), index + 1);
             } else {
-                split_dim(g_out.schedule(), index, tile_sizes_pure[v],
-                        out_estimates, "tile", false);
-                move_dim_to_outermost(g_out.schedule(), index + 1);
+                if (tile_sizes_pure[v] > 1) {
+                    split_dim(g_out.schedule(), index, tile_sizes_pure[v],
+                            out_estimates, "tile", false);
+                    move_dim_to_outermost(g_out.schedule(), index + 1);
+                } else if (tile_sizes_pure[v] == 1) {
+                    move_dim_to_outermost(g_out.schedule(), index);
+                }
             }
         }
         num_tile_dims++;
@@ -5037,14 +5038,13 @@ void synthesize_gpu_schedule(string g_name, Partitioner &part,
             //int compute_level = inner_tile_dim;
 
             int compute_level = outer_dim - num_tile_dims +
-                num_fused_dims + 1;
+                                num_fused_dims + 1;
             m.schedule().store_level().func = g_out.name();
             //m.schedule().store_level().var = dims[compute_level+1].var;
             m.schedule().store_level().var = dims[compute_level].var;
             m.schedule().compute_level().func = g_out.name();
             m.schedule().compute_level().var = dims[compute_level].var;
 
-            // TODO
             // Parallelize within a tile
             pick_gpu_thread_dims(m, mem_estimates, num_block_dim,
                                  block_sizes, thread_names);
