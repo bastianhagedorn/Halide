@@ -188,6 +188,9 @@ public:
     std::vector<Bound> &bounds();
     // @}
 
+    const std::vector<Bound> &estimates() const;
+    std::vector<Bound> &estimates();
+
     /** You may create several specialized versions of a func with
      * different schedules. They trigger when the condition is
      * true. See \ref Func::specialize */

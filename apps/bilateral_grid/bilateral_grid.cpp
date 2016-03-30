@@ -29,7 +29,8 @@ int main(int argc, char **argv) {
     histogram(x, y, z, c) = 0.0f;
     histogram(x, y, zi, c) += select(c == 0, val, 1.0f);
 
-    histogram.bound(z, -2, 16);
+    //histogram.bound(z, -2, 16);
+    histogram.estimate(z, -2, 16);
 
     // Blur the grid using a five-tap filter
     Func blurx("blurx"), blury("blury"), blurz("blurz");
@@ -49,9 +50,15 @@ int main(int argc, char **argv) {
                          blurx(x, y+1, z, c)*4 +
                          blurx(x, y+2, z, c));
 
+    /*
     blurz.bound(z, 0, 12);
     blurx.bound(z, 0, 12);
     blury.bound(z, 0, 12);
+    */
+
+    blurz.estimate(z, 0, 12);
+    blurx.estimate(z, 0, 12);
+    blury.estimate(z, 0, 12);
 
     // Take trilinear samples to compute the output
     val = clamp(input(x, y), 0.0f, 1.0f);
@@ -72,7 +79,8 @@ int main(int argc, char **argv) {
     // Normalize
     Func bilateral_grid("bilateral_grid");
     bilateral_grid(x, y) = interpolated(x, y, 0)/interpolated(x, y, 1);
-    bilateral_grid.bound(x, 0, 1536).bound(y, 0, 2560);
+    //bilateral_grid.bound(x, 0, 1536).bound(y, 0, 2560);
+    bilateral_grid.estimate(x, 0, 1536).estimate(y, 0, 2560);
 
     // Pick a schedule
     int schedule = atoi(argv[2]);
