@@ -16,6 +16,7 @@ struct ScheduleContents {
     std::vector<Dim> dims;
     std::vector<std::string> storage_dims;
     std::vector<Bound> bounds;
+    std::vector<Bound> estimates;
     std::vector<Specialization> specializations;
     ReductionDomain reduction_domain;
     bool memoized;
@@ -84,6 +85,14 @@ std::vector<Bound> &Schedule::bounds() {
 
 const std::vector<Bound> &Schedule::bounds() const {
     return contents.ptr->bounds;
+}
+
+std::vector<Bound> &Schedule::estimates() {
+    return contents.ptr->estimates;
+}
+
+const std::vector<Bound> &Schedule::estimates() const {
+    return contents.ptr->estimates;
 }
 
 const std::vector<Specialization> &Schedule::specializations() const {

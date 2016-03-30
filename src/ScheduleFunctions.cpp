@@ -1869,7 +1869,7 @@ map<string, Box> sym_to_concrete_bounds(vector< pair<Var, Var> > &sym,
             // Use the bounds if the lower and upper bounds cannot be
             // determined
             if (!lower.as<IntImm>()) {
-                for (auto &b: env[r.first].schedule().bounds()) {
+                for (auto &b: env[r.first].schedule().estimates()) {
                     unsigned int num_pure_args = env[r.first].args().size();
                     if (i < num_pure_args && b.var == env[r.first].args()[i])
                         lower = Expr(b.min.as<IntImm>()->value);
@@ -1877,7 +1877,7 @@ map<string, Box> sym_to_concrete_bounds(vector< pair<Var, Var> > &sym,
             }
 
             if (!upper.as<IntImm>()) {
-                for (auto &b: env[r.first].schedule().bounds()) {
+                for (auto &b: env[r.first].schedule().estimates()) {
                     unsigned int num_pure_args = env[r.first].args().size();
                     if (i < num_pure_args && b.var == env[r.first].args()[i]) {
                         const IntImm * bmin = b.min.as<IntImm>();
@@ -2328,7 +2328,7 @@ int get_extent_estimate(Function &f, map<string, Box> &bounds, int dim) {
 
     vector<string> vars = f.args();
     int estimate = -1;
-    for (auto &b: f.schedule().bounds())
+    for (auto &b: f.schedule().estimates())
         if (b.var == vars[dim]) {
             const IntImm * bextent = b.extent.as<IntImm>();
             estimate = bextent->value;
@@ -2350,7 +2350,7 @@ int get_min_estimate(Function &f, map<string, Box> &bounds, int dim) {
 
     vector<string> vars = f.args();
     int estimate = std::numeric_limits<int>::max();
-    for (auto &b: f.schedule().bounds())
+    for (auto &b: f.schedule().estimates())
         if (b.var == vars[dim]) {
             const IntImm * bmin = b.min.as<IntImm>();
             estimate = bmin->value;
@@ -2370,7 +2370,7 @@ pair<int, int> get_bound_estimates(Function &f, map<string, Box> &bounds,
     vector<string> vars = f.args();
     int est_lower = std::numeric_limits<int>::max();
     int est_upper = std::numeric_limits<int>::min();
-    for (auto &b: f.schedule().bounds())
+    for (auto &b: f.schedule().estimates())
         if (b.var == vars[dim]) {
             const IntImm * bmin = b.min.as<IntImm>();
             const IntImm * bextent = b.extent.as<IntImm>();
@@ -2626,6 +2626,7 @@ struct Partitioner {
 
         arch_params.parallelism = 12;
         arch_params.vec_len = 32;
+
         if (!random_seed) {
             // Initialize machine params
             arch_params.balance = 10;
@@ -4604,26 +4605,26 @@ bool pick_dim_to_parallelize(Function &f, map<string, int> &dim_estimates,
     return false;
 }
 
-bool check_bounds_on_outputs(const vector<Function> &outputs) {
-    bool bounds_avail = true;
+bool check_estimates_on_outputs(const vector<Function> &outputs) {
+    bool estimates_avail = true;
     for (auto &out : outputs) {
-        const vector<Bound> &bounds = out.schedule().bounds();
-        if (bounds.size() != out.args().size()) {
-            bounds_avail = false;
+        const vector<Bound> &estimates = out.schedule().estimates();
+        if (estimates.size() != out.args().size()) {
+            estimates_avail = false;
             break;
         }
         vector<string> vars = out.args();
 
-        for (unsigned int i = 0; i < bounds.size(); i++) {
-            if (std::find(vars.begin(), vars.end(), bounds[i].var) == vars.end()
-                    || !((bounds[i].min.as<IntImm>()) &&
-                        (bounds[i].extent.as<IntImm>())))  {
-                bounds_avail = false;
+        for (unsigned int i = 0; i < estimates.size(); i++) {
+            if (std::find(vars.begin(), vars.end(), estimates[i].var) == vars.end()
+                    || !((estimates[i].min.as<IntImm>()) &&
+                        (estimates[i].extent.as<IntImm>())))  {
+                estimates_avail = false;
                 break;
             }
         }
     }
-    return bounds_avail;
+    return estimates_avail;
 }
 
 void synthesize_cpu_schedule(string g_name, Partitioner &part,
@@ -5238,20 +5239,20 @@ void schedule_advisor(const vector<Function> &outputs,
     }
     */
 
-    bool bounds_avail = check_bounds_on_outputs(outputs);
+    bool estimates_avail = check_estimates_on_outputs(outputs);
 
     if (debug_info) {
-        std::cerr << "Bounds of pipeline outputs:" << bounds_avail << std::endl;
+        std::cerr << "Estimates of pipeline output sizes:" << estimates_avail << std::endl;
     }
 
-    if (bounds_avail) {
+    if (estimates_avail) {
         for (auto &out: outputs) {
             vector<pair<int, int> > bounds;
             vector<bool> eval;
             vector<string> vars = out.args();
             for (unsigned int i = 0; i < vars.size(); i++) {
                 bool found = false;
-                for (auto &b: out.schedule().bounds())
+                for (auto &b: out.schedule().estimates())
                     if (b.var == vars[i]) {
                         const IntImm * bmin = b.min.as<IntImm>();
                         const IntImm * bextent = b.extent.as<IntImm>();
@@ -5290,7 +5291,7 @@ void schedule_advisor(const vector<Function> &outputs,
     }
 
     if (debug_info) {
-       std::cerr << "Pipeline bounds inferred from output bounds:" << std::endl;
+       std::cerr << "Pipeline size estimates inferred from output estimates:" << std::endl;
        disp_regions(pipeline_bounds);
     }
 

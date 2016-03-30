@@ -892,6 +892,7 @@ public:
      * runtime error will occur when you try to run your pipeline.
      */
     EXPORT Func &bound(Var var, Expr min, Expr extent);
+    EXPORT Func &estimate(Var var, Expr min, Expr extent);
 
     /** Split two dimensions at once by the given factors, and then
      * reorder the resulting dimensions to be xi, yi, xo, yo from
