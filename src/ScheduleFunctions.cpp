@@ -4632,8 +4632,7 @@ void synthesize_cpu_schedule(string g_name, Partitioner &part,
         map<string, Function> &env,
         map<string, Box> &pipeline_bounds,
         map<string, vector<string> > &inlines,
-        bool debug_info, bool auto_par, bool auto_vec,
-        int vec_len) {
+        bool debug_info, bool auto_par, bool auto_vec) {
 
     // CPU schedule generation
     // Create a tiled traversal for the output of the group
@@ -4729,8 +4728,8 @@ void synthesize_cpu_schedule(string g_name, Partitioner &part,
     {
         // Vectorize first
         Schedule &s = g_out.schedule();
-        if (check_dim_size(s, 0, vec_len, out_estimates))
-            simple_vectorize(g_out, out_estimates, 0, vec_len);
+        if (check_dim_size(s, 0, part.arch_params.vec_len, out_estimates))
+            simple_vectorize(g_out, out_estimates, 0, part.arch_params.vec_len);
 
         /*
         if (auto_vec) {
@@ -4738,13 +4737,13 @@ void synthesize_cpu_schedule(string g_name, Partitioner &part,
             int can_vec = true;
             while (can_vec && (vec_dim < (int)dims.size() - 1)) {
                 can_vec = false;
-                if (check_dim_size(s, vec_dim, vec_len, out_estimates)){
-                    simple_vectorize(g_out, out_estimates, vec_dim, vec_len);
+                if (check_dim_size(s, vec_dim, part.arch_params.vec_len, out_estimates)){
+                    simple_vectorize(g_out, out_estimates, vec_dim, part.arch_params.vec_len);
                     break;
                 }
                 else {
                     int dim_size = get_dim_size(s, vec_dim, out_estimates);
-                    if(dim_size < vec_len) {
+                    if(dim_size < part.arch_params.vec_len) {
                         // unroll
                         unroll_dim(s, vec_dim);
                         can_vec = true;
@@ -4755,10 +4754,11 @@ void synthesize_cpu_schedule(string g_name, Partitioner &part,
             }
         }
         */
+
         int outer_dim = -1;
         bool can_par = pick_dim_to_parallelize(g_out, out_estimates,
-                parallelism, num_tile_dims,
-                outer_dim, num_fused_dims);
+                                               parallelism, num_tile_dims,
+                                               outer_dim, num_fused_dims);
 
         if (auto_par && outer_dim !=-1 && can_par)
             parallelize_dim(g_out.schedule(), outer_dim);
@@ -4777,7 +4777,7 @@ void synthesize_cpu_schedule(string g_name, Partitioner &part,
 
             const UpdateDefinition &u = g_out.updates()[i];
 
-            // Tiling now includes reduction dimensions
+            // Tiling includes reduction dimensions
             map<string, int> tile_sizes_update;
             vector<string> update_vars;
 
@@ -4790,8 +4790,7 @@ void synthesize_cpu_schedule(string g_name, Partitioner &part,
                         part.analy.reductions.end());
                 assert(sched.tile_sizes.size() ==
                         num_pure_dims + num_red_dims);
-                // The tile sizes for the reduction dimensions are at
-                // the end
+                // The tile sizes for the reduction dimensions are at the end
                 for(unsigned int i = 0; i < num_red_dims; i++) {
                     var_reuse[dims[i].var] = sched.reuse[num_pure_dims + i];
                     if (sched.tile_sizes[num_pure_dims + i] != -1) {
@@ -4829,7 +4828,12 @@ void synthesize_cpu_schedule(string g_name, Partitioner &part,
 
             if (sched.locality) {
                 reorder_by_reuse(s, var_reuse, inner_dim,
-                        out_up_estimates, vec_len);
+                                 out_up_estimates, part.arch_params.vec_len);
+                update_vars.clear();
+                for (int v = 0; v < (int)dims.size() - 1; v++) {
+                    if (tile_sizes_update.find(dims[v].var) != tile_sizes_update.end())
+                        update_vars.push_back(dims[v].var);
+                }
             }
 
             set<string> par_vars;
@@ -4858,8 +4862,8 @@ void synthesize_cpu_schedule(string g_name, Partitioner &part,
 
             // Vectorization of update definitions
             if(auto_vec) {
-                vectorize_update(g_out, i, out_up_estimates, vec_len,
-                        par_vars);
+                vectorize_update(g_out, i, out_up_estimates, part.arch_params.vec_len,
+                                 par_vars);
             }
 
             if(auto_par) {
@@ -4910,15 +4914,15 @@ void synthesize_cpu_schedule(string g_name, Partitioner &part,
                 inlines.find(m.name()) == inlines.end() && num_tile_dims > 0) {
             //int compute_level = inner_tile_dim;
             int compute_level = outer_dim - num_tile_dims +
-                num_fused_dims + 1;
+                                num_fused_dims + 1;
             m.schedule().store_level().func = g_out.name();
             //m.schedule().store_level().var = dims[compute_level+1].var;
             m.schedule().store_level().var = dims[compute_level].var;
             m.schedule().compute_level().func = g_out.name();
             m.schedule().compute_level().var = dims[compute_level].var;
             if (auto_vec)
-                if (check_dim_size(m.schedule(), 0, vec_len, mem_estimates))
-                    simple_vectorize(m, mem_estimates, 0, vec_len);
+                if (check_dim_size(m.schedule(), 0, part.arch_params.vec_len, mem_estimates))
+                    simple_vectorize(m, mem_estimates, 0, part.arch_params.vec_len);
             if (!m.is_pure()) {
                 int num_updates = m.updates().size();
                 for (int i = 0; i < num_updates; i ++) {
@@ -4926,8 +4930,8 @@ void synthesize_cpu_schedule(string g_name, Partitioner &part,
                     map<string, int> mem_up_estimates =
                         org_mem_estimates;
                     set<string> par_vars;
-                    vectorize_update(m, i, mem_up_estimates, vec_len,
-                            par_vars);
+                    vectorize_update(m, i, mem_up_estimates, part.arch_params.vec_len,
+                                     par_vars);
                 }
             }
         }
@@ -5041,9 +5045,6 @@ void synthesize_gpu_schedule(string g_name, Partitioner &part,
 
                 split_dim_gpu(g_out.schedule(), index, tile_sizes_pure[v],
                               out_estimates, block_name, thread_name);
-                //for (auto &est: out_estimates)
-                //    std::cerr << est.second << "," << est.first << std::endl;
-                //std::cerr << std::endl;
                 move_dim_to_outermost(g_out.schedule(), index + 1);
             } else {
                 if (tile_sizes_pure[v] > 1) {
@@ -5059,7 +5060,113 @@ void synthesize_gpu_schedule(string g_name, Partitioner &part,
     }
 
     if (!g_out.is_pure()) {
+
         // TODO: Handle reductions
+        int num_updates = g_out.updates().size();
+        for (int i = 0; i < num_updates; i ++) {
+            // Zero out the number of block dims
+            num_block_dim = 0;
+            // Start with fresh bounds estimates for each update
+            map<string, int> out_up_estimates = org_out_estimates;
+
+            Schedule &s = g_out.update_schedule(i);
+            vector<Dim> &dims = s.dims();
+
+            const UpdateDefinition &u = g_out.updates()[i];
+
+            // Tiling includes reduction dimensions
+            map<string, int> tile_sizes_update;
+            vector<string> update_vars;
+
+            unsigned int num_pure_dims = g_out.args().size();
+            unsigned int num_red_dims = (dims.size() - 1) - num_pure_dims;
+
+            map<string, float> var_reuse;
+            if (sched.locality) {
+                assert(part.analy.reductions.find(g_out.name()) !=
+                        part.analy.reductions.end());
+                assert(sched.tile_sizes.size() ==
+                        num_pure_dims + num_red_dims);
+                // The tile sizes for the reduction dimensions are at the end
+                for(unsigned int i = 0; i < num_red_dims; i++) {
+                    var_reuse[dims[i].var] = sched.reuse[num_pure_dims + i];
+                    if (sched.tile_sizes[num_pure_dims + i] != -1) {
+                        update_vars.push_back(dims[i].var);
+                        tile_sizes_update[dims[i].var] =
+                            sched.tile_sizes[num_pure_dims + i];
+                        std::cerr << dims[i].var << " "
+                                  << sched.tile_sizes[num_pure_dims + i]
+                                  << std::endl;
+                    }
+                }
+            }
+
+            if (sched.fusion || sched.locality) {
+                if (sched.fusion)
+                    assert(sched.tile_sizes.size() == num_pure_dims);
+                for(unsigned int i = 0; i < num_pure_dims; i++) {
+                    var_reuse[dims[num_red_dims + i].var] =
+                        sched.reuse[i];
+                    if (sched.tile_sizes[i] != -1) {
+                        update_vars.push_back(dims[num_red_dims + i].var);
+                        tile_sizes_update[dims[num_red_dims + i].var]
+                            = sched.tile_sizes[i];
+                        std::cerr << dims[num_red_dims + i].var << " "
+                                  << sched.tile_sizes[i] << std::endl;
+                    }
+                }
+            }
+
+            // Determine which dimension if any can be moved inner most
+            // while not disrupting spatial locality both on inputs and
+            // outputs
+            string inner_dim =
+                get_spatially_coherent_innermost_dim(g_out, u);
+
+
+            if (sched.locality) {
+                reorder_by_reuse(s, var_reuse, inner_dim,
+                                 out_up_estimates, part.arch_params.vec_len);
+
+                update_vars.clear();
+                for (int v = 0; v < (int)dims.size() - 1; v++) {
+                    if (tile_sizes_update.find(dims[v].var) != tile_sizes_update.end())
+                        update_vars.push_back(dims[v].var);
+                }
+            }
+
+            set<string> par_vars;
+            for(auto &v: update_vars) {
+                int index = -1;
+                for (int i = 0; i < (int)dims.size() - 1; i++) {
+                    if (dims[i].var == v) {
+                        index = i;
+                        break;
+                    }
+                }
+                assert(index!=-1);
+                if (tile_sizes_update[v] >= 1) {
+                    if (num_block_dim < 3 && can_parallelize_rvar(v, g_out.name(), u)) {
+                        string block_name = block_names[num_block_dim];
+                        string thread_name = thread_names[num_block_dim];
+                        num_block_dim++;
+                        block_sizes.push_back(tile_sizes_update[v]);
+
+                        split_dim_gpu(s, index, tile_sizes_update[v],
+                                      out_up_estimates, block_name, thread_name);
+                        move_dim_to_outermost(s, index + 1);
+                    } else {
+                        if (tile_sizes_update[v] > 1) {
+                            split_dim(s, index, tile_sizes_update[v],
+                                      out_up_estimates, "tile", false);
+                            move_dim_to_outermost(s, index + 1);
+                        } else if (tile_sizes_update[v] == 1) {
+                            move_dim_to_outermost(s, index);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     int num_fused_dims = 0;
@@ -5384,8 +5491,6 @@ void schedule_advisor(const vector<Function> &outputs,
     if (!auto_naive)
         part.tile_for_input_locality();
 
-    int vec_len = part.arch_params.vec_len;
-
     // Schedule generation based on grouping
     for (auto& g: part.groups) {
 
@@ -5393,7 +5498,7 @@ void schedule_advisor(const vector<Function> &outputs,
             synthesize_gpu_schedule(g.first, part, env, pipeline_bounds, inlines, debug_info);
         } else {
             synthesize_cpu_schedule(g.first, part, env, pipeline_bounds,
-                                    inlines, debug_info, auto_par, auto_vec, vec_len);
+                                    inlines, debug_info, auto_par, auto_vec);
         }
     }
 

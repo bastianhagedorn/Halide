@@ -36,7 +36,8 @@ int main(int argc, char **argv) {
     Func out;
     out(x, y) = prod(x, y);
 
-    out.bound(x, 0, size).bound(y, 0, size);
+    //out.bound(x, 0, size).bound(y, 0, size);
+    out.estimate(x, 0, size).estimate(y, 0, size);
 
     int sched = atoi(argv[1]);
 
@@ -50,6 +51,10 @@ int main(int argc, char **argv) {
     }
 
     Target target = get_target_from_environment();
+
+    target.set_feature(Halide::Target::CUDA);
+    target.set_feature(Halide::Target::Debug);
+
     if (sched == -1)
         out.compile_jit(target, true);
     else
