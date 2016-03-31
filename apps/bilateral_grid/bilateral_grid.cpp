@@ -110,7 +110,6 @@ int main(int argc, char **argv) {
         blurx.compute_root().gpu_tile(x, y, z, 8, 8, 1);
         blury.compute_root().gpu_tile(x, y, z, 8, 8, 1);
         bilateral_grid.compute_root().gpu_tile(x, y, s_sigma, s_sigma);
-        bilateral_grid.print_loop_nest();
     } else if (schedule == 0) {
         // The CPU schedule.
         blurz.compute_root().reorder(c, z, x, y).parallel(y).vectorize(x, 8).unroll(c);
@@ -125,7 +124,7 @@ int main(int argc, char **argv) {
 
     target.set_feature(Halide::Target::CUDA);
     target.set_feature(Halide::Target::Debug);
-    target.set_feature(Halide::Target::NoAsserts);
+    //target.set_feature(Halide::Target::NoAsserts);
 
     auto_build(bilateral_grid, "bilateral_grid", {r_sigma, input},
                                     target, (schedule == -1));

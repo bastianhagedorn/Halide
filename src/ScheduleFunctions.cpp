@@ -2626,6 +2626,7 @@ struct Partitioner {
 
         arch_params.parallelism = 12;
         arch_params.vec_len = 32;
+        //arch_params.vec_len = 16;
 
         if (!random_seed) {
             // Initialize machine params
@@ -4979,6 +4980,37 @@ void synthesize_gpu_schedule(string g_name, Partitioner &part,
     //for (auto &e: out_estimates)
     //    std::cout << e.first << " " << e.second << std::endl;
 
+    // Handle groups with no tiling
+    if (pure_tile_vars.size() == 0) {
+        int parallelism = 1;
+        int num_tiled = 0;
+        int inner_tiled_dim = 0;
+        for(int i = 0; i < (int)dims.size() - 1; i++) {
+            // skip inner most dims with small number of iterations
+            if (out_estimates[dims[i].var] > part.arch_params.vec_len) {
+                pure_tile_vars.push_back(dims[i].var);
+                tile_sizes_pure[dims[i].var] = part.arch_params.vec_len;
+                parallelism *= part.arch_params.vec_len;
+                num_tiled++;
+                break;
+            }
+        }
+
+        vector<string> outer_tile_dims;
+        for(int i = (int)dims.size() - 2; i >= inner_tiled_dim; i--) {
+            if (num_tiled < 3 &&
+                (parallelism < part.arch_params.vec_len * part.arch_params.parallelism)) {
+                outer_tile_dims.push_back(dims[i].var);
+                tile_sizes_pure[dims[i].var] = 1;
+                parallelism *= out_estimates[dims[i].var];
+                num_tiled++;
+            }
+        }
+
+        for(auto rb = outer_tile_dims.rbegin(); rb != outer_tile_dims.rend(); rb++)
+            pure_tile_vars.push_back(*rb);
+    }
+
     // Mapping tiling to GPU block and thread mapping
     std::vector<string> block_names = {"__block_id_x",
                                        "__block_id_y",
@@ -5008,7 +5040,7 @@ void synthesize_gpu_schedule(string g_name, Partitioner &part,
                 block_sizes.push_back(tile_sizes_pure[v]);
 
                 split_dim_gpu(g_out.schedule(), index, tile_sizes_pure[v],
-                        out_estimates, block_name, thread_name);
+                              out_estimates, block_name, thread_name);
                 //for (auto &est: out_estimates)
                 //    std::cerr << est.second << "," << est.first << std::endl;
                 //std::cerr << std::endl;
@@ -5026,7 +5058,9 @@ void synthesize_gpu_schedule(string g_name, Partitioner &part,
         num_tile_dims++;
     }
 
-    // TODO: Handle groups with no tiling
+    if (!g_out.is_pure()) {
+        // TODO: Handle reductions
+    }
 
     int num_fused_dims = 0;
     for (auto &m: part.groups[g_name]) {
