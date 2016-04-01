@@ -4556,12 +4556,16 @@ void vectorize_update(Function &func, int stage,
 }
 
 void pick_gpu_thread_dims(Function &f, map<string, int> &dim_estimates,
-                          int num_block_dim, vector<int> &block_sizes,
-                          vector<string> &thread_names) {
+                          vector<int> &block_sizes) {
+
+    std::vector<string> thread_names = {"__thread_id_x",
+                                        "__thread_id_y",
+                                        "__thread_id_z"};
 
     vector<Dim> &dims = f.schedule().dims();
     int outer_dim = dims.size() - 2;
     int marked_block_dims = 0;
+    int num_block_dim = block_sizes.size();
     for (int i = 0; marked_block_dims < num_block_dim && i <= outer_dim; i++) {
         if(dims[i].pure) {
             rename_dim(f.schedule(), i, thread_names[marked_block_dims]);
@@ -4927,8 +4931,7 @@ void synthesize_cpu_schedule(string g_name, Partitioner &part,
                 int num_updates = m.updates().size();
                 for (int i = 0; i < num_updates; i ++) {
                     // Start with fresh bounds estimates for each update
-                    map<string, int> mem_up_estimates =
-                        org_mem_estimates;
+                    map<string, int> mem_up_estimates = org_mem_estimates;
                     set<string> par_vars;
                     vectorize_update(m, i, mem_up_estimates, part.arch_params.vec_len,
                                      par_vars);
@@ -4939,11 +4942,131 @@ void synthesize_cpu_schedule(string g_name, Partitioner &part,
     // std::cerr << "Finished group members "  <<  g_out.name() << std::endl;
 }
 
+void mark_block_dims(vector<Dim> &dims, map<string, int> &tile_sizes,
+                     vector<string> &block_dims, map<string, int> &estimates,
+                     int parallelism, int vec_len, set<string> &par_vars) {
+
+    if (tile_sizes.size() == 0) {
+        // Handle groups with no tiling
+        int curr_par = 1;
+        int num_mapped_to_block = 0;
+        int inner_tiled_dim = 0;
+
+        for(int i = 0; i < (int)dims.size() - 1; i++) {
+            if (par_vars.find(dims[i].var) == par_vars.end())
+                continue;
+            // skip inner most dims with small number of iterations
+            if (estimates[dims[i].var] > vec_len) {
+                tile_sizes[dims[i].var] = vec_len;
+                curr_par *= vec_len;
+                num_mapped_to_block++;
+                block_dims.push_back(dims[i].var);
+                break;
+            }
+        }
+
+        for(int i = (int)dims.size() - 2; i >= inner_tiled_dim; i--) {
+            if (par_vars.find(dims[i].var) == par_vars.end())
+                continue;
+            if (num_mapped_to_block < 3 &&
+                    (curr_par < vec_len * parallelism)) {
+                tile_sizes[dims[i].var] = 1;
+                curr_par *= estimates[dims[i].var];
+                block_dims.push_back(dims[i].var);
+                num_mapped_to_block++;
+            }
+        }
+
+    } else {
+
+        int curr_par = 1;
+        int num_mapped_to_block = 0;
+        int inner_tiled_dim = 0;
+
+        for(int i = 0; i < (int)dims.size() - 1; i++) {
+            if (par_vars.find(dims[i].var) == par_vars.end())
+                continue;
+            // skip inner most dims with small number of iterations
+            if (estimates[dims[i].var] > vec_len) {
+                if (tile_sizes.find(dims[i].var) == tile_sizes.end()) {
+                    tile_sizes[dims[i].var] = vec_len;
+                    curr_par *= vec_len;
+                } else {
+                    curr_par *= tile_sizes[dims[i].var];
+                }
+                block_dims.push_back(dims[i].var);
+                num_mapped_to_block++;
+                break;
+            }
+        }
+
+        for(int i = (int)dims.size() - 2; i >= inner_tiled_dim; i--) {
+            if (par_vars.find(dims[i].var) == par_vars.end())
+                continue;
+            if (tile_sizes.find(dims[i].var) != tile_sizes.end()) {
+                if (num_mapped_to_block < 3 &&
+                        (curr_par < vec_len * parallelism)) {
+                    curr_par *= tile_sizes[dims[i].var];
+                    block_dims.push_back(dims[i].var);
+                    num_mapped_to_block++;
+                }
+            }
+        }
+    }
+}
+
+void realize_tiling_gpu(vector<Dim> &dims, Schedule &s,
+                        vector<string> &tile_vars, map<string, int> &tile_sizes,
+                        vector<string> &block_dims, map<string, int> &estimates,
+                        vector<int> &block_sizes, int &num_tile_dims) {
+
+    // Mapping tiling to GPU block and thread mapping
+    std::vector<string> block_names = {"__block_id_x",
+                                       "__block_id_y",
+                                       "__block_id_z"};
+
+    std::vector<string> thread_names = {"__thread_id_x",
+                                        "__thread_id_y",
+                                        "__thread_id_z"};
+
+    int num_block_dim = 0;
+    for(auto &v: tile_vars) {
+        int index = -1;
+        for (int i = 0; i < (int)dims.size() - 1; i++) {
+            if (dims[i].var == v) {
+                index = i;
+                break;
+            }
+        }
+        assert(index!=-1);
+        if (tile_sizes[v] >= 1) {
+            if (std::find(block_dims.begin(), block_dims.end(), v) != block_dims.end()) {
+                string block_name = block_names[num_block_dim];
+                string thread_name = thread_names[num_block_dim];
+                num_block_dim++;
+                block_sizes.push_back(tile_sizes[v]);
+
+                split_dim_gpu(s, index, tile_sizes[v], estimates, block_name, thread_name);
+                move_dim_to_outermost(s, index + 1);
+            } else {
+                if (tile_sizes[v] > 1) {
+                    split_dim(s, index, tile_sizes[v],
+                              estimates, "tile", false);
+                    move_dim_to_outermost(s, index + 1);
+                } else if (tile_sizes[v] == 1) {
+                    move_dim_to_outermost(s, index);
+                }
+            }
+        }
+        num_tile_dims++;
+    }
+}
+
 void synthesize_gpu_schedule(string g_name, Partitioner &part,
-        map<string, Function> &env,
-        map<string, Box> &pipeline_bounds,
-        map<string, vector<string> > &inlines,
-        bool debug_info) {
+                             map<string, Function> &env,
+                             map<string, Box> &pipeline_bounds,
+                             map<string, vector<string> > &inlines,
+                             bool debug_info) {
 
     Function &g_out = env[g_name];
 
@@ -4965,7 +5088,6 @@ void synthesize_gpu_schedule(string g_name, Partitioner &part,
 
         for(int i = 0; i < (int)dims.size() - 1; i++) {
             if (sched.tile_sizes[i] != -1) {
-                pure_tile_vars.push_back(dims[i].var);
                 tile_sizes_pure[dims[i].var] = sched.tile_sizes[i];
             }
         }
@@ -4984,88 +5106,34 @@ void synthesize_gpu_schedule(string g_name, Partitioner &part,
     //for (auto &e: out_estimates)
     //    std::cout << e.first << " " << e.second << std::endl;
 
-    // Handle groups with no tiling
-    if (pure_tile_vars.size() == 0) {
-        int parallelism = 1;
-        int num_tiled = 0;
-        int inner_tiled_dim = 0;
-        for(int i = 0; i < (int)dims.size() - 1; i++) {
-            // skip inner most dims with small number of iterations
-            if (out_estimates[dims[i].var] > part.arch_params.vec_len) {
-                pure_tile_vars.push_back(dims[i].var);
-                tile_sizes_pure[dims[i].var] = part.arch_params.vec_len;
-                parallelism *= part.arch_params.vec_len;
-                num_tiled++;
-                break;
-            }
-        }
+    vector<string> block_dims;
+    set<string> pure_par_vars;
 
-        vector<string> outer_tile_dims;
-        for(int i = (int)dims.size() - 2; i >= inner_tiled_dim; i--) {
-            if (num_tiled < 3 &&
-                (parallelism < part.arch_params.vec_len * part.arch_params.parallelism)) {
-                outer_tile_dims.push_back(dims[i].var);
-                tile_sizes_pure[dims[i].var] = 1;
-                parallelism *= out_estimates[dims[i].var];
-                num_tiled++;
-            }
-        }
-
-        for(auto rb = outer_tile_dims.rbegin(); rb != outer_tile_dims.rend(); rb++)
-            pure_tile_vars.push_back(*rb);
+    for(int i = 0; i < (int)dims.size() - 1; i++) {
+        pure_par_vars.insert(dims[i].var);
     }
 
-    // Mapping tiling to GPU block and thread mapping
-    std::vector<string> block_names = {"__block_id_x",
-                                       "__block_id_y",
-                                       "__block_id_z"};
+    mark_block_dims(dims, tile_sizes_pure, block_dims, out_estimates,
+                    part.arch_params.parallelism,
+                    part.arch_params.vec_len, pure_par_vars);
 
-    std::vector<string> thread_names = {"__thread_id_x",
-                                        "__thread_id_y",
-                                        "__thread_id_z"};
+    // Populate pure_tile_vars in order
+    for(int i = 0; i < (int)dims.size() - 1; i++) {
+        if (tile_sizes_pure.find(dims[i].var) != tile_sizes_pure.end())
+            pure_tile_vars.push_back(dims[i].var);
+    }
 
     std::vector<int> block_sizes;
     int num_tile_dims = 0;
-    int num_block_dim = 0;
-    for(auto &v: pure_tile_vars) {
-        int index = -1;
-        for (int i = 0; i < (int)dims.size() - 1; i++) {
-            if (dims[i].var == v) {
-                index = i;
-                break;
-            }
-        }
-        assert(index!=-1);
-        if (tile_sizes_pure[v] >= 1) {
-            if (num_block_dim < 3) {
-                string block_name = block_names[num_block_dim];
-                string thread_name = thread_names[num_block_dim];
-                num_block_dim++;
-                block_sizes.push_back(tile_sizes_pure[v]);
 
-                split_dim_gpu(g_out.schedule(), index, tile_sizes_pure[v],
-                              out_estimates, block_name, thread_name);
-                move_dim_to_outermost(g_out.schedule(), index + 1);
-            } else {
-                if (tile_sizes_pure[v] > 1) {
-                    split_dim(g_out.schedule(), index, tile_sizes_pure[v],
-                            out_estimates, "tile", false);
-                    move_dim_to_outermost(g_out.schedule(), index + 1);
-                } else if (tile_sizes_pure[v] == 1) {
-                    move_dim_to_outermost(g_out.schedule(), index);
-                }
-            }
-        }
-        num_tile_dims++;
-    }
+    realize_tiling_gpu(dims, g_out.schedule(), pure_tile_vars,
+                       tile_sizes_pure, block_dims, out_estimates,
+                       block_sizes, num_tile_dims);
 
     if (!g_out.is_pure()) {
 
-        // TODO: Handle reductions
         int num_updates = g_out.updates().size();
-        for (int i = 0; i < num_updates; i ++) {
-            // Zero out the number of block dims
-            num_block_dim = 0;
+        for (int i = 0; i < num_updates; i++) {
             // Start with fresh bounds estimates for each update
             map<string, int> out_up_estimates = org_out_estimates;
 
@@ -5088,15 +5156,14 @@ void synthesize_gpu_schedule(string g_name, Partitioner &part,
                 assert(sched.tile_sizes.size() ==
                         num_pure_dims + num_red_dims);
                 // The tile sizes for the reduction dimensions are at the end
-                for(unsigned int i = 0; i < num_red_dims; i++) {
-                    var_reuse[dims[i].var] = sched.reuse[num_pure_dims + i];
-                    if (sched.tile_sizes[num_pure_dims + i] != -1) {
-                        update_vars.push_back(dims[i].var);
-                        tile_sizes_update[dims[i].var] =
-                            sched.tile_sizes[num_pure_dims + i];
-                        std::cerr << dims[i].var << " "
-                                  << sched.tile_sizes[num_pure_dims + i]
-                                  << std::endl;
+                for(unsigned int d = 0; d < num_red_dims; d++) {
+                    var_reuse[dims[d].var] = sched.reuse[num_pure_dims + d];
+                    if (sched.tile_sizes[num_pure_dims + d] != -1) {
+                        tile_sizes_update[dims[d].var] =
+                            sched.tile_sizes[num_pure_dims + d];
+                        //std::cerr << dims[d].var << " "
+                        //          << sched.tile_sizes[num_pure_dims + d]
+                        //          << std::endl;
                     }
                 }
             }
@@ -5104,15 +5171,13 @@ void synthesize_gpu_schedule(string g_name, Partitioner &part,
             if (sched.fusion || sched.locality) {
                 if (sched.fusion)
                     assert(sched.tile_sizes.size() == num_pure_dims);
-                for(unsigned int i = 0; i < num_pure_dims; i++) {
-                    var_reuse[dims[num_red_dims + i].var] =
-                        sched.reuse[i];
-                    if (sched.tile_sizes[i] != -1) {
-                        update_vars.push_back(dims[num_red_dims + i].var);
-                        tile_sizes_update[dims[num_red_dims + i].var]
-                            = sched.tile_sizes[i];
-                        std::cerr << dims[num_red_dims + i].var << " "
-                                  << sched.tile_sizes[i] << std::endl;
+                for(unsigned int d = 0; d < num_pure_dims; d++) {
+                    var_reuse[dims[num_red_dims + d].var] = sched.reuse[d];
+                    if (sched.tile_sizes[d] != -1) {
+                        tile_sizes_update[dims[num_red_dims + d].var]
+                                        = sched.tile_sizes[d];
+                        //std::cerr << dims[num_red_dims + d].var << " "
+                        //          << sched.tile_sizes[d] << std::endl;
                     }
                 }
             }
@@ -5123,49 +5188,34 @@ void synthesize_gpu_schedule(string g_name, Partitioner &part,
             string inner_dim =
                 get_spatially_coherent_innermost_dim(g_out, u);
 
-
             if (sched.locality) {
                 reorder_by_reuse(s, var_reuse, inner_dim,
                                  out_up_estimates, part.arch_params.vec_len);
+            }
 
-                update_vars.clear();
-                for (int v = 0; v < (int)dims.size() - 1; v++) {
-                    if (tile_sizes_update.find(dims[v].var) != tile_sizes_update.end())
-                        update_vars.push_back(dims[v].var);
+            set<string> update_par_vars;
+            for (int i = 0; i < (int)dims.size() - 1; i++) {
+                if (can_parallelize_rvar(dims[i].var, g_out.name(), u)) {
+                    update_par_vars.insert(dims[i].var);
                 }
             }
 
-            set<string> par_vars;
-            for(auto &v: update_vars) {
-                int index = -1;
-                for (int i = 0; i < (int)dims.size() - 1; i++) {
-                    if (dims[i].var == v) {
-                        index = i;
-                        break;
-                    }
-                }
-                assert(index!=-1);
-                if (tile_sizes_update[v] >= 1) {
-                    if (num_block_dim < 3 && can_parallelize_rvar(v, g_out.name(), u)) {
-                        string block_name = block_names[num_block_dim];
-                        string thread_name = thread_names[num_block_dim];
-                        num_block_dim++;
-                        block_sizes.push_back(tile_sizes_update[v]);
+            vector<string> block_dims_update;
+            mark_block_dims(dims, tile_sizes_update, block_dims_update,
+                            out_up_estimates, part.arch_params.parallelism,
+                            part.arch_params.vec_len, update_par_vars);
 
-                        split_dim_gpu(s, index, tile_sizes_update[v],
-                                      out_up_estimates, block_name, thread_name);
-                        move_dim_to_outermost(s, index + 1);
-                    } else {
-                        if (tile_sizes_update[v] > 1) {
-                            split_dim(s, index, tile_sizes_update[v],
-                                      out_up_estimates, "tile", false);
-                            move_dim_to_outermost(s, index + 1);
-                        } else if (tile_sizes_update[v] == 1) {
-                            move_dim_to_outermost(s, index);
-                        }
-                    }
-                }
+            for (int v = 0; v < (int)dims.size() - 1; v++) {
+                if (tile_sizes_update.find(dims[v].var) != tile_sizes_update.end())
+                    update_vars.push_back(dims[v].var);
             }
+
+            vector<int> block_sizes_update;
+            int num_tile_dims_update = 0;
+            realize_tiling_gpu(dims, s, update_vars, tile_sizes_update,
+                               block_dims_update, out_up_estimates,
+                               block_sizes_update, num_tile_dims_update);
+
         }
     }
 
@@ -5188,8 +5238,7 @@ void synthesize_gpu_schedule(string g_name, Partitioner &part,
             m.schedule().compute_level().var = dims[compute_level].var;
 
             // Parallelize within a tile
-            pick_gpu_thread_dims(m, mem_estimates, num_block_dim,
-                                 block_sizes, thread_names);
+            pick_gpu_thread_dims(m, mem_estimates, block_sizes);
         }
     }
     // std::cerr << "Finished group members "  <<  g_out.name() << std::endl;
