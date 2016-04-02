@@ -22,6 +22,7 @@ bilateral_grid_sweep.o: bilateral_grid
 
 bilateral_grid_rand.o: bilateral_grid
 	HL_AUTO_RAND=1 HL_AUTO_PARALLELISM=8 HL_AUTO_VEC_LEN=16 HL_AUTO_BALANCE=30 HL_AUTO_FAST_MEM_SIZE=33554432 ./bilateral_grid 8 -1
+	#HL_AUTO_RAND=1 HL_AUTO_PARALLELISM=16 HL_AUTO_VEC_LEN=8 HL_AUTO_BALANCE=40 HL_AUTO_FAST_MEM_SIZE=524288 ./bilateral_grid 8 -1
 
 filter_%: bilateral_grid_%.o filter.cpp
 	$(CXX) $(CXXFLAGS) $^ -lpthread -ldl -o $@ \

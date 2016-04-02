@@ -27,6 +27,7 @@ curved_sweep.o: camera_pipe
 
 curved_rand.o: camera_pipe
 	HL_AUTO_RAND=1 HL_AUTO_PARALLELISM=18 HL_AUTO_VEC_LEN=16 HL_AUTO_BALANCE=15 HL_AUTO_FAST_MEM_SIZE=262144 ./camera_pipe 8 -1 # 8-bit output,
+	#HL_AUTO_RAND=1 HL_AUTO_PARALLELISM=8 HL_AUTO_VEC_LEN=8 HL_AUTO_BALANCE=10 HL_AUTO_FAST_MEM_SIZE=16384 ./camera_pipe 8 -1 # 8-bit output,
 
 fcam/Demosaic.o: fcam/Demosaic.cpp fcam/Demosaic.h
 	$(CXX) $(CXXFLAGS) -c $< -o $@
