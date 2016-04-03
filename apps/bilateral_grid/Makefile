@@ -14,6 +14,12 @@ bilateral_grid_naive.o: bilateral_grid
 	# naive
 	HL_AUTO_NAIVE=1 ./bilateral_grid 8 -1
 
+bilateral_grid_naive_gpu.o: bilateral_grid
+	HL_AUTO_NAIVE=1 HL_AUTO_GPU=1 ./bilateral_grid 8 -2
+
+bilateral_grid_auto_gpu.o: bilateral_grid
+	HL_AUTO_GPU=1 ./bilateral_grid 8 -2
+
 bilateral_grid_auto.o: bilateral_grid
 	./bilateral_grid 8 -1
 
