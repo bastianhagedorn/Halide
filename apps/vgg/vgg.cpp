@@ -263,12 +263,20 @@ int main(int argc, char **argv) {
                    bound(softm->forward.args()[1], 0, N);
     acc.bound(acc.args()[0], 0, 1);
 
+    softm->forward.estimate(softm->forward.args()[0], 0, C).
+                   estimate(softm->forward.args()[1], 0, N);
+    acc.estimate(acc.args()[0], 0, 1);
+
     std::vector<Func> test_outs;
     test_outs.push_back(acc);
     test_outs.push_back(softm->forward);
     Pipeline test(test_outs);
 
     Target target = get_target_from_environment();
+
+    target.set_feature(Halide::Target::CUDA);
+    target.set_feature(Halide::Target::Debug);
+
     if (sched == -1)
         test.compile_jit(target, true);
     else

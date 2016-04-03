@@ -45,7 +45,8 @@ int main(int argc, char **argv) {
     Expr blue = cast<uint8_t> (clamp(eq(x, y) + 1.765f * (Cb(x, y) - 128), 0, 255));
     color(x, y, c) = select(c == 0, red, select(c == 1, green , blue));
 
-    color.bound(x, 0, 1536).bound(y, 0, 2560).bound(c, 0, 3);
+    //color.bound(x, 0, 1536).bound(y, 0, 2560).bound(c, 0, 3);
+    color.estimate(x, 0, 1536).estimate(y, 0, 2560).estimate(c, 0, 3);
 
     // Pick a schedule
     int schedule = atoi(argv[1]);
@@ -57,6 +58,9 @@ int main(int argc, char **argv) {
         eq.compute_root().parallel(y);
         color.parallel(y).vectorize(x, 8);
     }
+
+    target.set_feature(Halide::Target::CUDA);
+    target.set_feature(Halide::Target::Debug);
 
     auto_build(color, "hist", {in}, target, (schedule == -1));
 

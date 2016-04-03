@@ -21,6 +21,7 @@ int main(int argc, char **argv) {
     // the gpu or copying the output back.
     double min_t = benchmark(1, 10, [&]() {
         hist(input, output);
+        output.copy_to_host();
     });
     printf("runtime: %g\n", min_t * 1e3);
 
