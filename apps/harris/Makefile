@@ -21,6 +21,7 @@ harris_sweep.o: harris
 
 harris_rand.o: harris
 	HL_AUTO_RAND=1 HL_AUTO_PARALLELISM=12 HL_AUTO_VEC_LEN=16 HL_AUTO_BALANCE=10 HL_AUTO_FAST_MEM_SIZE=32768 ./harris -1
+	#HL_AUTO_RAND=1 HL_AUTO_PARALLELISM=16 HL_AUTO_VEC_LEN=8 HL_AUTO_BALANCE=10 HL_AUTO_FAST_MEM_SIZE=16384 ./harris -1
 
 filter_%: harris_%.o filter.cpp
 	$(CXX) $(CXXFLAGS) $^ -lpthread -ldl -o $@ \

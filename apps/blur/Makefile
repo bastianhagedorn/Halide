@@ -19,6 +19,7 @@ halide_blur_sweep.o: halide_blur
 
 halide_blur_rand.o: halide_blur
 	HL_AUTO_RAND=1 HL_AUTO_PARALLELISM=12 HL_AUTO_VEC_LEN=16 HL_AUTO_BALANCE=40 HL_AUTO_FAST_MEM_SIZE=131072 ./halide_blur -1
+	#HL_AUTO_RAND=1 HL_AUTO_PARALLELISM=16 HL_AUTO_VEC_LEN=8 HL_AUTO_BALANCE=20 HL_AUTO_FAST_MEM_SIZE=262144 ./halide_blur -1
 
 test_%: test.cpp halide_blur_%.o
 	$(CXX) $(CXXFLAGS) $^ -fopenmp -o $@ -march=native -lpthread -ldl $(PNGFLAGS)
