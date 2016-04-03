@@ -87,7 +87,7 @@ int main(int argc, char **argv) {
 
     Target target = get_target_from_environment();
 
-    if (target.has_gpu_feature()) {
+    if (target.has_gpu_feature() && schedule == 0) {
         // Schedule blurz in 8x8 tiles. This is a tile in
         // grid-space, which means it represents something like
         // 64x64 pixels in the input (if s_sigma is 8).
@@ -122,7 +122,7 @@ int main(int argc, char **argv) {
         bilateral_grid.compute_root().parallel(y).vectorize(x, 8);
     }
 
-    target.set_feature(Halide::Target::CUDA);
+    target.set_feature(Halide::Target::CUDACapability35);
     target.set_feature(Halide::Target::Debug);
     //target.set_feature(Halide::Target::NoAsserts);
 

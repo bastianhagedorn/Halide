@@ -132,8 +132,9 @@ int main(int argc, char **argv) {
     }
 
     Target target = get_target_from_environment();
-    target.set_feature(Halide::Target::CUDA);
-    //target.set_feature(Halide::Target::Debug);
+    target.set_feature(Halide::Target::CUDACapability35);
+    //target.set_feature(Halide::Target::CUDA);
+    target.set_feature(Halide::Target::Debug);
 
     if (sched == -1)
         f_ReLU.compile_jit(target, true);

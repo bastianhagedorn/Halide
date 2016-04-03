@@ -26,6 +26,7 @@ int main(int argc, char **argv) {
     // Timing code
     double best = benchmark(timing, 1, [&]() {
         local_laplacian(levels, alpha/(levels-1), beta, input, output);
+        output.copy_to_host();
     });
     printf("runtime: %g\n", best * 1e3);
 
