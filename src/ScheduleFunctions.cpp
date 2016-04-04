@@ -4564,7 +4564,8 @@ void vectorize_update(Function &func, int stage,
     }
 }
 
-void pick_gpu_thread_dims(Function &f, map<string, int> &dim_estimates,
+void pick_gpu_thread_dims(Schedule &s,
+                          map<string, int> &dim_estimates,
                           int threads_per_block,
                           vector<int> &thread_dim_size) {
 
@@ -4572,7 +4573,7 @@ void pick_gpu_thread_dims(Function &f, map<string, int> &dim_estimates,
                                         "__thread_id_y",
                                         "__thread_id_z"};
 
-    vector<Dim> &dims = f.schedule().dims();
+    vector<Dim> &dims = s.dims();
     int outer_dim = dims.size() - 2;
     int marked_block_dims = 0;
     int num_block_dim = 3;
@@ -4584,7 +4585,7 @@ void pick_gpu_thread_dims(Function &f, map<string, int> &dim_estimates,
             continue;
         num_threads *= dim_threads;
         thread_dim_size[marked_block_dims] = dim_threads;
-        rename_dim(f.schedule(), i, thread_names[marked_block_dims]);
+        rename_dim(s, i, thread_names[marked_block_dims]);
         dims[i].for_type = ForType::Parallel;
         marked_block_dims++;
     }
@@ -5345,9 +5346,18 @@ void synthesize_gpu_schedule(string g_name, Partitioner &part,
             m.schedule().compute_level().var = dims[compute_level].var;
 
             // Parallelize within a tile
-            pick_gpu_thread_dims(m, mem_estimates,
+            pick_gpu_thread_dims(m.schedule(), mem_estimates,
                                  part.arch_params.threads_per_block,
                                  dim_threads);
+            if (!m.is_pure()) {
+                int num_updates = m.updates().size();
+                for (int u = 0; u < num_updates; u++) {
+                    Schedule &u_s = m.update_schedule(u);
+                    pick_gpu_thread_dims(u_s, mem_estimates,
+                                         part.arch_params.threads_per_block,
+                                         dim_threads);
+                }
+            }
         }
     }
     // std::cerr << "Finished group members "  <<  g_out.name() << std::endl;
