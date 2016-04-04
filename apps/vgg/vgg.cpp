@@ -273,15 +273,17 @@ int main(int argc, char **argv) {
     Pipeline test(test_outs);
 
     Target target = get_target_from_environment();
+    if (sched == -2) {
+        target.set_feature(Halide::Target::CUDACapability35);
+        //target.set_feature(Halide::Target::CUDA);
+        //target.set_feature(Halide::Target::Debug);
+    }
 
-    target.set_feature(Halide::Target::CUDA);
-    target.set_feature(Halide::Target::Debug);
-
-    if (sched == -1)
+    if (sched == -1 || sched == -2)
         test.compile_jit(target, true);
     else
         test.compile_jit(target, false);
 
-    double best = benchmark(3, 1, [&]() { test.realize({loss, scores}); });
+    double best = benchmark(3, 1, [&]() { test.realize({loss, scores}); scores.copy_to_host();});
     std::cout << "runtime: " << best * 1e3 << std::endl;
 }

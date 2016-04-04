@@ -30,6 +30,7 @@ int main(int argc, char **argv) {
     // the gpu or copying the output back.
     double min_t = benchmark(20, 20, [&]() {
         non_local_means(atof(argv[3]), input, output);
+        output.copy_to_host();
     });
     printf("runtime: %g\n", min_t * 1e3);
 

@@ -127,10 +127,13 @@ int main(int argc, char **argv) {
     Image<float> out(in.width(), in.height(), in.channels());
     Target target = get_target_from_environment();
 
-    target.set_feature(Halide::Target::CUDA);
-    target.set_feature(Halide::Target::Debug);
+    if (schedule == -2) {
+        target.set_feature(Halide::Target::CUDACapability35);
+        //target.set_feature(Halide::Target::Debug);
+        //target.set_feature(Halide::Target::CUDA);
+    }
 
-    if (schedule == -1) {
+    if (schedule == -1 || schedule == -2) {
         final.compile_jit(target, true);
     } else {
         final.compile_jit(target);

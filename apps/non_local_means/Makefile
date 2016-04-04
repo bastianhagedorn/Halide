@@ -12,6 +12,12 @@ non_local_means: non_local_means.cpp
 non_local_means_naive.o: non_local_means
 	HL_AUTO_NAIVE=1 ./$(<) 7 7 -1
 
+non_local_means_naive_gpu.o: non_local_means
+	HL_AUTO_NAIVE=1 HL_AUTO_GPU=1 ./$(<) 7 7 -2
+
+non_local_means_auto_gpu.o: non_local_means
+	HL_AUTO_GPU=1 ./$(<) 7 7 -2
+
 non_local_means_auto.o: non_local_means
 	./$(<) 7 7 -1
 
