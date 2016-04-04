@@ -16,6 +16,12 @@ harris_auto.o: harris
 harris_naive.o: harris
 	HL_AUTO_NAIVE=1 ./harris -1
 
+harris_naive_gpu.o: harris
+	HL_AUTO_NAIVE=1 HL_AUTO_GPU=1 ./harris -2
+
+harris_auto_gpu.o: harris
+	HL_AUTO_GPU=1 ./harris -2
+
 harris_sweep.o: harris
 	HL_AUTO_SWEEP=1 HL_AUTO_PARALLELISM=12 HL_AUTO_VEC_LEN=16 HL_AUTO_BALANCE=10 HL_AUTO_FAST_MEM_SIZE=32768 ./harris -1
 
@@ -29,4 +35,4 @@ filter_%: harris_%.o filter.cpp
 
 clean: clean_bench clean_variants
 	rm -f harris harris*.o harris.h\
-		filter_ref filter_auto filter_naive filter_sweep out.png
+		filter_ref filter_auto filter_naive filter_sweep out.png filter_auto_gpu filter_naive_gpu

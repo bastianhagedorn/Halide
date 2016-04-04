@@ -16,6 +16,12 @@ hist_auto.o: hist
 hist_naive.o: hist
 	HL_AUTO_NAIVE=1 ./hist -1
 
+hist_naive_gpu.o: hist
+	HL_AUTO_NAIVE=1 HL_AUTO_GPU=1 ./hist -2
+
+hist_auto_gpu.o: hist
+	HL_AUTO_GPU=1 ./hist -2
+
 hist_sweep.o: hist
 	HL_AUTO_SWEEP=1 HL_AUTO_PARALLELISM=12 HL_AUTO_VEC_LEN=16 HL_AUTO_BALANCE=10 HL_AUTO_FAST_MEM_SIZE=32768 ./hist -1
 
@@ -29,4 +35,4 @@ filter_%: hist_%.o filter.cpp
 
 clean: clean_bench clean_variants
 	rm -f hist hist*.o hist.h\
-		filter_ref filter_auto filter_sweep filter_rand out.png
+		filter_ref filter_auto filter_sweep filter_rand out.png filter_naive_gpu filter_auto_gpu

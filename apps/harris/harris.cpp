@@ -84,9 +84,11 @@ int main(int argc, char **argv) {
     }
 
 
-    target.set_feature(Halide::Target::CUDA);
-    target.set_feature(Halide::Target::Debug);
-    auto_build(shifted, "harris", {in}, target, (schedule == -1));
+    if (schedule == -2) {
+        target.set_feature(Halide::Target::CUDACapability35);
+        //target.set_feature(Halide::Target::Debug);
+    }
+    auto_build(shifted, "harris", {in}, target, (schedule == -1 || schedule == -2));
 
     return 0;
 }

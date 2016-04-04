@@ -59,10 +59,13 @@ int main(int argc, char **argv) {
         color.parallel(y).vectorize(x, 8);
     }
 
-    target.set_feature(Halide::Target::CUDA);
-    target.set_feature(Halide::Target::Debug);
+    if (schedule == -2) {
+        //target.set_feature(Halide::Target::CUDA);
+        target.set_feature(Halide::Target::CUDACapability35);
+        //target.set_feature(Halide::Target::Debug);
+    }
 
-    auto_build(color, "hist", {in}, target, (schedule == -1));
+    auto_build(color, "hist", {in}, target, (schedule == -1 || schedule == -2));
 
     return 0;
 }
