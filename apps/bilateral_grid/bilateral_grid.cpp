@@ -122,10 +122,10 @@ int main(int argc, char **argv) {
         bilateral_grid.compute_root().parallel(y).vectorize(x, 8);
     }
 
-    if (schedule == -2)
+    if (schedule == -2) {
         target.set_feature(Halide::Target::CUDACapability35);
-    //target.set_feature(Halide::Target::Debug);
-    //target.set_feature(Halide::Target::NoAsserts);
+        //target.set_feature(Halide::Target::Debug);
+    }
 
     auto_build(bilateral_grid, "bilateral_grid", {r_sigma, input},
                                     target, (schedule == -1 || schedule == -2));

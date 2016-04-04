@@ -27,9 +27,14 @@ int main(int argc, char **argv) {
 
     Target target = get_target_from_environment();
 
-    target.set_feature(Halide::Target::CUDA);
-    target.set_feature(Halide::Target::Debug);
-    auto_build(blur_y, "halide_blur", {input}, target, (schedule == -1));
+    if (schedule == -2) {
+        target.set_feature(Halide::Target::CUDACapability35);
+        target.set_feature(Halide::Target::CUDA);
+        //target.set_feature(Halide::Target::Debug);
+    }
+
+    auto_build(blur_y, "halide_blur", {input}, target,
+                                        (schedule == -1 || schedule == -2));
 
     /*
     blur_y.split(y, y, yi, 4).split(x, x, xi, 64).reorder(xi, yi, x, y).

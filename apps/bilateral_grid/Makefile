@@ -41,5 +41,5 @@ out.png: filter_ref
 	./filter_ref ../images/gray.png out.png 0.1 10
 
 clean: clean_bench clean_variants
-	rm -f bilateral_grid bilateral_grid.mp4 bilateral_grid.o bilateral_grid.h\
-		filter_ref filter_auto filter_naive filter_sweep filter_rand out.png
+	rm -f bilateral_grid bilateral_grid.mp4 bilateral_grid.o bilateral_grid.h bilateral_grid_*.o\
+		filter_ref filter_auto filter_naive filter_sweep filter_rand filter_naive_gpu filter_auto_gpu out.png

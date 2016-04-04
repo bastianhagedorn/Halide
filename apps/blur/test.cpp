@@ -187,6 +187,7 @@ Image<uint16_t> blur_halide(Image<uint16_t> in) {
         // Compute the same region of the output as blur_fast (i.e., we're
         // still being sloppy with boundary conditions)
         halide_blur(in, out);
+        out.copy_to_host();
     });
 
     return out;
