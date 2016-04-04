@@ -4565,7 +4565,8 @@ void vectorize_update(Function &func, int stage,
 }
 
 void pick_gpu_thread_dims(Function &f, map<string, int> &dim_estimates,
-                          int threads_per_block) {
+                          int threads_per_block,
+                          vector<int> &thread_dim_size) {
 
     std::vector<string> thread_names = {"__thread_id_x",
                                         "__thread_id_y",
@@ -4577,9 +4578,12 @@ void pick_gpu_thread_dims(Function &f, map<string, int> &dim_estimates,
     int num_block_dim = 3;
     int num_threads = 1;
     for (int i = 0; marked_block_dims < num_block_dim && i <= outer_dim; i++) {
-        if (dim_estimates[dims[i].var] * num_threads > threads_per_block || !dims[i].pure)
+        //std::cerr << dims[i].var << "," << dim_estimates[dims[i].var] << "," << num_threads << std::endl;
+        int dim_threads = std::max(dim_estimates[dims[i].var], thread_dim_size[marked_block_dims]);
+        if (dim_threads * num_threads > threads_per_block || !dims[i].pure)
             continue;
-        num_threads *= dim_estimates[dims[i].var];
+        num_threads *= dim_threads;
+        thread_dim_size[marked_block_dims] = dim_threads;
         rename_dim(f.schedule(), i, thread_names[marked_block_dims]);
         dims[i].for_type = ForType::Parallel;
         marked_block_dims++;
@@ -4727,7 +4731,7 @@ void synthesize_cpu_schedule(string g_name, Partitioner &part,
         assert(index!=-1);
         if (tile_sizes_pure[v] > 1) {
             split_dim(g_out.schedule(), index, tile_sizes_pure[v],
-                    out_estimates, "tile", false);
+                      out_estimates, "tile", false);
             move_dim_to_outermost(g_out.schedule(), index + 1);
         } else if (tile_sizes_pure[v] == 1) {
             move_dim_to_outermost(g_out.schedule(), index);
@@ -5053,7 +5057,7 @@ void mark_block_dims(vector<Dim> &dims, map<string, int> &tile_sizes,
 void realize_tiling_gpu(vector<Dim> &dims, Schedule &s,
                         vector<string> &tile_vars, map<string, int> &tile_sizes,
                         vector<string> &block_dims, map<string, int> &estimates,
-                        int &num_tile_dims) {
+                        int &num_tile_dims, vector<int> &dim_threads) {
 
     // Mapping tiling to GPU block and thread mapping
     std::vector<string> block_names = {"__block_id_x",
@@ -5102,13 +5106,40 @@ void realize_tiling_gpu(vector<Dim> &dims, Schedule &s,
         if (tile_sizes[v] >= 1) {
             string block_name = block_names[num_block_dim];
             string thread_name = thread_names[num_block_dim];
-            num_block_dim++;
+            dim_threads[num_block_dim] = std::max(dim_threads[num_block_dim], tile_sizes[v]);
 
             split_dim_gpu(s, index, tile_sizes[v], estimates, block_name, thread_name);
             move_dim_to_outermost(s, index + 1);
+            num_block_dim++;
             num_tile_dims++;
         }
     }
+}
+
+map<string, Box> get_group_member_bounds(Partitioner &part, string group,
+                                         vector<int> &tile_sizes) {
+
+    vector<pair<int, int> > bounds;
+    vector<bool> eval;
+    map<string, Box> conc_reg;
+
+    const vector<string> &args = part.analy.env[group].args();
+    vector<int> &dim_estimates = part.func_pure_dim_estimates[group];
+
+    for (unsigned int i = 0; i < args.size(); i++) {
+        if (tile_sizes[i] != -1) {
+            bounds.push_back(make_pair(0, tile_sizes[i] - 1));
+        }
+        else {
+            bounds.push_back(make_pair(0, dim_estimates[i] - 1));
+        }
+        eval.push_back(true);
+    }
+
+    conc_reg = part.analy.concrete_dep_regions(group, eval,
+                                               part.analy.func_dep_regions,
+                                               bounds);
+    return conc_reg;
 }
 
 void synthesize_gpu_schedule(string g_name, Partitioner &part,
@@ -5131,6 +5162,9 @@ void synthesize_gpu_schedule(string g_name, Partitioner &part,
     map<string, int> org_out_estimates =
         get_dim_estimates(g_out.name(), pipeline_bounds, env);
     map<string, int> out_estimates = org_out_estimates;
+
+    map<string, Box> group_bounds =
+        get_group_member_bounds(part, g_name, sched.tile_sizes);
 
     map<string, int> tile_sizes_pure;
     if (sched.locality || sched.fusion) {
@@ -5156,6 +5190,7 @@ void synthesize_gpu_schedule(string g_name, Partitioner &part,
     //    std::cout << e.first << " " << e.second << std::endl;
 
     vector<string> block_dims;
+    vector<int> dim_threads = {0, 0, 0};
     set<string> pure_par_vars;
 
     for(int i = 0; i < (int)dims.size() - 1; i++) {
@@ -5178,7 +5213,7 @@ void synthesize_gpu_schedule(string g_name, Partitioner &part,
 
     realize_tiling_gpu(dims, g_out.schedule(), pure_tile_vars,
                        tile_sizes_pure, block_dims, out_estimates,
-                       num_tile_dims);
+                       num_tile_dims, dim_threads);
 
     if (!g_out.is_pure()) {
 
@@ -5281,21 +5316,26 @@ void synthesize_gpu_schedule(string g_name, Partitioner &part,
 
             realize_tiling_gpu(u_dims, s, update_vars, tile_sizes_update,
                                block_dims_update, out_up_estimates,
-                               num_tile_dims_update);
+                               num_tile_dims_update, dim_threads);
 
         }
     }
 
     int num_fused_dims = 0;
+
+    //for (auto &t: dim_threads)
+    //    std::cerr << t << std::endl;
+
     for (auto &m: part.groups[g_name]) {
         int outer_dim = dims.size() - 2;
+        //map<string, int> org_mem_estimates =
+        //    get_dim_estimates(m.name(), pipeline_bounds, env);
         map<string, int> org_mem_estimates =
-            get_dim_estimates(m.name(), pipeline_bounds, env);
+            get_dim_estimates(m.name(), group_bounds, env);
         map<string, int> mem_estimates = org_mem_estimates;
         if (m.name() != g_out.name() &&
                 inlines.find(m.name()) == inlines.end() && num_tile_dims > 0) {
             //int compute_level = inner_tile_dim;
-
             int compute_level = outer_dim - num_tile_dims +
                                 num_fused_dims + 1;
             m.schedule().store_level().func = g_out.name();
@@ -5305,7 +5345,9 @@ void synthesize_gpu_schedule(string g_name, Partitioner &part,
             m.schedule().compute_level().var = dims[compute_level].var;
 
             // Parallelize within a tile
-            pick_gpu_thread_dims(m, mem_estimates, part.arch_params.threads_per_block);
+            pick_gpu_thread_dims(m, mem_estimates,
+                                 part.arch_params.threads_per_block,
+                                 dim_threads);
         }
     }
     // std::cerr << "Finished group members "  <<  g_out.name() << std::endl;
