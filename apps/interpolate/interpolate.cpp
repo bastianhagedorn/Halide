@@ -211,18 +211,22 @@ int main(int argc, char **argv) {
         }
         break;
     }
-    case -1:
+    }
+
+    if (sched == -1 || sched == -2)
     {
         final.bound(x, 0, 1536).bound(y, 0, 2560).bound(c, 0, 3);
         final.estimate(x, 0, 1536).estimate(y, 0, 2560).estimate(c, 0, 3);
     }
+
+    if (sched == -2) {
+        //target.set_feature(Halide::Target::CUDA);
+        target.set_feature(Halide::Target::CUDACapability35);
+        //target.set_feature(Halide::Target::Debug);
     }
 
-    target.set_feature(Halide::Target::CUDA);
-    target.set_feature(Halide::Target::Debug);
-
     // JIT compile the pipeline eagerly, so we don't interfere with timing
-    if (sched == -1)
+    if (sched == -1 || sched == -2)
         final.compile_jit(target, true);
     else
         final.compile_jit(target, false);
@@ -234,7 +238,7 @@ int main(int argc, char **argv) {
     input.set(in_png);
 
     //std::cout << "Running... " << std::endl;
-    double best = benchmark(20, 1, [&]() { final.realize(out); out.copy_to_host()});
+    double best = benchmark(20, 1, [&]() { final.realize(out); out.copy_to_host();});
     //std::cout << " took " << best * 1e3 << " msec." << std::endl;
     std::cout << "runtime: " << best * 1e3 << std::endl;
 

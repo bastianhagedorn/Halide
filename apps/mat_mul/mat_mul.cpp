@@ -36,7 +36,7 @@ int main(int argc, char **argv) {
     Func out;
     out(x, y) = prod(x, y);
 
-    //out.bound(x, 0, size).bound(y, 0, size);
+    out.bound(x, 0, size).bound(y, 0, size);
     out.estimate(x, 0, size).estimate(y, 0, size);
 
     int sched = atoi(argv[1]);
@@ -52,10 +52,12 @@ int main(int argc, char **argv) {
 
     Target target = get_target_from_environment();
 
-    target.set_feature(Halide::Target::CUDA);
-    target.set_feature(Halide::Target::Debug);
+    if (sched == -2) {
+        target.set_feature(Halide::Target::CUDACapability35);
+        //target.set_feature(Halide::Target::Debug);
+    }
 
-    if (sched == -1)
+    if (sched == -1 || sched == -2)
         out.compile_jit(target, true);
     else
         out.compile_jit(target, false);
@@ -65,6 +67,6 @@ int main(int argc, char **argv) {
 
     std::vector<Func> outs;
     outs.push_back(out);
-    double best = benchmark(3, 1, [&]() { out.realize(C); });
+    double best = benchmark(3, 1, [&]() { out.realize(C); C.copy_to_host(); });
     std::cout << "runtime: " << best * 1e3 << std::endl;
 }

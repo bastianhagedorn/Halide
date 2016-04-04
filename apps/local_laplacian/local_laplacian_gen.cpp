@@ -166,7 +166,7 @@ int main(int argc, char **argv) {
 
     Target target = get_target_from_environment();
 
-    if (target.has_gpu_feature()) {
+    if (target.has_gpu_feature() && schedule == 0) {
         // gpu schedule
         output.compute_root().gpu_tile(x, y, 16, 8, DeviceAPI::Default_GPU);
         for (int j = 0; j < J; j++) {
@@ -205,10 +205,14 @@ int main(int argc, char **argv) {
         output.print_loop_nest();
     }
 
-    target.set_feature(Halide::Target::CUDA);
-    target.set_feature(Halide::Target::Debug);
+    if (schedule == -2) {
+        target.set_feature(Halide::Target::CUDACapability35);
+        //target.set_feature(Halide::Target::Debug);
+        //target.set_feature(Halide::Target::CUDA);
+    }
+
     auto_build(output, "local_laplacian", {levels, alpha, beta, input},
-                            target, (schedule == -1));
+                            target, (schedule == -1 || schedule == -2));
 
     //output.compile_to_c("local_laplacian_c.cpp", {levels, alpha, beta, input}, "llc", target);
     //output.compile_to_header("local_laplacian_c.h", {levels, alpha, beta, input}, "llc", target);
