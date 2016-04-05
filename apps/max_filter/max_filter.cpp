@@ -140,7 +140,7 @@ int main(int argc, char **argv) {
     }
 
     // std::cout << "Running... " << std::endl;
-    double best = benchmark(3, 3, [&]() { final.realize(out); out.copy_to_host(); });
+    double best = benchmark(5, 50, [&]() { final.realize(out);}, [&]() { out.copy_to_host(); });
     std::cout << "runtime: " << best * 1e3 << std::endl;
 
     // save_image(out, argv[2]);

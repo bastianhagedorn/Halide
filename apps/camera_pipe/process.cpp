@@ -61,12 +61,11 @@ int main(int argc, char **argv) {
 
     double best;
 
-    best = benchmark(timing_iterations, 5, [&]() {
+    best = benchmark(timing_iterations, 100, [&]() {
         curved(color_temp, gamma, contrast, blackLevel, whiteLevel,
                input, matrix_3200, matrix_7000,
                output);
-        output.copy_to_host();
-    });
+    }, [&] (){output.copy_to_host();});
     fprintf(stdout, "runtime: %g\n", best * 1e3);
     //save_image(output, argv[6]);
 

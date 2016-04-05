@@ -3615,7 +3615,7 @@ Partitioner::Option Partitioner::choose_candidate(
                         else
                             curr_size = 1;
 
-                        if (j == 0 && !gpu_schedule) {
+                        if (j == 0) {
                             if (gpu_schedule)
                                 opt.tile_sizes.push_back(std::max(curr_size, arch_params.vec_len));
                             else

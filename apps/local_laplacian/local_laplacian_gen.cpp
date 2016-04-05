@@ -159,7 +159,7 @@ int main(int argc, char **argv) {
     // Convert back to 16-bit
     output(x, y, c) = cast<uint16_t>(clamp(color(x, y, c), 0.0f, 1.0f) * 65535.0f);
 
-    //output.bound(x, 0, 1536).bound(y, 0, 2560).bound(c, 0, 3);
+    output.bound(x, 0, 1536).bound(y, 0, 2560);
     output.estimate(x, 0, 1536).estimate(y, 0, 2560).estimate(c, 0, 3);
     /* THE SCHEDULE */
     remap.compute_root();

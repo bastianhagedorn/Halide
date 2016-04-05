@@ -143,6 +143,6 @@ int main(int argc, char **argv) {
     else
         f_ReLU.compile_jit(target, false);
 
-    double best = benchmark(5, 5, [&]() { f_ReLU.realize(conv_out); conv_out.copy_to_host();});
+    double best = benchmark(5, 20, [&]() { f_ReLU.realize(conv_out);}, [&](){conv_out.copy_to_host();});
     std::cout << "runtime: " << best * 1e3 << std::endl;
 }

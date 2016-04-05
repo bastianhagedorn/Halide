@@ -238,7 +238,7 @@ int main(int argc, char **argv) {
     input.set(in_png);
 
     //std::cout << "Running... " << std::endl;
-    double best = benchmark(20, 1, [&]() { final.realize(out); out.copy_to_host();});
+    double best = benchmark(10, 100, [&]() { final.realize(out);}, [&](){ out.copy_to_host();});
     //std::cout << " took " << best * 1e3 << " msec." << std::endl;
     std::cout << "runtime: " << best * 1e3 << std::endl;
 
