@@ -2480,7 +2480,8 @@ struct Partitioner {
         int vec_len;
         long long fast_mem_size;
         int balance;
-        int threads_per_block;
+        int max_threads_per_block;
+        int target_threads_per_block;
     };
 
     map<string, Box> &pipeline_bounds;
@@ -2627,18 +2628,19 @@ struct Partitioner {
 
         arch_params.parallelism = 16 * 8;
         //arch_params.parallelism = 16;
-        arch_params.vec_len = 64;
+        arch_params.vec_len = 32;
         //arch_params.vec_len = 16;
 
         if (!random_seed) {
             // Initialize machine params
             arch_params.balance = 10;
             //arch_params.fast_mem_size = 8 * 1024 * 32;
-            arch_params.fast_mem_size = 8 * 1024 * 4;
+            arch_params.fast_mem_size = 8 * 1024;
             // L1 = 32K
             // L2 = 256K
             // L3 = 8192K
-            arch_params.threads_per_block = 1024;
+            arch_params.max_threads_per_block = 1024;
+            arch_params.target_threads_per_block = 128;
 
             char *var;
             var = getenv("HL_AUTO_PARALLELISM");
@@ -3203,7 +3205,7 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
 
 
     if (gpu_schedule && l != Partitioner::INLINE &&
-        (((num_ele_per_tile) < arch_params.vec_len))) {
+        (((num_ele_per_tile) < arch_params.target_threads_per_block))) {
         // Constrain the number of elements in a tile to be atleast
         // vector length
         opt.benefit = -1;
@@ -4578,7 +4580,7 @@ void vectorize_update(Function &func, int stage,
 
 void pick_gpu_thread_dims(Schedule &s,
                           map<string, int> &dim_estimates,
-                          int threads_per_block,
+                          int max_threads_per_block,
                           vector<int> &thread_dim_size) {
 
     std::vector<string> thread_names = {"__thread_id_x",
@@ -4593,7 +4595,7 @@ void pick_gpu_thread_dims(Schedule &s,
     for (int i = 0; marked_block_dims < num_block_dim && i <= outer_dim; i++) {
         //std::cerr << dims[i].var << "," << dim_estimates[dims[i].var] << "," << num_threads << std::endl;
         int dim_threads = std::max(dim_estimates[dims[i].var], thread_dim_size[marked_block_dims]);
-        if (dim_threads * num_threads > threads_per_block || !dims[i].pure)
+        if (dim_threads * num_threads > max_threads_per_block || !dims[i].pure)
             continue;
         num_threads *= dim_threads;
         thread_dim_size[marked_block_dims] = dim_threads;
@@ -4972,8 +4974,8 @@ void synthesize_cpu_schedule(string g_name, Partitioner &part,
 
 void mark_block_dims(vector<Dim> &dims, map<string, int> &tile_sizes,
                      vector<string> &block_dims, map<string, int> &estimates,
-                     int parallelism, int vec_len, int threads_per_block,
-                     set<string> &par_vars) {
+                     int parallelism, int vec_len, int target_threads_per_block,
+                     int max_threads_per_block, set<string> &par_vars) {
 
     if (tile_sizes.size() == 0) {
         // Handle groups with no tiling
@@ -4985,14 +4987,14 @@ void mark_block_dims(vector<Dim> &dims, map<string, int> &tile_sizes,
         for(int i = 0; i < (int)dims.size() - 1; i++) {
             if (par_vars.find(dims[i].var) == par_vars.end())
                 continue;
-            if (num_threads < vec_len && num_mapped_to_block < 3) {
+            if (num_threads < target_threads_per_block && num_mapped_to_block < 3) {
                 int tile_size = 0;
                 if (estimates[dims[i].var] >= vec_len)
                     tile_size = vec_len;
                 else
                     tile_size = estimates[dims[i].var];
 
-                if (num_threads * tile_size > threads_per_block)
+                if (num_threads * tile_size > max_threads_per_block)
                     break;
 
                 tile_sizes[dims[i].var] = tile_size;
@@ -5027,7 +5029,7 @@ void mark_block_dims(vector<Dim> &dims, map<string, int> &tile_sizes,
         for(int i = 0; i < (int)dims.size() - 1; i++) {
             if (par_vars.find(dims[i].var) == par_vars.end())
                 continue;
-            if (num_threads < vec_len && num_mapped_to_block < 3) {
+            if (num_threads < target_threads_per_block && num_mapped_to_block < 3) {
                 int tile_size = 0;
                 if (tile_sizes.find(dims[i].var) == tile_sizes.end()) {
                     if (estimates[dims[i].var] >= vec_len)
@@ -5038,7 +5040,7 @@ void mark_block_dims(vector<Dim> &dims, map<string, int> &tile_sizes,
                     tile_size = tile_sizes[dims[i].var];
                 }
 
-                if (num_threads * tile_size > threads_per_block)
+                if (num_threads * tile_size > max_threads_per_block)
                     break;
 
                 tile_sizes[dims[i].var] = tile_size;
@@ -5056,7 +5058,7 @@ void mark_block_dims(vector<Dim> &dims, map<string, int> &tile_sizes,
             if (tile_sizes.find(dims[i].var) != tile_sizes.end()) {
                 if (num_mapped_to_block < 3 &&
                         (curr_par < parallelism) &&
-                        (num_threads * tile_sizes[dims[i].var] < threads_per_block)) {
+                        (num_threads * tile_sizes[dims[i].var] < max_threads_per_block)) {
                     curr_par *= std::ceil((float)estimates[dims[i].var]/ tile_sizes[dims[i].var]);
                     num_threads *= tile_sizes[dims[i].var];
                     block_dims.push_back(dims[i].var);
@@ -5225,7 +5227,8 @@ void synthesize_gpu_schedule(string g_name, Partitioner &part,
     mark_block_dims(dims, tile_sizes_pure, block_dims, out_estimates,
                     part.arch_params.parallelism,
                     part.arch_params.vec_len,
-                    part.arch_params.threads_per_block,
+                    part.arch_params.target_threads_per_block,
+                    part.arch_params.max_threads_per_block,
                     pure_par_vars);
 
     // Populate pure_tile_vars in order
@@ -5321,7 +5324,8 @@ void synthesize_gpu_schedule(string g_name, Partitioner &part,
             mark_block_dims(u_dims, tile_sizes_update, block_dims_update,
                             out_up_estimates, part.arch_params.parallelism,
                             part.arch_params.vec_len,
-                            part.arch_params.threads_per_block,
+                            part.arch_params.target_threads_per_block,
+                            part.arch_params.max_threads_per_block,
                             update_par_vars);
 
             for (int v = 0; v < (int)u_dims.size() - 1; v++) {
@@ -5371,14 +5375,14 @@ void synthesize_gpu_schedule(string g_name, Partitioner &part,
             //    std::cerr << est.first << "," << est.second << std::endl;
 
             pick_gpu_thread_dims(m.schedule(), mem_estimates,
-                                 part.arch_params.threads_per_block,
+                                 part.arch_params.max_threads_per_block,
                                  dim_threads);
             if (!m.is_pure()) {
                 int num_updates = m.updates().size();
                 for (int u = 0; u < num_updates; u++) {
                     Schedule &u_s = m.update_schedule(u);
                     pick_gpu_thread_dims(u_s, mem_estimates,
-                                         part.arch_params.threads_per_block,
+                                         part.arch_params.max_threads_per_block,
                                          dim_threads);
                 }
             }

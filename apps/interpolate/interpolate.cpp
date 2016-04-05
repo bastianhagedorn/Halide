@@ -97,7 +97,8 @@ int main(int argc, char **argv) {
     Target target = get_target_from_environment();
     if (argc == 4)
         sched = atoi(argv[3]);
-    else {
+
+    if (sched > 0) {
         if (target.has_gpu_feature())
             sched = 4;
         else
