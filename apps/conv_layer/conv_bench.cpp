@@ -92,27 +92,60 @@ int main(int argc, char **argv) {
     int y_block = 32;
     int sched = atoi(argv[1]);
 
+    Target target = get_target_from_environment();
+
     if (sched == 0) {
-       // blocking spatially with vectorization
-       //f_in_bound.compute_at(f_conv, par);
-       //f_in_bound.compute_at(f_conv, z_t);
-       f_in_bound.compute_root().parallel(f_in_bound.args()[3]);
-       //f_in_bound.compute_root().parallel(f_in_bound.args()[2]);
-       f_conv.compute_root();
-       f_conv.fuse(z, n, par).parallel(par);
-       f_conv.update().reorder(x, y, r.z);
-       f_conv.update().split(y, y, y_t, y_block);
-       f_conv.update().split(z, z, z_t, o_block_size);
-       f_conv.update().reorder(y_t, z_t, y, r.z, z);
-       f_conv.update().vectorize(x, vec_len);
-       f_conv.update().unroll(r.x);
-       f_conv.update().unroll(r.y);
-       f_conv.update().fuse(z, n, par).parallel(par);
-       //f_conv.update().reorder(x, r.x, r.y).vectorize(x, vec_len);
-       //f_conv.update().fuse(z, n, par).parallel(par);
-       //f_conv.update().fuse(y, par, par).parallel(par);
-       //f_conv.update().parallel(z);
-       //f_conv.print_loop_nest();
+        if (target.has_gpu_feature()) {
+            Var ni, no, xi, xo, yi, yo, zi, zo;
+            f_ReLU.compute_root()
+                .split(x, xo, xi, 8)
+                .split(y, yo, yi, 8)
+                .split(z, zo, zi, 16)
+                .reorder(xi, yi, zi, n, xo, yo, zo)
+                .gpu_threads(xi, yi, zi)
+                .gpu_blocks(xo, yo, zo);
+
+            f_conv.compute_at(f_ReLU, n)
+                .gpu_threads(x, y, z)
+                .update()
+                .unroll(r.x)
+                .unroll(r.y)
+                .gpu_threads(x, y, z);
+
+            Var v0 = f_in_bound.args()[0];
+            Var v1 = f_in_bound.args()[1];
+            Var v2 = f_in_bound.args()[2];
+            Var v0o, v0i, v1o, v1i, v2o, v2i;
+            f_in_bound.compute_at(f_ReLU, n)
+                .split(v0, v0o, v0i, 2)
+                .split(v1, v1o, v1i, 2)
+                .split(v2, v2o, v2i, 4)
+                .reorder(v0i, v1i, v2i, v0o, v1o, v2o)
+                .unroll(v0i)
+                .unroll(v1i)
+                .gpu_threads(v0o, v1o, v2o);
+        } else {
+            // blocking spatially with vectorization
+            //f_in_bound.compute_at(f_conv, par);
+            //f_in_bound.compute_at(f_conv, z_t);
+            f_in_bound.compute_root().parallel(f_in_bound.args()[3]);
+            //f_in_bound.compute_root().parallel(f_in_bound.args()[2]);
+            f_conv.compute_root();
+            f_conv.fuse(z, n, par).parallel(par);
+            f_conv.update().reorder(x, y, r.z);
+            f_conv.update().split(y, y, y_t, y_block);
+            f_conv.update().split(z, z, z_t, o_block_size);
+            f_conv.update().reorder(y_t, z_t, y, r.z, z);
+            f_conv.update().vectorize(x, vec_len);
+            f_conv.update().unroll(r.x);
+            f_conv.update().unroll(r.y);
+            f_conv.update().fuse(z, n, par).parallel(par);
+            //f_conv.update().reorder(x, r.x, r.y).vectorize(x, vec_len);
+            //f_conv.update().fuse(z, n, par).parallel(par);
+            //f_conv.update().fuse(y, par, par).parallel(par);
+            //f_conv.update().parallel(z);
+            //f_conv.print_loop_nest();
+        }
     } else if (sched == 1) { //autoschedule version for middle choice
        RVar z_r;
        f_in_bound.compute_root().parallel(f_in_bound.args()[3]);
@@ -131,7 +164,7 @@ int main(int argc, char **argv) {
        //f_ReLU.print_loop_nest();
     }
 
-    Target target = get_target_from_environment();
+
     if (sched == -2) {
         target.set_feature(Halide::Target::CUDACapability35);
         //target.set_feature(Halide::Target::CUDA);
@@ -143,6 +176,7 @@ int main(int argc, char **argv) {
     else
         f_ReLU.compile_jit(target, false);
 
-    double best = benchmark(5, 20, [&]() { f_ReLU.realize(conv_out);}, [&](){conv_out.copy_to_host();});
+    Buffer buf(conv_out);
+    double best = benchmark(5, 20, [&]() { f_ReLU.realize(buf);}, [&](){buf.device_sync();});
     std::cout << "runtime: " << best * 1e3 << std::endl;
 }
