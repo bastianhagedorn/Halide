@@ -132,6 +132,10 @@ public:
         }
     }
 
+    void device_sync() const {
+        halide_device_sync(NULL, &contents->buf);
+    }
+
     void copy_to_device(const struct halide_device_interface *device_interface) {
         if (contents->buf.host_dirty) {
             // If host

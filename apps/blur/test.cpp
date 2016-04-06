@@ -183,12 +183,11 @@ Image<uint16_t> blur_halide(Image<uint16_t> in) {
     // Call it once to initialize the halide runtime stuff
     halide_blur(in, out);
 
-    t = benchmark(5, 500, [&]() {
+    t = benchmark(5, 50, [&]() {
         // Compute the same region of the output as blur_fast (i.e., we're
         // still being sloppy with boundary conditions)
         halide_blur(in, out);
-        //out.copy_to_host();
-    }, [&] () { out.copy_to_host();});
+    }, [&] () { out.device_sync();});
 
     return out;
 }
