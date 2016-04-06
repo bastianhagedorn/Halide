@@ -12,7 +12,7 @@ lens_blur: lens_blur.cpp
 	$(PNGFLAGS) $(LDFLAGS) $(LLVM_SHARED_LIBS)
 
 out.png: lens_blur
-	./lens_blur left.png right.png out.png
+	./lens_blur left.png right.png out.png 0
 
 clean: clean_variants
 	rm -f lens_blur out.png

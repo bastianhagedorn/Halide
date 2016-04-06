@@ -189,49 +189,106 @@ int main(int argc, char **argv) {
     //final.bound(x, 0, in_l.width()).bound(y, 0, in_l.height()).bound(c, 0, 3);
     final.estimate(x, 0, in_l.width()).estimate(y, 0, in_l.height()).estimate(c, 0, 3);
 
+    Target target = get_target_from_environment();
+
     // std::cerr << in_l.width() << "," << in_l.height() << std::endl;
     int schedule = atoi(argv[4]);
     switch(schedule) {
     case 0:
-    { // Andrew
-        // bokeh_radius is a pretty simple function of depth. Maybe I should inline it.
+    {
+        if (target.has_gpu_feature()) {
+            cost_pyramid_push[0].compute_root()
+                .reorder(c, z, x, y)
+                .bound(c, 0, 2)
+                .unroll(c)
+                .gpu_tile(x, y, 16, 16);
 
-        cost_pyramid_push[0].compute_root().reorder(c, z, x, y).bound(c, 0, 2).unroll(c).vectorize(x, 16).parallel(y, 4);
-        cost.compute_at(cost_pyramid_push[0], x).vectorize(x);
-        cost_confidence.compute_at(cost_pyramid_push[0], x).vectorize(x);
+            cost.compute_at(cost_pyramid_push[0], Var::gpu_threads());
+            cost_confidence.compute_at(cost_pyramid_push[0], Var::gpu_threads());
 
-        Var xi, yi, t;
-        for (int i = 1; i < 8; i++) {
-            cost_pyramid_push[i].compute_at(cost_pyramid_pull[1], t).vectorize(x, 8);
-            if (i > 1) {
-                cost_pyramid_pull[i].compute_at(cost_pyramid_pull[1], t)
-                    .tile(x, y, xi, yi, 8, 2).vectorize(xi).unroll(yi);
+            for (int i = 1; i < 8; i++) {
+                cost_pyramid_push[i].compute_root()
+                    .gpu_tile(x, y, z, 8, 8, 8);
+                cost_pyramid_pull[i].compute_root()
+                    .gpu_tile(x, y, z, 8, 8, 8);
             }
+
+            depth.compute_root()
+                .gpu_tile(x, y, 16, 16);
+
+            input_with_alpha.compute_root()
+                .reorder(c, x, y).unroll(c).gpu_tile(x, y, 16, 16);
+
+            worst_case_bokeh_radius_y
+                .compute_root()
+                .gpu_tile(x, y, 16, 16);
+
+            worst_case_bokeh_radius
+                .compute_root()
+                .gpu_tile(x, y, 16, 16);
+
+            final.compute_root()
+                .reorder(c, x, y)
+                .bound(c, 0, 3)
+                .unroll(c)
+                .gpu_tile(x, y, 16, 16);
+
+            output.compute_at(final, Var::gpu_threads());
+            output.update().reorder(c, x, s).unroll(c);
+            sample_weight.compute_at(output, x);
+            sample_locations.compute_at(output, x);
+
+        } else {
+            // Andrew
+            // bokeh_radius is a pretty simple function of depth. Maybe I should inline it.
+
+            cost_pyramid_push[0].compute_root()
+                .reorder(c, z, x, y)
+                .bound(c, 0, 2)
+                .unroll(c)
+                .vectorize(x, 16)
+                .parallel(y, 4);
+            cost.compute_at(cost_pyramid_push[0], x)
+                .vectorize(x);
+            cost_confidence.compute_at(cost_pyramid_push[0], x)
+                .vectorize(x);
+
+            Var xi, yi, t;
+            for (int i = 1; i < 8; i++) {
+                cost_pyramid_push[i].compute_at(cost_pyramid_pull[1], t)
+                    .vectorize(x, 8);
+                if (i > 1) {
+                    cost_pyramid_pull[i].compute_at(cost_pyramid_pull[1], t)
+                        .tile(x, y, xi, yi, 8, 2)
+                        .vectorize(xi)
+                        .unroll(yi);
+                }
+            }
+
+
+            cost_pyramid_pull[1].compute_root()
+                .fuse(z, c, t).parallel(t)
+                .tile(x, y, xi, yi, 8, 2).vectorize(xi).unroll(yi);
+
+            depth.compute_root()
+                .tile(x, y, xi, yi, 8, 2).vectorize(xi).unroll(yi)
+                .parallel(y, 8);
+
+            input_with_alpha.compute_root().reorder(c, x, y).unroll(c).vectorize(x, 8).parallel(y, 8);
+
+            worst_case_bokeh_radius_y.compute_at(final, y).vectorize(x, 8);
+
+            final.compute_root().reorder(c, x, y).bound(c, 0, 3).unroll(c).vectorize(x, 8).parallel(y);
+            worst_case_bokeh_radius.compute_at(final, y).vectorize(x, 8);
+            output.compute_at(final, x).vectorize(x);
+            output.update().reorder(c, x, s).vectorize(x).unroll(c);
+            sample_weight.compute_at(output, x).unroll(x);
+            sample_locations.compute_at(output, x).vectorize(x);
+
+            // Ran at 4:01: 111ms
+
+            // At this point, I think I've converged.
         }
-
-
-        cost_pyramid_pull[1].compute_root()
-            .fuse(z, c, t).parallel(t)
-            .tile(x, y, xi, yi, 8, 2).vectorize(xi).unroll(yi);
-
-        depth.compute_root()
-            .tile(x, y, xi, yi, 8, 2).vectorize(xi).unroll(yi)
-            .parallel(y, 8);
-
-        input_with_alpha.compute_root().reorder(c, x, y).unroll(c).vectorize(x, 8).parallel(y, 8);
-
-        worst_case_bokeh_radius_y.compute_at(final, y).vectorize(x, 8);
-
-        final.compute_root().reorder(c, x, y).bound(c, 0, 3).unroll(c).vectorize(x, 8).parallel(y);
-        worst_case_bokeh_radius.compute_at(final, y).vectorize(x, 8);
-        output.compute_at(final, x).vectorize(x);
-        output.update().reorder(c, x, s).vectorize(x).unroll(c);
-        sample_weight.compute_at(output, x).unroll(x);
-        sample_locations.compute_at(output, x).vectorize(x);
-
-        // Ran at 4:01: 111ms
-
-        // At this point, I think I've converged.
     }
     break;
     default:
@@ -243,7 +300,7 @@ int main(int argc, char **argv) {
     left_im.set(in_l);
     right_im.set(in_r);
     Image<float> out(in_l.width(), in_l.height(), 3);
-    Target target = get_target_from_environment();
+    Buffer buf(out);
 
     if (schedule == -2) {
         target.set_feature(Halide::Target::CUDACapability35);
@@ -258,7 +315,7 @@ int main(int argc, char **argv) {
     }
 
     // std::cout << "runtime: " << std::endl;
-    double best = benchmark(5, 50, [&]() { final.realize(out);}, [&]() { out.copy_to_host();});
+    double best = benchmark(5, 5, [&]() { final.realize(buf);}, [&]() { buf.device_sync();});
     std::cout << "runtime: " << best * 1e3 << std::endl;
 
     // save_image(out, argv[3]);
