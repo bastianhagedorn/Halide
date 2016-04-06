@@ -19,13 +19,19 @@ int main(int argc, char **argv) {
     // Pick a schedule
     int schedule = atoi(argv[1]);
 
+    Target target = get_target_from_environment();
+
     if (schedule == 0) {
-        // Repository schedule
-        blur_y.split(y, y, yi, 8).parallel(y).vectorize(x, 8);
-        blur_x.store_at(blur_y, y).compute_at(blur_y, yi).vectorize(x, 8);
+        if (target.has_gpu_feature()) {
+            blur_y.compute_root().gpu_tile(x, y, 16, 16);
+            blur_x.compute_at(blur_y, Var::gpu_blocks()).gpu_threads(x, y);
+        } else {
+            // Repository schedule
+            blur_y.split(y, y, yi, 8).parallel(y).vectorize(x, 8);
+            blur_x.store_at(blur_y, y).compute_at(blur_y, yi).vectorize(x, 8);
+        }
     }
 
-    Target target = get_target_from_environment();
 
     if (schedule == -2) {
         target.set_feature(Halide::Target::CUDACapability35);
