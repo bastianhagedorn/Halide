@@ -21,6 +21,8 @@ int main(int argc, char **argv) {
     Expr B = in(x, y, 2);
     Cb(x, y) = (B - Y(x, y)) * 0.564f + 128;
 
+    // This should really be factored into one-histogram-per-scanline,
+    // followed by summing up the histograms.
     Func hist("hist");
     hist(x) = 0;
     RDom r(0, 1536, 0, 2560);
@@ -53,10 +55,25 @@ int main(int argc, char **argv) {
 
     Target target = get_target_from_environment();
     if (schedule == 0) {
-        hist.compute_root();
-        cdf.compute_root();
-        eq.compute_root().parallel(y);
-        color.parallel(y).vectorize(x, 8);
+        if (target.has_gpu_feature()) {
+            Y.compute_root().gpu_tile(x, y, 16, 16);
+            hist.compute_root();
+            cdf.compute_root();
+            Cr.compute_at(color, Var::gpu_threads());
+            Cb.compute_at(color, Var::gpu_threads());
+            eq.compute_at(color, Var::gpu_threads());
+            color.compute_root()
+                .reorder(c, x, y).bound(c, 0, 3).unroll(c)
+                .gpu_tile(x, y, 16, 16);
+        } else {
+            Y.compute_root().parallel(y, 8).vectorize(x, 8);
+            hist.compute_root();
+            cdf.compute_root();
+            eq.compute_at(color, x).unroll(x);
+            Cb.compute_at(color, x).vectorize(x);
+            Cr.compute_at(color, x).vectorize(x);
+            color.reorder(c, x, y).bound(c, 0, 3).unroll(c).parallel(y, 8).vectorize(x, 8);
+        }
     }
 
     if (schedule == -2) {
