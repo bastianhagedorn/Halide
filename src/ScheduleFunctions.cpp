@@ -2488,8 +2488,9 @@ struct Partitioner {
     map<string, vector<string> > &inlines;
     DependenceAnalysis &analy;
     map<string, pair<long long, long long> > &func_cost;
-    map<string, vector<float> > input_reuse;
+    const vector<Function> &outputs;
 
+    map<string, vector<float> > input_reuse;
     map<string, vector<Function> > groups;
     map<string, GroupSched> group_sched;
     map<string, set<string> > children;
@@ -2511,9 +2512,11 @@ struct Partitioner {
     Partitioner(map<string, Box> &_pipeline_bounds,
                 map<string, vector<string> > &_inlines, DependenceAnalysis &_analy,
                 map<string, pair<long long, long long> > &_func_cost,
-                bool _gpu_schedule, int _random_seed, bool _debug_info):
+                const vector<Function> &_outputs, bool _gpu_schedule,
+                int _random_seed, bool _debug_info):
                 pipeline_bounds(_pipeline_bounds), inlines(_inlines),
-                analy(_analy), func_cost(_func_cost), gpu_schedule(_gpu_schedule),
+                analy(_analy), func_cost(_func_cost), outputs(_outputs),
+                gpu_schedule(_gpu_schedule),
                 random_seed(_random_seed),
                 debug_info(_debug_info) {
 
@@ -2859,8 +2862,18 @@ void Partitioner::group(Partitioner::Level level) {
         fixpoint = true;
         vector< pair<string, string> > cand;
         for (auto &g: groups) {
+
+            bool is_output = false;
+            for (auto &out: outputs) {
+                if(out.name() == g.first) {
+                    is_output = true;
+                }
+            }
+
+            if (is_output)
+                continue;
+
             if (children.find(g.first) != children.end()) {
-                // TODO be careful about inputs and outputs to the pipeline
                 int num_children = children[g.first].size();
                 // Find all the groups which have a single child
                 if (num_children == 1 && level == Partitioner::FAST_MEM) {
@@ -3207,7 +3220,7 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
     if (gpu_schedule && l != Partitioner::INLINE &&
         (((num_ele_per_tile) < arch_params.target_threads_per_block))) {
         // Constrain the number of elements in a tile to be atleast
-        // vector length
+        // target threads per block size
         opt.benefit = -1;
     }
 
@@ -3662,6 +3675,9 @@ pair<float, float>
     map<string, int> &dim_estimates = func_dim_estimates[group];
     Box cons_box;
 
+    int parallel_tile_iter = 1;
+    int parallel_tiles = 1;
+
     long long tile_size = 1;
     for (unsigned int i = 0; i < tile_sizes.size(); i++) {
         string arg_name = "";
@@ -3690,22 +3706,28 @@ pair<float, float>
                 }
                 assert(tile_sizes[i] > 0);
                 bounds.push_back(make_pair(0, tile_sizes[i] - 1));
-                if (i < num_pure_args)
-                    cons_box.push_back(Interval(0, tile_sizes[i] -1));
+                if (i < num_pure_args) {
+                    cons_box.push_back(Interval(0, tile_sizes[i] - 1));
+                    parallel_tile_iter *= tile_sizes[i];
+                }
                 tile_size = tile_size * (tile_sizes[i]);
             } else {
                 // If the dimension is too small do not tile it and set the
                 // extent of the bounds to that of the dimension estimate
                 tile_sizes[i] = -1;
                 bounds.push_back(make_pair(0, dim_estimates[arg_name] - 1));
-                if (i < num_pure_args)
+                if (i < num_pure_args) {
                     cons_box.push_back(Interval(0, dim_estimates[arg_name] - 1));
+                    parallel_tile_iter *= dim_estimates[arg_name];
+                }
                 tile_size = tile_size * (dim_estimates[arg_name]);
             }
         } else {
             bounds.push_back(make_pair(0, dim_estimates[arg_name] - 1));
-            if (i < num_pure_args)
+            if (i < num_pure_args) {
                 cons_box.push_back(Interval(0, dim_estimates[arg_name] - 1));
+                parallel_tile_iter *= dim_estimates[arg_name];
+            }
             tile_size = tile_size * (dim_estimates[arg_name]);
         }
         eval.push_back(true);
@@ -3722,14 +3744,23 @@ pair<float, float>
             int u_index = (int)i - num_pure_args;
             arg_name = u_args[u_index];
         }
-        if (tile_sizes[i] != -1)
+        if (tile_sizes[i] != -1) {
             estimate_tiles *= std::ceil((float)dim_estimates[arg_name]/tile_sizes[i]);
+            if (i < num_pure_args) {
+                parallel_tiles *= std::ceil((float)dim_estimates[arg_name]/tile_sizes[i]);
+            }
+        }
     }
 
     map<string, Box> conc_reg =
         analy.concrete_dep_regions(group, eval,
                                    analy.func_partial_dep_regions, bounds);
 
+    if (gpu_schedule) {
+        if (parallel_tiles < arch_params.parallelism ||
+            parallel_tile_iter < arch_params.target_threads_per_block)
+        return make_pair(-1, -1);
+    }
     map<string, Box> group_mem_reg;
     map<string, Box> input_mem_reg;
 
@@ -4148,12 +4179,24 @@ void disp_inlines(map<string, vector<string> > &inlines) {
 map<string, vector<string>>
 simple_inline(map<string, vector<const Call*>> &all_calls,
               map<string, vector<string> > &consumers,
-              map<string, Function> &env) {
+              map<string, Function> &env,
+              const vector<Function> &outputs) {
     map<string, vector<string> > inlines;
     for (auto& fcalls: all_calls) {
         // Check if all arguments to the function call over all the calls are
         // one-to-one. If this holds and the number of calls == 1 it is a good
         // candidate for inlining.
+
+        bool is_output = false;
+        for (auto &out: outputs) {
+            if(out.name() == fcalls.first) {
+                is_output = true;
+            }
+        }
+
+        if (is_output)
+            continue;
+
         bool all_one_to_one = true;
         int num_calls = 0;
         for (auto& call: fcalls.second){
@@ -5544,7 +5587,7 @@ void schedule_advisor(const vector<Function> &outputs,
     }
 
     if (auto_naive) {
-        inlines = simple_inline(all_calls, consumers, env);
+        inlines = simple_inline(all_calls, consumers, env, outputs);
     } else {
         for (auto &f: env) {
             if (env[f.first].is_lambda()) {
@@ -5645,8 +5688,8 @@ void schedule_advisor(const vector<Function> &outputs,
         gpu_schedule = true;
     }
 
-    Partitioner part(pipeline_bounds, inlines, analy, func_cost, gpu_schedule,
-                     random_seed, debug_info);
+    Partitioner part(pipeline_bounds, inlines, analy, func_cost, outputs,
+                     gpu_schedule, random_seed, debug_info);
 
     if (debug_info) {
         std::cerr << "Function costs pre-inlining" << std::endl;
