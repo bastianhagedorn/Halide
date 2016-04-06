@@ -69,10 +69,16 @@ int main(int argc, char **argv) {
     // Schedule.
     Target target = get_target_from_environment();
 
+    if (schedule == -2) {
+        target.set_feature(Halide::Target::CUDACapability35);
+        //target.set_feature(Halide::Target::Debug);
+    }
+
     // Require 3 channels for input and output.
     input.set_min(2, 0).set_extent(2, 3);
     non_local_means.output_buffer().set_min(2, 0).set_extent(2, 3);
-    non_local_means.bound(x, 0, 192).bound(y, 0, 320).bound(c, 0, 3);
+    // non_local_means.bound(x, 0, 192).bound(y, 0, 320).bound(c, 0, 3);
+    non_local_means.estimate(x, 0, 192).estimate(y, 0, 320).estimate(c, 0, 3);
 
     Var tx("tx"), ty("ty");
 
@@ -129,7 +135,7 @@ int main(int argc, char **argv) {
     }
     }
 
-    auto_build(non_local_means, "non_local_means", {sigma, input}, target, schedule == -1);
+    auto_build(non_local_means, "non_local_means", {sigma, input}, target, schedule == -1 || schedule == -2);
 
     // non_local_means.print_loop_nest();
 

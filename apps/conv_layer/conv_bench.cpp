@@ -75,10 +75,17 @@ int main(int argc, char **argv) {
     Func f_ReLU("ReLU");
     f_ReLU(x, y, z, n) = max(0, f_conv(x, y, z, n));
 
+    /*
     f_ReLU.bound(x, 0, conv->out_dim_size(0)).
            bound(y, 0, conv->out_dim_size(1)).
            bound(z, 0, conv->out_dim_size(2)).
            bound(n, 0, conv->out_dim_size(3));
+    */
+
+    f_ReLU.estimate(x, 0, conv->out_dim_size(0)).
+           estimate(y, 0, conv->out_dim_size(1)).
+           estimate(z, 0, conv->out_dim_size(2)).
+           estimate(n, 0, conv->out_dim_size(3));
 
     int vec_len = 8;
     int o_block_size = 32;
@@ -125,14 +132,17 @@ int main(int argc, char **argv) {
     }
 
     Target target = get_target_from_environment();
-    target.set_feature(Halide::Target::CUDA);
-    //target.set_feature(Halide::Target::Debug);
+    if (sched == -2) {
+        target.set_feature(Halide::Target::CUDACapability35);
+        //target.set_feature(Halide::Target::CUDA);
+        //target.set_feature(Halide::Target::Debug);
+    }
 
-    if (sched == -1)
+    if (sched == -1 || sched == -2)
         f_ReLU.compile_jit(target, true);
     else
         f_ReLU.compile_jit(target, false);
-    
-    double best = benchmark(5, 5, [&]() { f_ReLU.realize(conv_out); conv_out.copy_to_host();});
+
+    double best = benchmark(5, 20, [&]() { f_ReLU.realize(conv_out);}, [&](){conv_out.copy_to_host();});
     std::cout << "runtime: " << best * 1e3 << std::endl;
 }

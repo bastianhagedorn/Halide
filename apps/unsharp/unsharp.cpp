@@ -51,7 +51,8 @@ int main(int argc, char **argv) {
     Func unsharp("unsharp");
     unsharp(x, y, c) = ratio(x, y) * in(x, y, c);
 
-    unsharp.bound(x, 0, 1536).bound(y, 0, 2560).bound(c, 0, 3);
+    //unsharp.bound(x, 0, 1536).bound(y, 0, 2560).bound(c, 0, 3);
+    unsharp.estimate(x, 0, 1536).estimate(y, 0, 2560).estimate(c, 0, 3);
     // Pick a schedule
     int schedule = atoi(argv[1]);
 
@@ -62,10 +63,13 @@ int main(int argc, char **argv) {
         unsharp.vectorize(x, 8).parallel(y).reorder(x, c, y);
     }
 
-    target.set_feature(Halide::Target::CUDA);
-    target.set_feature(Halide::Target::Debug);
+    if (schedule == -2) {
+        target.set_feature(Halide::Target::CUDACapability35);
+        //target.set_feature(Halide::Target::CUDA);
+        //target.set_feature(Halide::Target::Debug);
+    }
 
-    auto_build(unsharp, "unsharp", {in}, target, (schedule == -1));
+    auto_build(unsharp, "unsharp", {in}, target, (schedule == -1 || schedule == -2));
 
     return 0;
 }

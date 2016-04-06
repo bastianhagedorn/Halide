@@ -15,6 +15,7 @@ void auto_build(Halide::Pipeline p,
         const char *naive = getenv("HL_AUTO_NAIVE");
         const char *sweep = getenv("HL_AUTO_SWEEP");
         const char *rand = getenv("HL_AUTO_RAND");
+        const char *gpu = getenv("HL_AUTO_GPU");
         if (naive && atoi(naive)) {
             suffix = "_naive";
         } else if (sweep && atoi(sweep)){
@@ -24,6 +25,8 @@ void auto_build(Halide::Pipeline p,
         } else {
             suffix = "_auto";
         }
+        if (gpu && atoi(gpu))
+            suffix += "_gpu";
     }
     o = o.header(name+".h").object(name+suffix+".o");
     p.compile_to(o, args, name, target, auto_schedule);

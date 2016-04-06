@@ -87,7 +87,7 @@ int main(int argc, char **argv) {
 
     Target target = get_target_from_environment();
 
-    if (target.has_gpu_feature()) {
+    if (target.has_gpu_feature() && schedule == 0) {
         // Schedule blurz in 8x8 tiles. This is a tile in
         // grid-space, which means it represents something like
         // 64x64 pixels in the input (if s_sigma is 8).
@@ -110,7 +110,6 @@ int main(int argc, char **argv) {
         blurx.compute_root().gpu_tile(x, y, z, 8, 8, 1);
         blury.compute_root().gpu_tile(x, y, z, 8, 8, 1);
         bilateral_grid.compute_root().gpu_tile(x, y, s_sigma, s_sigma);
-        bilateral_grid.print_loop_nest();
     } else if (schedule == 0) {
         // The CPU schedule.
         blurz.compute_root().reorder(c, z, x, y).parallel(y).vectorize(x, 8).unroll(c);
@@ -123,11 +122,12 @@ int main(int argc, char **argv) {
         bilateral_grid.compute_root().parallel(y).vectorize(x, 8);
     }
 
-    target.set_feature(Halide::Target::CUDA);
-    target.set_feature(Halide::Target::Debug);
-    target.set_feature(Halide::Target::NoAsserts);
+    if (schedule == -2) {
+        target.set_feature(Halide::Target::CUDACapability35);
+        //target.set_feature(Halide::Target::Debug);
+    }
 
     auto_build(bilateral_grid, "bilateral_grid", {r_sigma, input},
-                                    target, (schedule == -1));
+                                    target, (schedule == -1 || schedule == -2));
     return 0;
 }

@@ -13,7 +13,8 @@ int main(int argc, char **argv) {
     blur_y(x, y) = (blur_x(x, y) + blur_x(x, y+1) + blur_x(x, y+2))/3;
 
     // Adding bounds
-    blur_y.bound(x, 0, 6400).bound(y, 0, 4800);
+    //blur_y.bound(x, 0, 6400).bound(y, 0, 4800);
+    blur_y.estimate(x, 0, 6400).estimate(y, 0, 4800);
 
     // Pick a schedule
     int schedule = atoi(argv[1]);
@@ -25,7 +26,15 @@ int main(int argc, char **argv) {
     }
 
     Target target = get_target_from_environment();
-    auto_build(blur_y, "halide_blur", {input}, target, (schedule == -1));
+
+    if (schedule == -2) {
+        target.set_feature(Halide::Target::CUDACapability35);
+        target.set_feature(Halide::Target::CUDA);
+        //target.set_feature(Halide::Target::Debug);
+    }
+
+    auto_build(blur_y, "halide_blur", {input}, target,
+                                        (schedule == -1 || schedule == -2));
 
     /*
     blur_y.split(y, y, yi, 4).split(x, x, xi, 64).reorder(xi, yi, x, y).

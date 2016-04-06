@@ -53,6 +53,22 @@ double benchmark(int samples, int iterations, F op) {
     return best / iterations;
 }
 
+template <typename F, typename S>
+double benchmark(int samples, int iterations, F op, S sync_op) {
+    double best = std::numeric_limits<double>::infinity();
+    for (int i = 0; i < samples; i++) {
+        auto t1 = std::chrono::high_resolution_clock::now();
+        for (int j = 0; j < iterations; j++) {
+            op();
+        }
+        sync_op();
+        auto t2 = std::chrono::high_resolution_clock::now();
+        double dt = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count() / 1e6;
+        if (dt < best) best = dt;
+    }
+    return best / iterations;
+}
+
 #endif
 
 #endif

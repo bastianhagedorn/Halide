@@ -275,6 +275,7 @@ Func process(Func raw, Type result_type,
 
     // Schedule
     processed.bound(c, 0, 3).bound(tx, 0, 2560).bound(ty, 0, 1920); // bound color loop 0-3, properly
+    processed.estimate(c, 0, 3).estimate(tx, 0, 2560).estimate(ty, 0, 1920); // bound color loop 0-3, properly
     if (schedule == 0) {
         // Compute in chunks over tiles, vectorized by 8
         denoised.compute_at(processed, tx).vectorize(x, 8);
@@ -335,20 +336,24 @@ int main(int argc, char **argv) {
     // We can generate slightly better code if we know the output is a whole number of tiles.
     Expr out_width = processed.output_buffer().width();
     Expr out_height = processed.output_buffer().height();
-    //processed
-    //    .bound(tx, 0, (out_width/32)*32)
-    //    .bound(ty, 0, (out_height/32)*32);
+
+    processed
+        .bound(tx, 0, (out_width/32)*32)
+        .bound(ty, 0, (out_height/32)*32);
 
     //string s = processed.serialize();
     //printf("%s\n", s.c_str());
 
     std::vector<Argument> args = {color_temp, gamma, contrast, blackLevel, whiteLevel,
                                   input, matrix_3200, matrix_7000};
-    Target target = get_target_from_environment();
-    target.set_feature(Halide::Target::CUDA);
-    target.set_feature(Halide::Target::Debug);
 
-    auto_build(processed, "curved", args, target, (schedule == -1));
+    Target target = get_target_from_environment();
+    if (schedule == -2) {
+        target.set_feature(Halide::Target::CUDACapability35);
+        //target.set_feature(Halide::Target::Debug);
+    }
+
+    auto_build(processed, "curved", args, target, (schedule == -1 || schedule == -2));
     //processed.compile_to_assembly("curved.s", args);
     //processed.compile_to_c("cam_c.cpp", args, "camc");
     //processed.compile_to_header("cam_c.h", args, "camc");

@@ -12,8 +12,10 @@ Func downsample(Func f) {
     downy(x, y, _) = (downx(x, 2*y-1, _) + 3.0f * (downx(x, 2*y, _) + downx(x, 2*y+1, _)) + downx(x, 2*y+2, _)) / 8.0f;
 
     if (downx.args().size() > 2) {
-        downx.bound(downx.args()[2], 0, 8);
-        downy.bound(downy.args()[2], 0, 8);
+        //downx.bound(downx.args()[2], 0, 8);
+        //downy.bound(downy.args()[2], 0, 8);
+        downx.estimate(downx.args()[2], 0, 8);
+        downy.estimate(downy.args()[2], 0, 8);
     }
     return downy;
 }
@@ -26,8 +28,10 @@ Func upsample(Func f) {
     upy(x, y, _) = 0.25f * upx(x, (y/2) - 1 + 2*(y % 2), _) + 0.75f * upx(x, y/2, _);
 
     if (upx.args().size() > 2) {
-        upx.bound(upx.args()[2], 0, 8);
-        upy.bound(upy.args()[2], 0, 8);
+        //upx.bound(upx.args()[2], 0, 8);
+        //upy.bound(upy.args()[2], 0, 8);
+        upx.estimate(upx.args()[2], 0, 8);
+        upy.estimate(upy.args()[2], 0, 8);
     }
     return upy;
 
@@ -84,11 +88,13 @@ int main(int argc, char **argv) {
     Expr idx = gray(x, y)*cast<float>(levels-1)*256.0f;
     idx = clamp(cast<int>(idx), 0, (levels-1)*256);
     gPyramid[0](x, y, k) = beta*(gray(x, y) - level) + level + remap(idx - 256*k);
-    gPyramid[0].bound(k, 0, 8);
+    //gPyramid[0].bound(k, 0, 8);
+    gPyramid[0].estimate(k, 0, 8);
     for (int j = 1; j < J; j++) {
         Func down = downsample(gPyramid[j-1]);
         gPyramid[j](x, y, k) = down(x, y, k);
-        gPyramid[j].bound(k, 0, 8);
+        //gPyramid[j].bound(k, 0, 8);
+        gPyramid[j].estimate(k, 0, 8);
     }
 
     // Get its laplacian pyramid
@@ -98,11 +104,13 @@ int main(int argc, char **argv) {
         lPyramid.push_back(lP);
     }
     lPyramid[J-1](x, y, k) = gPyramid[J-1](x, y, k);
-    lPyramid[J-1].bound(k, 0, 8);
+    //lPyramid[J-1].bound(k, 0, 8);
+    lPyramid[J-1].estimate(k, 0, 8);
     for (int j = J-2; j >= 0; j--) {
         Func up = upsample(gPyramid[j+1]);
         lPyramid[j](x, y, k) = gPyramid[j](x, y, k) - up(x, y, k);
-        lPyramid[j].bound(k, 0, 8);
+        //lPyramid[j].bound(k, 0, 8);
+        lPyramid[j].estimate(k, 0, 8);
     }
 
     // Make the Gaussian pyramid of the input
@@ -151,13 +159,14 @@ int main(int argc, char **argv) {
     // Convert back to 16-bit
     output(x, y, c) = cast<uint16_t>(clamp(color(x, y, c), 0.0f, 1.0f) * 65535.0f);
 
-    output.bound(x, 0, 1536).bound(y, 0, 2560).bound(c, 0, 3);
+    output.bound(x, 0, 1536).bound(y, 0, 2560);
+    output.estimate(x, 0, 1536).estimate(y, 0, 2560).estimate(c, 0, 3);
     /* THE SCHEDULE */
     remap.compute_root();
 
     Target target = get_target_from_environment();
-    
-    if (target.has_gpu_feature()) {
+
+    if (target.has_gpu_feature() && schedule == 0) {
         // gpu schedule
         output.compute_root().gpu_tile(x, y, 16, 8, DeviceAPI::Default_GPU);
         for (int j = 0; j < J; j++) {
@@ -196,9 +205,14 @@ int main(int argc, char **argv) {
         output.print_loop_nest();
     }
 
-    target.set_feature(Halide::Target::CUDA);
+    if (schedule == -2) {
+        target.set_feature(Halide::Target::CUDACapability35);
+        //target.set_feature(Halide::Target::Debug);
+        //target.set_feature(Halide::Target::CUDA);
+    }
+
     auto_build(output, "local_laplacian", {levels, alpha, beta, input},
-                            target, (schedule == -1));
+                            target, (schedule == -1 || schedule == -2));
 
     //output.compile_to_c("local_laplacian_c.cpp", {levels, alpha, beta, input}, "llc", target);
     //output.compile_to_header("local_laplacian_c.h", {levels, alpha, beta, input}, "llc", target);

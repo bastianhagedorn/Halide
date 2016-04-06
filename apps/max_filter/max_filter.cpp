@@ -64,7 +64,8 @@ int main(int argc, char **argv) {
     RDom dx(-radius, 2*radius+1);
     final(x, y, c) = maximum(vert(x + dx, y, c, clamp(filter_height(dx), 0, radius+1)));
 
-    final.bound(x, 0, in.width()).bound(y, 0, in.height()).bound(c, 0, in.channels());
+    //final.bound(x, 0, in.width()).bound(y, 0, in.height()).bound(c, 0, in.channels());
+    final.estimate(x, 0, in.width()).estimate(y, 0, in.height()).estimate(c, 0, in.channels());
 
     Var tx, xi;
     switch (schedule) {
@@ -107,7 +108,7 @@ int main(int argc, char **argv) {
         // Time: 35 min
         // Runtime: 218 ms
         break;
-    
+
 
     default:
         vert_log.compute_root();
@@ -125,16 +126,21 @@ int main(int argc, char **argv) {
     //radius.set(26);
     Image<float> out(in.width(), in.height(), in.channels());
     Target target = get_target_from_environment();
-    if (schedule == -1) {
+
+    if (schedule == -2) {
+        target.set_feature(Halide::Target::CUDACapability35);
+        //target.set_feature(Halide::Target::Debug);
+        //target.set_feature(Halide::Target::CUDA);
+    }
+
+    if (schedule == -1 || schedule == -2) {
         final.compile_jit(target, true);
     } else {
         final.compile_jit(target);
     }
 
-
-
     // std::cout << "Running... " << std::endl;
-    double best = benchmark(3, 3, [&]() { final.realize(out); });
+    double best = benchmark(5, 50, [&]() { final.realize(out);}, [&]() { out.copy_to_host(); });
     std::cout << "runtime: " << best * 1e3 << std::endl;
 
     // save_image(out, argv[2]);

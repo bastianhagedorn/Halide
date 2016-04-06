@@ -64,7 +64,9 @@ int main(int argc, char **argv) {
     Func shifted("shifted");
     shifted(x, y) = harris(x + 2, y + 2);
 
-    shifted.bound(x, 0, 1530).bound(y, 0, 2554);
+    //shifted.bound(x, 0, 1530).bound(y, 0, 2554);
+    shifted.estimate(x, 0, 1530).estimate(y, 0, 2554);
+
     // Pick a schedule
     int schedule = atoi(argv[1]);
 
@@ -81,10 +83,12 @@ int main(int argc, char **argv) {
         shifted.print_loop_nest();
     }
 
-    
-    target.set_feature(Halide::Target::CUDA);
-    target.set_feature(Halide::Target::Debug);
-    auto_build(shifted, "harris", {in}, target, (schedule == -1));
+
+    if (schedule == -2) {
+        target.set_feature(Halide::Target::CUDACapability35);
+        //target.set_feature(Halide::Target::Debug);
+    }
+    auto_build(shifted, "harris", {in}, target, (schedule == -1 || schedule == -2));
 
     return 0;
 }

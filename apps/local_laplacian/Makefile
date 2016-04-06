@@ -16,8 +16,15 @@ local_laplacian_auto.o: local_laplacian_gen
 local_laplacian_naive.o: local_laplacian_gen
 	HL_AUTO_NAIVE=1 ./local_laplacian_gen 8 -1
 
+local_laplacian_naive_gpu.o: local_laplacian_gen
+	HL_AUTO_NAIVE=1 HL_AUTO_GPU=1 ./local_laplacian_gen 8 -2
+
+local_laplacian_auto_gpu.o: local_laplacian_gen
+	HL_AUTO_GPU=1 ./local_laplacian_gen 8 -2
+
 local_laplacian_rand.o: local_laplacian_gen
 	HL_AUTO_RAND=1 HL_AUTO_PARALLELISM=8 HL_AUTO_VEC_LEN=16 HL_AUTO_BALANCE=15 HL_AUTO_FAST_MEM_SIZE=1048576 ./local_laplacian_gen 8 -1
+	#HL_AUTO_RAND=1 HL_AUTO_PARALLELISM=8 HL_AUTO_VEC_LEN=8 HL_AUTO_BALANCE=10 HL_AUTO_FAST_MEM_SIZE=131072 ./local_laplacian_gen 8 -1
 
 local_laplacian_sweep.o: local_laplacian_gen
 	HL_AUTO_SWEEP=1 HL_AUTO_PARALLELISM=12 HL_AUTO_VEC_LEN=16 HL_AUTO_BALANCE=20 HL_AUTO_FAST_MEM_SIZE=131072 ./local_laplacian_gen 8 -1

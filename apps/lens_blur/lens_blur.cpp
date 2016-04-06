@@ -186,7 +186,8 @@ int main(int argc, char **argv) {
 
     Image<uint8_t> in_l = load_image(argv[1]);
     Image<uint8_t> in_r = load_image(argv[2]);
-    final.bound(x, 0, in_l.width()).bound(y, 0, in_l.height()).bound(c, 0, 3);
+    //final.bound(x, 0, in_l.width()).bound(y, 0, in_l.height()).bound(c, 0, 3);
+    final.estimate(x, 0, in_l.width()).estimate(y, 0, in_l.height()).estimate(c, 0, 3);
 
     // std::cerr << in_l.width() << "," << in_l.height() << std::endl;
     int schedule = atoi(argv[4]);
@@ -243,14 +244,21 @@ int main(int argc, char **argv) {
     right_im.set(in_r);
     Image<float> out(in_l.width(), in_l.height(), 3);
     Target target = get_target_from_environment();
-    if (schedule == -1) {
+
+    if (schedule == -2) {
+        target.set_feature(Halide::Target::CUDACapability35);
+        //target.set_feature(Halide::Target::CUDA);
+        //target.set_feature(Halide::Target::Debug);
+    }
+
+    if (schedule == -1 || schedule == -2) {
         final.compile_jit(target, true);
     } else {
         final.compile_jit(target);
     }
 
     // std::cout << "runtime: " << std::endl;
-    double best = benchmark(5, 5, [&]() { final.realize(out); });
+    double best = benchmark(5, 50, [&]() { final.realize(out);}, [&]() { out.copy_to_host();});
     std::cout << "runtime: " << best * 1e3 << std::endl;
 
     // save_image(out, argv[3]);
