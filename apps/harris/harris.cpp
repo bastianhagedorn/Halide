@@ -73,14 +73,18 @@ int main(int argc, char **argv) {
     Target target = get_target_from_environment();
     if (schedule == 0) {
         Var yi, xi;
-        shifted.split(x, x, xi, 128).split(y, y, yi, 128).
-            reorder(xi, yi, x, y).vectorize(xi, 8).parallel(y);
-        Ix.compute_at(shifted, x).vectorize(x, 8);
-        Iy.compute_at(shifted, x).vectorize(x, 8);
-        Sxx.compute_at(shifted, x).vectorize(x, 8);
-        Syy.compute_at(shifted, x).vectorize(x, 8);
-        Sxy.compute_at(shifted, x).vectorize(x, 8);
-        shifted.print_loop_nest();
+        if (target.has_gpu_feature()) {
+            shifted.gpu_tile(x, y, 14, 14);
+            Ix.compute_at(shifted, Var::gpu_blocks()).gpu_threads(x, y);
+            Iy.compute_at(shifted, Var::gpu_blocks()).gpu_threads(x, y);
+            shifted.print_loop_nest();
+        } else {
+            shifted.tile(x, y, xi, yi, 128, 128)
+                .vectorize(xi, 8).parallel(y);
+            Ix.compute_at(shifted, x).vectorize(x, 8);
+            Iy.compute_at(shifted, x).vectorize(x, 8);
+            shifted.print_loop_nest();
+        }
     }
 
 
