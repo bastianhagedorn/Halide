@@ -28,9 +28,9 @@ int main(int argc, char **argv) {
 
     // Timing code. Timing doesn't include copying the input data to
     // the gpu or copying the output back.
-    double min_t = benchmark(5, 100, [&]() {
+    double min_t = benchmark(5, 5, [&]() {
         non_local_means(atof(argv[3]), input, output);
-    }, [&]() {output.copy_to_host();});
+    }, [&]() {output.device_sync();});
     printf("runtime: %g\n", min_t * 1e3);
 
     // save_image(output, argv[2]);

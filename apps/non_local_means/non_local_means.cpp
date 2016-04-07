@@ -80,8 +80,58 @@ int main(int argc, char **argv) {
     // non_local_means.bound(x, 0, 192).bound(y, 0, 320).bound(c, 0, 3);
     non_local_means.estimate(x, 0, 192).estimate(y, 0, 320).estimate(c, 0, 3);
 
-    Var tx("tx"), ty("ty");
+    Var tx("tx"), ty("ty"), xi, yi;
 
+    if (schedule == 0) {
+        if (target.has_gpu_feature()) {
+            non_local_means.compute_root()
+                .reorder(c, x, y).unroll(c)
+                .gpu_tile(x, y, 16, 8);
+
+            d.compute_at(non_local_means_sum, s_dom.x)
+                .tile(x, y, xi, yi, 2, 2)
+                .unroll(xi)
+                .unroll(yi)
+                .gpu_threads(x, y);
+
+            blur_d_y.compute_at(non_local_means_sum, s_dom.x)
+                .unroll(x, 2).gpu_threads(x, y);
+
+            blur_d.compute_at(non_local_means_sum, s_dom.x)
+                .gpu_threads(x, y);
+
+            non_local_means_sum.compute_at(non_local_means, Var::gpu_blocks())
+                .gpu_threads(x, y)
+                .update()
+                .reorder(x, y, c, s_dom.x, s_dom.y)
+                .gpu_threads(x, y);
+
+        } else {
+            non_local_means.compute_root()
+                .reorder(c, x, y)
+                .tile(x, y, tx, ty, x, y, 16, 8)
+                .parallel(ty)
+                .vectorize(x, 8);
+
+            blur_d_y.compute_at(non_local_means, tx)
+                .reorder(y, x)
+                .vectorize(x, 8);
+            d.compute_at(blur_d_y, x)
+                .vectorize(x, 8);
+            non_local_means_sum.compute_at(non_local_means, x)
+                .reorder(c, x, y)
+                .bound(c, 0, 4).unroll(c)
+                .vectorize(x, 8);
+            non_local_means_sum.update(0)
+                .reorder(c, x, y, s_dom.x, s_dom.y)
+                .unroll(c)
+                .vectorize(x, 8);
+            blur_d.compute_at(non_local_means_sum, x)
+                .vectorize(x, 8);
+        }
+    }
+
+    /*
     switch (schedule) {
     case 0:  {
         d.compute_root();
@@ -134,6 +184,7 @@ int main(int argc, char **argv) {
         break;
     }
     }
+    */
 
     auto_build(non_local_means, "non_local_means", {sigma, input}, target, schedule == -1 || schedule == -2);
 
