@@ -21,13 +21,16 @@ int main(int argc, char **argv) {
     Expr B = in(x, y, 2);
     Cb(x, y) = (B - Y(x, y)) * 0.564f + 128;
 
-    // This should really be factored into one-histogram-per-scanline,
-    // followed by summing up the histograms.
+    Func hist_rows("hist_rows");
+    hist_rows(x, y) = 0;
+    RDom rx(0, 1536);
+    Expr bin = cast<uint8_t>(clamp(Y(rx, y), 0, 255));
+    hist_rows(bin, y) += 1;
+
     Func hist("hist");
     hist(x) = 0;
-    RDom r(0, 1536, 0, 2560);
-    Expr bin = cast<uint8_t>(clamp(Y(r.x, r.y), 0, 255));
-    hist(bin) += 1;
+    RDom ry(0, 2560);
+    hist(x) += hist_rows(x, ry);
 
     Func cdf("cdf");
     cdf(x) = hist(0);
@@ -57,8 +60,9 @@ int main(int argc, char **argv) {
     if (schedule == 0) {
         if (target.has_gpu_feature()) {
             Y.compute_root().gpu_tile(x, y, 16, 16);
-            hist.compute_root();
-            cdf.compute_root();
+            hist_rows.compute_root().gpu_tile(y, 16).update().gpu_tile(y, 16);
+            hist.compute_root().gpu_tile(x, 16).update().gpu_tile(x, 16);
+            cdf.compute_root().gpu_single_thread();
             Cr.compute_at(color, Var::gpu_threads());
             Cb.compute_at(color, Var::gpu_threads());
             eq.compute_at(color, Var::gpu_threads());
@@ -67,13 +71,32 @@ int main(int argc, char **argv) {
                 .gpu_tile(x, y, 16, 16);
         } else {
             Y.compute_root().parallel(y, 8).vectorize(x, 8);
-            hist.compute_root();
+
+            hist_rows.compute_root()
+                .vectorize(x, 8)
+                .parallel(y, 8)
+                .update()
+                .parallel(y, 8);
+            hist.compute_root()
+                .vectorize(x, 8)
+                .update()
+                .reorder(x, ry)
+                .vectorize(x, 8)
+                .unroll(x, 4)
+                .parallel(x)
+                .reorder(ry, x);
+
             cdf.compute_root();
             eq.compute_at(color, x).unroll(x);
             Cb.compute_at(color, x).vectorize(x);
             Cr.compute_at(color, x).vectorize(x);
-            color.reorder(c, x, y).bound(c, 0, 3).unroll(c).parallel(y, 8).vectorize(x, 8);
+            color.reorder(c, x, y)
+                .bound(c, 0, 3)
+                .unroll(c)
+                .parallel(y, 8)
+                .vectorize(x, 8);
         }
+        color.print_loop_nest();
     }
 
     if (schedule == -2) {
