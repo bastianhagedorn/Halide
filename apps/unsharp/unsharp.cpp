@@ -58,9 +58,25 @@ int main(int argc, char **argv) {
 
     Target target = get_target_from_environment();
     if (schedule == 0) {
-        blur_y.compute_at(unsharp, y).vectorize(x, 8);
-        ratio.compute_at(unsharp, y).vectorize(x, 8);
-        unsharp.vectorize(x, 8).parallel(y).reorder(x, c, y);
+        if (target.has_gpu_feature()) {
+            Var xi, yi;
+            unsharp.compute_root()
+                .reorder(c, x, y)
+                .gpu_tile(x, y, 16, 16);
+            ratio.compute_at(unsharp, Var::gpu_threads());
+            gray.compute_at(unsharp, Var::gpu_blocks())
+                .tile(x, y, xi, yi, 2, 2)
+                .unroll(xi)
+                .unroll(yi)
+                .gpu_threads(x, y);
+            blur_y.compute_at(unsharp, Var::gpu_blocks())
+                .unroll(x, 2)
+                .gpu_threads(x, y);
+        } else {
+            blur_y.compute_at(unsharp, y).vectorize(x, 8);
+            ratio.compute_at(unsharp, y).vectorize(x, 8);
+            unsharp.vectorize(x, 8).parallel(y).reorder(x, c, y);
+        }
     }
 
     if (schedule == -2) {
