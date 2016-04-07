@@ -266,7 +266,7 @@ Func apply_curve(Func input, Type result_type, Param<float> gamma, Param<float> 
     curve(x) = select(x <= minRaw, 0, select(x > maxRaw, 255, val));
 
     curve.compute_root(); // It's a LUT, compute it once ahead of time.
-    if (target.has_gpu_feature()) {
+    if (schedule == 0 && target.has_gpu_feature()) {
         curve.gpu_tile(x, 32);
     }
     //curve.parallel(x);
