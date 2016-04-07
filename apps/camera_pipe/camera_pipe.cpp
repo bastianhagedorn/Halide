@@ -9,6 +9,9 @@ int schedule;
 Var x, y, tx("tx"), ty("ty"), c("c");
 Func processed("processed");
 
+Target target;
+
+
 // Average two positive values rounding up
 Expr avg(Expr a, Expr b) {
     Type wider = a.type().with_bits(a.type().bits() * 2);
@@ -148,21 +151,34 @@ Func demosaic(Func deinterleaved) {
 
     /* THE SCHEDULE */
     if (schedule == 0) {
-        // optimized for ARM
-        // Compute these in chunks over tiles, vectorized by 8
-        g_r.compute_at(processed, tx).vectorize(x, 8);
-        g_b.compute_at(processed, tx).vectorize(x, 8);
-        r_gr.compute_at(processed, tx).vectorize(x, 8);
-        b_gr.compute_at(processed, tx).vectorize(x, 8);
-        r_gb.compute_at(processed, tx).vectorize(x, 8);
-        b_gb.compute_at(processed, tx).vectorize(x, 8);
-        r_b.compute_at(processed, tx).vectorize(x, 8);
-        b_r.compute_at(processed, tx).vectorize(x, 8);
-        // These interleave in y, so unrolling them in y helps
-        output.compute_at(processed, tx)
-            .vectorize(x, 8)
-            .unroll(y, 2)
-            .reorder(c, x, y).bound(c, 0, 3).unroll(c);
+        if (target.has_gpu_feature()) {
+            Var xi, yi;
+            output.reorder(c, x, y)
+                .tile(x, y, xi, yi, 2, 2)
+                .unroll(xi)
+                .unroll(yi)
+                .bound(c, 0, 3)
+                .unroll(c);
+            for (Func f : {g_r, g_b, g_gr, b_gr, r_gb, b_gb, r_b, b_r, output}) {
+                f.compute_at(processed, Var::gpu_blocks()).gpu_threads(x, y);
+            }
+        } else {
+            // optimized for ARM
+            // Compute these in chunks over tiles, vectorized by 8
+            g_r.compute_at(processed, tx).vectorize(x, 8);
+            g_b.compute_at(processed, tx).vectorize(x, 8);
+            r_gr.compute_at(processed, tx).vectorize(x, 8);
+            b_gr.compute_at(processed, tx).vectorize(x, 8);
+            r_gb.compute_at(processed, tx).vectorize(x, 8);
+            b_gb.compute_at(processed, tx).vectorize(x, 8);
+            r_b.compute_at(processed, tx).vectorize(x, 8);
+            b_r.compute_at(processed, tx).vectorize(x, 8);
+            // These interleave in y, so unrolling them in y helps
+            output.compute_at(processed, tx)
+                .vectorize(x, 8)
+                .unroll(y, 2)
+                .reorder(c, x, y).bound(c, 0, 3).unroll(c);
+        }
     } else if (schedule == 1) {
         // optimized for X86
         // Don't vectorize, because sse is bad at 16-bit interleaving
@@ -250,6 +266,9 @@ Func apply_curve(Func input, Type result_type, Param<float> gamma, Param<float> 
     curve(x) = select(x <= minRaw, 0, select(x > maxRaw, 255, val));
 
     curve.compute_root(); // It's a LUT, compute it once ahead of time.
+    if (target.has_gpu_feature()) {
+        curve.gpu_tile(x, 32);
+    }
     //curve.parallel(x);
 
     Func curved("curved");
@@ -277,14 +296,42 @@ Func process(Func raw, Type result_type,
     processed.bound(c, 0, 3).bound(tx, 0, 2560).bound(ty, 0, 1920); // bound color loop 0-3, properly
     processed.estimate(c, 0, 3).estimate(tx, 0, 2560).estimate(ty, 0, 1920); // bound color loop 0-3, properly
     if (schedule == 0) {
-        // Compute in chunks over tiles, vectorized by 8
-        denoised.compute_at(processed, tx).vectorize(x, 8);
-        deinterleaved.compute_at(processed, tx).vectorize(x, 8).reorder(c, x,
-                y).unroll(c);
-        corrected.compute_at(processed, tx).vectorize(x, 4).reorder(c, x,
-                y).unroll(c);
-        processed.tile(tx, ty, xi, yi, 32, 32).reorder(xi, yi, c, tx, ty);
-        processed.parallel(ty);
+        if (target.has_gpu_feature()) {
+            Var xi, yi;
+            denoised.compute_at(processed, Var::gpu_blocks())
+                .tile(x, y, xi, yi, 2, 2)
+                .unroll(xi)
+                .unroll(yi)
+                .gpu_threads(x, y);
+            deinterleaved.compute_at(processed, Var::gpu_blocks())
+                .reorder(c, x, y)
+                .unroll(c)
+                .gpu_threads(x, y);
+            corrected.compute_at(processed, Var::gpu_blocks())
+                .reorder(c, x, y)
+                .unroll(c)
+                .tile(x, y, xi, yi, 2, 2)
+                .unroll(xi)
+                .unroll(yi)
+                .gpu_threads(x, y);
+            processed
+                .compute_root()
+                .reorder(c, tx, ty)
+                .unroll(c)
+                .tile(tx, ty, xi, yi, 2, 2)
+                .unroll(xi)
+                .unroll(yi)
+                .gpu_tile(tx, ty, 16, 16);
+        } else {
+            // Compute in chunks over tiles, vectorized by 8
+            denoised.compute_at(processed, tx).vectorize(x, 8);
+            deinterleaved.compute_at(processed, tx).vectorize(x, 8).reorder(c, x,
+                                                                            y).unroll(c);
+            corrected.compute_at(processed, tx).vectorize(x, 4).reorder(c, x,
+                                                                        y).unroll(c);
+            processed.tile(tx, ty, xi, yi, 32, 32).reorder(xi, yi, c, tx, ty);
+            processed.parallel(ty);
+        }
         processed.print_loop_nest();
     } else if (schedule == 1) {
         // Same as above, but don't vectorize (sse is bad at interleaved 16-bit ops)
@@ -313,6 +360,8 @@ int main(int argc, char **argv) {
     Param<float> contrast("contrast"); //, 10.0f);
     Param<int> blackLevel("blackLevel"); //, 25);
     Param<int> whiteLevel("whiteLevel"); //, 1023);
+
+    target = get_target_from_environment();
 
     // shift things inwards to give us enough padding on the
     // boundaries so that we don't need to check bounds. We're going
@@ -347,11 +396,11 @@ int main(int argc, char **argv) {
     std::vector<Argument> args = {color_temp, gamma, contrast, blackLevel, whiteLevel,
                                   input, matrix_3200, matrix_7000};
 
-    Target target = get_target_from_environment();
     if (schedule == -2) {
         target.set_feature(Halide::Target::CUDACapability35);
         //target.set_feature(Halide::Target::Debug);
     }
+
 
     auto_build(processed, "curved", args, target, (schedule == -1 || schedule == -2));
     //processed.compile_to_assembly("curved.s", args);
