@@ -67,56 +67,50 @@ int main(int argc, char **argv) {
     //final.bound(x, 0, in.width()).bound(y, 0, in.height()).bound(c, 0, in.channels());
     final.estimate(x, 0, in.width()).estimate(y, 0, in.height()).estimate(c, 0, in.channels());
 
+    Target target = get_target_from_environment();
+
     Var tx, xi;
-    switch (schedule) {
-    case 0: // ANDREW
-        // These don't matter, just LUTs
-        slice_for_radius.compute_root();
-        filter_height.compute_root();
+    if (schedule == 0) {
+        if (target.has_gpu_feature()) {
+            slice_for_radius.compute_root();
+            filter_height.compute_root();
+            Var xo;
 
-        // vert_log.update(1) doesn't have enough parallelism, but I
-        // can't figure out how to give it more... Split whole image
-        // into slices.
+            final
+                .split(x, xo, xi, 128)
+                .reorder(xi, xo, y, c)
+                .gpu_blocks(xo, y, c).gpu_threads(xi);
 
-        final.compute_root().split(x, tx, x, 256).reorder(x, y, c, tx).fuse(c, tx, t).parallel(t).vectorize(x, 8);
-        vert_log.compute_at(final, t);
-        vert_log.vectorize(x, 8);
-        vert_log.update().reorder(x, r.x, r.y, c).vectorize(x, 8);
-        vert.compute_at(final, y).vectorize(x, 8);
-        // 7:42pm. 110ms !!!
-        break;
-    case 1: // DILLON
-        // That was a little slower, but a bit easier to work with, and avoids large buffers at root (memory consumption would be high).
-        // Playing with the tile size yielded a bit of an improvement.
-        slice_for_radius.compute_root();
-        filter_height.compute_root();
+            vert_log.compute_root()
+                .reorder(c, t, x, y)
+                .gpu_tile(x, y, 16, 16)
+                .update()
+                .split(x, xo, xi, 128)
+                .reorder(r.x, r.y, xi, xo, c)
+                .gpu_blocks(xo, c).gpu_threads(xi);
 
-        final.compute_root()
-            .split(x, tx, x, 128)
-            .reorder(x, y, c, tx)
-            .vectorize(x, 8)
-            .parallel(tx);
+        } else {
+            // These don't matter, just LUTs
+            slice_for_radius.compute_root();
+            filter_height.compute_root();
 
-        vert_log.compute_at(final, tx);
-        vert_log.update(0)
-            .reorder(r.x, x)
-            .vectorize(x, 8);
+            // vert_log.update(1) doesn't have enough parallelism, but I
+            // can't figure out how to give it more... Split whole image
+            // into slices.
 
-        vert.compute_at(final, y)
-            .reorder(t, x, y)
-            .vectorize(x, 8);
-        // Time: 35 min
-        // Runtime: 218 ms
-        break;
-
-
-    default:
+            final.compute_root().split(x, tx, x, 256).reorder(x, y, c, tx).fuse(c, tx, t).parallel(t).vectorize(x, 8);
+            vert_log.compute_at(final, t);
+            vert_log.vectorize(x, 8);
+            vert_log.update().reorder(x, r.x, r.y, c).vectorize(x, 8);
+            vert.compute_at(final, y).vectorize(x, 8);
+            // 7:42pm. 110ms !!!
+        }
+    } else {
         vert_log.compute_root();
         vert.compute_root();
         slice_for_radius.compute_root();
         filter_height.compute_root();
         final.compute_root();
-        break;
     }
 
 
@@ -125,7 +119,6 @@ int main(int argc, char **argv) {
     input_im.set(in);
     //radius.set(26);
     Image<float> out(in.width(), in.height(), in.channels());
-    Target target = get_target_from_environment();
 
     if (schedule == -2) {
         target.set_feature(Halide::Target::CUDACapability35);
@@ -140,7 +133,8 @@ int main(int argc, char **argv) {
     }
 
     // std::cout << "Running... " << std::endl;
-    double best = benchmark(5, 50, [&]() { final.realize(out);}, [&]() { out.copy_to_host(); });
+    Buffer buf(out);
+    double best = benchmark(5, 5, [&]() { final.realize(buf);}, [&]() { buf.device_sync(); });
     std::cout << "runtime: " << best * 1e3 << std::endl;
 
     // save_image(out, argv[2]);
