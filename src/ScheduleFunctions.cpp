@@ -2629,17 +2629,17 @@ struct Partitioner {
                 get_dim_estimates(f.first, pipeline_bounds, analy.env);
         }
 
-        arch_params.parallelism = 24;
-        arch_params.vec_len = 16;
+        //arch_params.parallelism = 24;
+        //arch_params.vec_len = 16;
 
-        //arch_params.parallelism = 16 * 8;
-        //arch_params.vec_len = 32;
+        arch_params.parallelism = 16 * 8;
+        arch_params.vec_len = 16;
 
         if (!random_seed) {
             // Initialize machine params
             arch_params.balance = 10;
-            //arch_params.fast_mem_size = 8 * 1024;
-            arch_params.fast_mem_size = 8 * 1024 * 32;
+            arch_params.fast_mem_size = 8 * 1024;
+            //arch_params.fast_mem_size = 8 * 1024 * 32;
             // L1 = 32K
             // L2 = 256K
             // L3 = 8192K
@@ -2769,7 +2769,7 @@ struct Partitioner {
     void tile_for_input_locality(bool init_pipeline_reuse = false);
     vector<float> get_input_reuse(Function f, vector<string> &inputs);
     pair<float, float> evaluate_reuse(string, vector<string> &group_inputs,
-                                      vector<int> &tile_sizes, bool check_cache);
+                                      vector<int> &tile_sizes, bool unit_tile);
 };
 
 void Partitioner::clear_schedules_fast_mem() {
@@ -3073,7 +3073,7 @@ void Partitioner::evaluate_option(Option &opt, Partitioner::Level l) {
 
     // Evaluate input reuse
     pair<float, float>  eval_reuse;
-    eval_reuse = evaluate_reuse(opt.cons_group, group_inputs, opt.tile_sizes, true);
+    eval_reuse = evaluate_reuse(opt.cons_group, group_inputs, opt.tile_sizes, false);
 
     // Count the number of tiles
     long long estimate_tiles = 1;
@@ -3539,6 +3539,10 @@ Partitioner::Option Partitioner::choose_candidate(
             invalid = true;
         }
 
+        if (gpu_schedule && analy.env[p.first].is_boundary()) {
+            invalid = true;
+        }
+
         float prod_size = func_size[p.first] *
                           get_func_out_size(analy.env[p.first]);
         float prod_data = func_size[p.first] * func_cost[p.first].second;
@@ -3685,7 +3689,7 @@ Partitioner::Option Partitioner::choose_candidate(
 
 pair<float, float>
     Partitioner::evaluate_reuse(string group, vector<string> &group_inputs,
-                                vector<int> &tile_sizes, bool check_cache) {
+                                vector<int> &tile_sizes, bool unit_tile) {
 
     const vector<string> &pure_args = analy.env[group].args();
     unsigned int num_pure_args = pure_args.size();
@@ -3778,12 +3782,15 @@ pair<float, float>
         analy.concrete_dep_regions(group, eval,
                                    analy.func_partial_dep_regions, bounds);
 
-    if (parallel_tiles < arch_params.parallelism)
-        return make_pair(-1, -1);
+    if (!unit_tile) {
+        if (parallel_tiles < arch_params.parallelism)
+            return make_pair(-1, -1);
 
-    if (gpu_schedule &&
-            parallel_tile_iter < arch_params.target_threads_per_block) {
-        return make_pair(-1, -1);
+        if (gpu_schedule &&
+                (parallel_tile_iter < arch_params.target_threads_per_block ||
+                 parallel_tile_iter > arch_params.max_threads_per_block)) {
+            return make_pair(-1, -1);
+        }
     }
 
     map<string, Box> group_mem_reg;
@@ -3847,11 +3854,7 @@ pair<float, float>
     // Compute the reuse within a tile
     float reuse =  estimate_tiles * (unit_input_data * tile_size - input_inter);
     float realized_reuse = -1;
-    if (check_cache) {
-        if (total_inter <= arch_params.fast_mem_size) {
-            realized_reuse = reuse;
-        }
-    } else {
+    if (total_inter <= arch_params.fast_mem_size) {
         realized_reuse = reuse;
     }
 
@@ -4113,14 +4116,16 @@ void Partitioner::tile_for_input_locality(bool init_pipeline_reuse) {
                         //          << std::endl;
                     }
 
-                    //std::cerr << g.first << " Config:" << "[";
-                    //for (auto &t: tile_sizes)
-                    //    std::cerr << t << ",";
-                    //std::cerr <<  "]" << std::endl;
+                    /*
+                    std::cerr << g.first << " Config:" << "[";
+                    for (auto &t: tile_sizes)
+                        std::cerr << t << ",";
+                    std::cerr <<  "]" << std::endl;
+                    */
 
                     pair<float, float>  eval;
                     eval = evaluate_reuse(g.first, group_inputs, tile_sizes,
-                                          true);
+                                          false);
                     if (eval.first > best_reuse) {
                         best_reuse = eval.first;
                         best_tiling = tile_sizes;
@@ -4134,32 +4139,33 @@ void Partitioner::tile_for_input_locality(bool init_pipeline_reuse) {
                     vector<int> tile_sizes;
 
                     for (int j = 0; j < i; j++) {
-                        if (reuse[j] > arch_params.fast_mem_size || j == 0)
-                            tile_sizes.push_back(-1);
+                        if (j == 0)
+                            tile_sizes.push_back(arch_params.vec_len);
                         else
-                            tile_sizes.push_back(1);
+                            tile_sizes.push_back(-1);
                     }
 
                     for (unsigned int j = i; j < num_args; j++) {
-                        int curr_size;
-                        if (reuse[j] > arch_params.fast_mem_size || j == 0)
-                            curr_size = s;
-                        else
-                            curr_size = 1;
-
                         if (j == 0) {
                             if (gpu_schedule)
-                                tile_sizes.push_back(std::max(curr_size, arch_params.vec_len));
+                                tile_sizes.push_back(std::max(s, arch_params.vec_len));
                             else
                                 tile_sizes.push_back(-1);
                         }
                         else
-                            tile_sizes.push_back(curr_size);
+                            tile_sizes.push_back(s);
                     }
+
+                    /*
+                    std::cerr << g.first << " Config:" << "[";
+                    for (auto &t: tile_sizes)
+                        std::cerr << t << ",";
+                    std::cerr <<  "]" << std::endl;
+                    */
 
                     pair<float, float>  eval;
                     eval = evaluate_reuse(g.first, group_inputs, tile_sizes,
-                                          true);
+                                          false);
                     if (eval.first > best_reuse) {
                         best_reuse = eval.first;
                         best_tiling = tile_sizes;
@@ -5078,8 +5084,9 @@ void mark_block_dims(vector<Dim> &dims, map<string, int> &tile_sizes,
                 continue;
             if (num_threads < target_threads_per_block && num_mapped_to_block < 3) {
                 int tile_size = 0;
-                if (estimates[dims[i].var] >= vec_len)
-                    tile_size = vec_len;
+                int rem_threads = std::ceil(target_threads_per_block/num_threads);
+                if (estimates[dims[i].var] >= std::min(vec_len, rem_threads))
+                    tile_size = std::min(vec_len, rem_threads);
                 else
                     tile_size = estimates[dims[i].var];
 
@@ -5120,9 +5127,10 @@ void mark_block_dims(vector<Dim> &dims, map<string, int> &tile_sizes,
                 continue;
             if (num_threads < target_threads_per_block && num_mapped_to_block < 3) {
                 int tile_size = 0;
+                int rem_threads = std::ceil(target_threads_per_block/num_threads);
                 if (tile_sizes.find(dims[i].var) == tile_sizes.end()) {
-                    if (estimates[dims[i].var] >= vec_len)
-                        tile_size = vec_len;
+                    if (estimates[dims[i].var] >= std::min(vec_len, rem_threads))
+                        tile_size = std::min(vec_len, rem_threads);
                     else
                         tile_size = estimates[dims[i].var];
                 } else {

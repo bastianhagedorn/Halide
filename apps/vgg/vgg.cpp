@@ -284,6 +284,6 @@ int main(int argc, char **argv) {
     else
         test.compile_jit(target, false);
 
-    double best = benchmark(3, 1, [&]() { test.realize({loss, scores}); scores.copy_to_host();});
+    double best = benchmark(5, 3, [&]() { test.realize({loss, scores}); scores.copy_to_host();});
     std::cout << "runtime: " << best * 1e3 << std::endl;
 }

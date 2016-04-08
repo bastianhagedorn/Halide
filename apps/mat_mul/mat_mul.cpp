@@ -35,7 +35,7 @@ int main(int argc, char **argv) {
     Func out;
     out(x, y) = prod(x, y);
 
-    out.bound(x, 0, size).bound(y, 0, size);
+    //out.bound(x, 0, size).bound(y, 0, size);
     out.estimate(x, 0, size).estimate(y, 0, size);
 
     int sched = atoi(argv[1]);
@@ -98,7 +98,6 @@ int main(int argc, char **argv) {
             // perfect caching per block is
             // 2048*2048*2048*64*4*2/(64*64), which implies 29.8
             // GB/s. So we're getting good but not great caching.
-
         } else {
             Var xi, yi, xii, yii;
             // Tile the output domain
