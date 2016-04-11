@@ -4657,8 +4657,8 @@ void simple_vectorize(Function &func, map<string, int> &dim_estimates,
 }
 
 void vectorize_update(Function &func, int stage,
-                      map<string, int> &dim_estimates, int vec_len,
-                      set<string> &par_vars) {
+        map<string, int> &dim_estimates, int vec_len,
+        set<string> &par_vars) {
     if (func.dimensions() == 0) {
         // Can't vectorize a reduction onto a scalar.
         return;
@@ -4677,6 +4677,14 @@ void vectorize_update(Function &func, int stage,
             //move_dim_to_innermost(s, dim);
             //vectorize_dim(s, dim_estimates, 0, vec_len);
             vectorize_dim(s, dim_estimates, dim, vec_len);
+            par_vars.insert(dims[dim+1].var);
+            break;
+        } else if(check_dim_size(s, dim, 8, dim_estimates) && dim_par) {
+            vectorize_dim(s, dim_estimates, dim, 8);
+            par_vars.insert(dims[dim+1].var);
+            break;
+        } else if(check_dim_size(s, dim, 4, dim_estimates) && dim_par) {
+            vectorize_dim(s, dim_estimates, dim, 4);
             par_vars.insert(dims[dim+1].var);
             break;
         } else {
@@ -4773,6 +4781,32 @@ bool check_estimates_on_outputs(const vector<Function> &outputs) {
     return estimates_avail;
 }
 
+map<string, Box> get_group_member_bounds(Partitioner &part, string group,
+                                         vector<int> &tile_sizes) {
+
+    vector<pair<int, int> > bounds;
+    vector<bool> eval;
+    map<string, Box> conc_reg;
+
+    const vector<string> &args = part.analy.env[group].args();
+    vector<int> &dim_estimates = part.func_pure_dim_estimates[group];
+
+    for (unsigned int i = 0; i < args.size(); i++) {
+        if (tile_sizes[i] != -1) {
+            bounds.push_back(make_pair(0, tile_sizes[i] - 1));
+        }
+        else {
+            bounds.push_back(make_pair(0, dim_estimates[i] - 1));
+        }
+        eval.push_back(true);
+    }
+
+    conc_reg = part.analy.concrete_dep_regions(group, eval,
+                                               part.analy.func_dep_regions,
+                                               bounds);
+    return conc_reg;
+}
+
 void synthesize_cpu_schedule(string g_name, Partitioner &part,
         map<string, Function> &env,
         map<string, Box> &pipeline_bounds,
@@ -4796,6 +4830,9 @@ void synthesize_cpu_schedule(string g_name, Partitioner &part,
     map<string, int> org_out_estimates =
         get_dim_estimates(g_out.name(), pipeline_bounds, env);
     map<string, int> out_estimates = org_out_estimates;
+
+    map<string, Box> group_bounds =
+        get_group_member_bounds(part, g_name, sched.tile_sizes);
 
     map<string, int> tile_sizes_pure;
     if (sched.locality || sched.fusion) {
@@ -4875,6 +4912,10 @@ void synthesize_cpu_schedule(string g_name, Partitioner &part,
         Schedule &s = g_out.schedule();
         if (check_dim_size(s, 0, part.arch_params.vec_len, out_estimates))
             simple_vectorize(g_out, out_estimates, 0, part.arch_params.vec_len);
+        else if (check_dim_size(s, 0, 8, out_estimates))
+            simple_vectorize(g_out, out_estimates, 0, 8);
+        else if (check_dim_size(s, 0, 4, out_estimates))
+            simple_vectorize(g_out, out_estimates, 0, 4);
 
         /*
         if (auto_vec) {
@@ -5037,7 +5078,7 @@ void synthesize_cpu_schedule(string g_name, Partitioner &part,
     for (auto &m: part.groups[g_name]) {
         int outer_dim = dims.size() - 2;
         map<string, int> org_mem_estimates =
-            get_dim_estimates(m.name(), pipeline_bounds, env);
+            get_dim_estimates(m.name(), group_bounds, env);
         map<string, int> mem_estimates = org_mem_estimates;
         if (m.name() != g_out.name() &&
                 inlines.find(m.name()) == inlines.end() && num_tile_dims > 0) {
@@ -5049,9 +5090,14 @@ void synthesize_cpu_schedule(string g_name, Partitioner &part,
             m.schedule().store_level().var = dims[compute_level].var;
             m.schedule().compute_level().func = g_out.name();
             m.schedule().compute_level().var = dims[compute_level].var;
-            if (auto_vec)
+            if (auto_vec) {
                 if (check_dim_size(m.schedule(), 0, part.arch_params.vec_len, mem_estimates))
                     simple_vectorize(m, mem_estimates, 0, part.arch_params.vec_len);
+                else if (check_dim_size(m.schedule(), 0, 8, mem_estimates))
+                    simple_vectorize(m, mem_estimates, 0, 8);
+                else if (check_dim_size(m.schedule(), 0, 4, mem_estimates))
+                    simple_vectorize(m, mem_estimates, 0, 4);
+            }
             if (!m.is_pure()) {
                 int num_updates = m.updates().size();
                 for (int i = 0; i < num_updates; i ++) {
@@ -5238,32 +5284,6 @@ void realize_tiling_gpu(vector<Dim> &dims, Schedule &s,
         else
             break;
     }
-}
-
-map<string, Box> get_group_member_bounds(Partitioner &part, string group,
-                                         vector<int> &tile_sizes) {
-
-    vector<pair<int, int> > bounds;
-    vector<bool> eval;
-    map<string, Box> conc_reg;
-
-    const vector<string> &args = part.analy.env[group].args();
-    vector<int> &dim_estimates = part.func_pure_dim_estimates[group];
-
-    for (unsigned int i = 0; i < args.size(); i++) {
-        if (tile_sizes[i] != -1) {
-            bounds.push_back(make_pair(0, tile_sizes[i] - 1));
-        }
-        else {
-            bounds.push_back(make_pair(0, dim_estimates[i] - 1));
-        }
-        eval.push_back(true);
-    }
-
-    conc_reg = part.analy.concrete_dep_regions(group, eval,
-                                               part.analy.func_dep_regions,
-                                               bounds);
-    return conc_reg;
 }
 
 void synthesize_gpu_schedule(string g_name, Partitioner &part,
