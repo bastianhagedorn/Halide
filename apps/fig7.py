@@ -6,7 +6,7 @@ from tempfile import mkstemp
 
 import sys, os
 
-resfname='fig8.csv'
+resfname='fig7.csv'
 res = pandas.read_csv(resfname)
 
 """
@@ -30,7 +30,7 @@ require(grid)
 require(gridExtra)
 
 data = read.csv('{csvfile}',sep=',')
-data$version <- factor(data$version, levels=c('naive','ref','auto'))
+data$version <- factor(data$version, levels=c('naive','ref','auto', '6config', 'at', 'polymage'))
 data$threads <- factor(data$threads)
 data$app <- factor(data$app)
 
@@ -38,8 +38,8 @@ t = theme(
           axis.title.x=element_blank(),
           axis.title.y=element_blank(),
           axis.line = element_line(colour = "grey20", size = 0.15),
-          axis.text.x = element_text(colour="grey20",size=2, face="plain"),
-          axis.text.y = element_text(colour="grey20",size=2, face="plain"),
+          axis.text.x = element_text(colour="grey20",size=2.5, face="plain"),
+          axis.text.y = element_text(colour="grey20",size=2.5, face="plain"),
 
           axis.ticks=element_blank(),
           panel.grid.major=element_blank(),
@@ -51,7 +51,7 @@ t = theme(
           axis.ticks.length = unit(0,'pt'),
           panel.margin=unit(0,'pt'),
           plot.title = element_text(size=2.5),
-          plot.margin= unit(c(-0.1, -0.25, -0.45, -0.5), "lines"),
+          plot.margin= unit(c(-0.5, 0, 0, 0), "lines"),
 
           plot.background=element_blank(),
 
@@ -84,14 +84,14 @@ printable_name = {
 }
 
 def plot(app):
-    pl = ggplot("subset(data, (data$app == '{0}') & (data$threads == 'cpu' | data$threads == 'gpu'))".format(app),
+    pl = ggplot("subset(data, (data$app == '{0}') & (data$threads == 6))".format(app),
                 aes(x='threads', y='throughput_norm')) + ylim(0,1) # + labs(x='NULL',y='NULL') + guides(fill='FALSE')
     pl+= geom_bar(aes(fill='version'), width='0.75', stat="'identity'", position="position_dodge(width=0.85)")
-    pl+= scale_fill_manual('values=c("#b3b3b3","#f5c46c","#F95738")')
+    pl+= scale_fill_manual('values=c("#b3b3b3","#f5c46c","#F95738", "#58BFE8", "#083D77", "#4D4D4D")')
     pl+= ggtitle("'{0}'".format(printable_name[app]))
-    pl+= scale_x_discrete('expand=c(0, 0), labels=c("ARM", "GPU")')
+    pl+= scale_x_discrete('expand=c(0, 0), labels=c("6 Threads")')
     pl+= scale_y_continuous('expand=c(0, 0), breaks=c(0, 0.5, 1), labels = c("0", "0.5", "1")')
-    pl+= coord_fixed(ratio = 1.75)
+    pl+= coord_fixed(ratio = 1.00)
 
     return str(pl)
     # app_name_norm = app.replace(' ', '_').lower()
@@ -119,7 +119,7 @@ for app in apps:
     fname = 'fig1-{0}.pdf'.format(app_name_norm)
 
     # select
-    reldata = res[((res.threads == 'cpu') | (res.threads == 'gpu')) & (res.app == app)]
+    reldata = res[((res.threads == 6)) & (res.app == app)]
 
     #re-normalize
     reldata.throughput_norm = reldata.throughput_norm / max(reldata.throughput_norm)
@@ -133,7 +133,7 @@ for app in apps:
 
     arrange_str += "p{0},".format(plot_num)
     prog += "p{0} <- {1} + t".format(plot_num, plot(app)) + '\n'
-prog += "pdf('fig8.pdf', width = 7, height = 1.25)" + '\n'
+prog += "pdf('fig7.pdf', width = 7, height = 2)" + '\n'
 prog += "grid.arrange(" + arrange_str + "ncol = 7, clip=TRUE)" + '\n'
 prog += "dev.off()" + '\n'
 print prog
