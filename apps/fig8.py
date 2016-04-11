@@ -6,17 +6,12 @@ from tempfile import mkstemp
 
 import sys, os
 
-srcdir=os.path.expanduser('/home/ravi/Systems/sandbox/Halide/apps/bench-muir.graphics.cs.cmu.edu-5b6ff9b1/')
+srcdir=os.path.expanduser('~/proj/ravi-halide-autoschedule/latedays/bench-numactl-2016-01-16')
 if len(sys.argv) > 1:
     srcdir=sys.argv[1]
 
-dbfname='benchmarks.db'
-if len(sys.argv) > 2:
-    dbfname=sys.argv[2]
-
-dbfile = 'sqlite:///'+os.path.join(srcdir, dbfname)
-db = create_engine(dbfile)
-res = pandas.read_sql('benchmarks', db)
+resfname='fig8.csv'
+res = pandas.read_csv(resfname)
 
 """
 t = theme(axis.line=element_blank(),
@@ -39,7 +34,7 @@ require(grid)
 require(gridExtra)
 
 data = read.csv('{csvfile}',sep=',')
-data$version <- factor(data$version, levels=c('naive','ref','auto', 'sweep', 'rand'))
+data$version <- factor(data$version, levels=c('naive','ref','auto'))
 data$threads <- factor(data$threads)
 data$app <- factor(data$app)
 
@@ -93,12 +88,12 @@ printable_name = {
 }
 
 def plot(app):
-    pl = ggplot("subset(data, (data$app == '{0}') & (data$threads == 1 | data$threads == 6 | data$threads == 12))".format(app),
+    pl = ggplot("subset(data, (data$app == '{0}') & (data$threads == 'cpu' | data$threads == 'gpu'))".format(app),
                 aes(x='threads', y='throughput_norm')) + ylim(0,1) # + labs(x='NULL',y='NULL') + guides(fill='FALSE')
     pl+= geom_bar(aes(fill='version'), width='0.75', stat="'identity'", position="position_dodge(width=0.85)")
-    pl+= scale_fill_manual('values=c("#F2BB57","#456B92","#EB053F", "#BD2A4E", "#99173C")')
+    pl+= scale_fill_manual('values=c("#F2BB57","#456B92","#EB053F")')
     pl+= ggtitle("'{0}'".format(printable_name[app]))
-    pl+= scale_x_discrete('expand=c(0, 0), labels=c("1 thread", "6 threads", "12 threads")')
+    pl+= scale_x_discrete('expand=c(0, 0), labels=c("ARM", "GPU")')
     pl+= scale_y_continuous('expand=c(0, 0), breaks=c(0, 0.5, 1), labels = c("0", "0.5", "1")')
     pl+= coord_fixed(ratio = 1.75)
 
@@ -128,7 +123,7 @@ for app in apps:
     fname = 'fig1-{0}.pdf'.format(app_name_norm)
 
     # select
-    reldata = res[((res.threads == 12) | (res.threads == 6) | (res.threads == 1)) & (res.app == app)]
+    reldata = res[((res.threads == 'cpu') | (res.threads == 'gpu')) & (res.app == app)]
 
     #re-normalize
     reldata.throughput_norm = reldata.throughput_norm / max(reldata.throughput_norm)
@@ -147,3 +142,4 @@ prog += "grid.arrange(" + arrange_str + "ncol = 7, clip=TRUE)" + '\n'
 prog += "dev.off()" + '\n'
 print prog
 execute_r(prog, True)
+
