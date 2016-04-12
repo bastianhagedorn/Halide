@@ -2629,17 +2629,17 @@ struct Partitioner {
                 get_dim_estimates(f.first, pipeline_bounds, analy.env);
         }
 
-        //arch_params.parallelism = 24;
-        //arch_params.vec_len = 16;
-
-        arch_params.parallelism = 16 * 8;
+        arch_params.parallelism = 12;
         arch_params.vec_len = 16;
+
+        //arch_params.parallelism = 16 * 8;
+        //arch_params.vec_len = 16;
 
         if (!random_seed) {
             // Initialize machine params
             arch_params.balance = 10;
-            arch_params.fast_mem_size = 8 * 1024;
-            //arch_params.fast_mem_size = 8 * 1024 * 32;
+            //arch_params.fast_mem_size = 8 * 1024;
+            arch_params.fast_mem_size = 8 * 1024 * 32;
             // L1 = 32K
             // L2 = 256K
             // L3 = 8192K
@@ -3469,10 +3469,12 @@ Partitioner::Option Partitioner::choose_candidate(
 
     vector<int> size_variants = {256, 128, 64, 32, 16, 8, 4};
 
+    bool polymage_mode = false;
     if (tile_size_2_var && tile_size_1_var)  {
         size_variants.clear();
         size_variants.push_back(tile_size_1);
         size_variants.push_back(tile_size_2);
+        polymage_mode = true;
     }
 
     if(random_seed) {
@@ -3563,7 +3565,7 @@ Partitioner::Option Partitioner::choose_candidate(
         cand_best_opt.prod_group = p.first;
         cand_best_opt.cons_group = p.second;
 
-        if (!invalid) {
+        if (!invalid && !polymage_mode) {
             // Find the dimensions with zero reuse/redundant work
             vector<float> reuse;
             for (unsigned int i = 0; i < args.size(); i++)
@@ -3679,6 +3681,28 @@ Partitioner::Option Partitioner::choose_candidate(
             }
         }
 
+        if (polymage_mode) {
+            Option opt;
+            opt.prod_group = p.first;
+            opt.cons_group = p.second;
+            for (int i = (int)args.size() - 1; i >= 0; i--) {
+                unsigned int num_tiled_dims = 0;
+                if (num_tiled_dims < size_variants.size()) {
+                    opt.tile_sizes.push_back(size_variants[num_tiled_dims]);
+                    num_tiled_dims++;
+                } else {
+                    opt.tile_sizes.push_back(-1);
+
+                }
+                opt.reuse.push_back(-1);
+            }
+            evaluate_option(opt, Partitioner::FAST_MEM);
+
+            if (cand_best_opt.benefit < opt.benefit) {
+                cand_best_opt = opt;
+            }
+        }
+
         // Cache the result of the evaluation for the pair
         option_cache[key] = cand_best_opt;
         if (best_opt.benefit < cand_best_opt.benefit)
@@ -3717,7 +3741,7 @@ pair<float, float>
         assert(dim_estimates.find(arg_name) != dim_estimates.end());
         if (tile_sizes[i] != -1) {
             // Check if the bounds allow for tiling with the given tile size
-            if (dim_estimates[arg_name] >= tile_sizes[i]) {
+            if (dim_estimates[arg_name] > tile_sizes[i]) {
                 if (is_update) {
                     // Make the tile size the smallest multiple of dimension
                     // less than the tile size
@@ -3967,6 +3991,7 @@ void Partitioner::tile_for_input_locality(bool init_pipeline_reuse) {
         // Restricting tile sizes when trying to emulate polymage mode
         const char *tile_size_1_var = getenv("HL_POLYMAGE_TILE_SIZE1");
 
+        bool polymage_mode = false;
         int tile_size_1 = 0;
         if (tile_size_1_var) {
             tile_size_1 = atoi(tile_size_1_var);
@@ -3985,6 +4010,7 @@ void Partitioner::tile_for_input_locality(bool init_pipeline_reuse) {
             size_variants.clear();
             size_variants.push_back(tile_size_1);
             size_variants.push_back(tile_size_2);
+            polymage_mode = true;
         }
 
         if(random_seed) {
@@ -4020,7 +4046,7 @@ void Partitioner::tile_for_input_locality(bool init_pipeline_reuse) {
             }
         }
 
-        if (!invalid) {
+        if (!invalid && !polymage_mode) {
             vector<float> reuse = get_input_reuse(analy.env[g.first],
                                                   group_inputs);
 
@@ -4095,7 +4121,7 @@ void Partitioner::tile_for_input_locality(bool init_pipeline_reuse) {
                         if (rank < i)
                             // All the dimensions ranked < i in the reuse order
                             // get max tile size
-                            tile_sizes[j] = new_variants[new_variants.size() - 1];
+                            tile_sizes[j] = -1;
                         else if (rank == i)
                             // Vary tile sizes for dimension ranked <=i
                             tile_sizes[j] = s;
@@ -4133,27 +4159,35 @@ void Partitioner::tile_for_input_locality(bool init_pipeline_reuse) {
                 }
             }
 
-            // From the outer to the inner most argument
-            for (int i = (int)num_args - 1; i >= 0; i--) {
-                for(auto &s: size_variants) {
-                    vector<int> tile_sizes;
+            for (unsigned int i = 0; i < num_args; i++) {
+                for (auto &s: new_variants) {
+                    vector<int> tile_sizes(num_args);
+                    for (unsigned int j = 0; j < num_args; j++) {
 
-                    for (int j = 0; j < i; j++) {
-                        if (j == 0)
-                            tile_sizes.push_back(arch_params.vec_len);
+                        string arg_name = "";
+                        if (j < args.size())
+                            arg_name = args[j];
                         else
-                            tile_sizes.push_back(-1);
-                    }
+                            arg_name = u_args[j - args.size()];
 
-                    for (unsigned int j = i; j < num_args; j++) {
+                        unsigned int rank = dim_rank[arg_name];
+                        if (rank <= i)
+                            // Vary tile sizes for dimension ranked <=i
+                            tile_sizes[j] = s;
+                        else
+                            // All the dimensions ranked > i in the reuse order
+                            // get min tile size
+                            tile_sizes[j] = new_variants[0];
+
                         if (j == 0) {
-                            if (gpu_schedule)
-                                tile_sizes.push_back(std::max(s, arch_params.vec_len));
-                            else
-                                tile_sizes.push_back(-1);
+                            if (gpu_schedule) {
+                                tile_sizes[j] = std::max(s, arch_params.vec_len);
+                            } else {
+                                tile_sizes[j] = -1;
+                            }
                         }
-                        else
-                            tile_sizes.push_back(s);
+                        //std::cerr << arg_name << " tile size " << tile_sizes[j]
+                        //          << std::endl;
                     }
 
                     /*
@@ -4178,6 +4212,7 @@ void Partitioner::tile_for_input_locality(bool init_pipeline_reuse) {
                 for (auto &t: best_tiling)
                     std::cerr << t << ",";
                 std::cerr <<  "]" << std::endl;
+                std::cerr <<  best_reuse << std::endl;
             }
 
             if (!init_pipeline_reuse){
