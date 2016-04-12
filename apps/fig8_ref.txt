@@ -13,16 +13,16 @@ runtime: 85.5522
 interpolate:
 runtime: 114.554
 lens_blur:
-runtime: 1325.46
+runtime: 1260.16
 local_laplacian:
 runtime: 734.31
 mat_mul:
 runtime: 5809.95
 max_filter:
-runtime: 578.044
+runtime: 598.472
 non_local_means:
 runtime: 51.4028
 unsharp:
-runtime: 52.4269
+runtime: 57.8467
 vgg:
 runtime: 43007.8

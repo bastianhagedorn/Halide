@@ -3,7 +3,7 @@ runtime: 2.77499
 blur:
 runtime: 3.26562
 camera_pipe:
-runtime: 2.31731
+runtime: 12.2314
 conv_layer:
 runtime: 47.298
 harris:
@@ -21,7 +21,7 @@ runtime: 160.775
 max_filter:
 runtime: 67.3182
 non_local_means:
-runtime: 1.429
+runtime: 4.432
 unsharp:
 runtime: 3.5946
 vgg:
