@@ -51,7 +51,7 @@ t = theme(
           axis.ticks.length = unit(0,'pt'),
           panel.margin=unit(0,'pt'),
           plot.title = element_text(size=2.5),
-          plot.margin= unit(c(-0.5, 0, 0, 0), "lines"),
+          plot.margin= unit(c(0, 0, 0, 0), "lines"),
 
           plot.background=element_blank(),
 
