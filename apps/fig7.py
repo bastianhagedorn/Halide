@@ -89,9 +89,9 @@ def plot(app):
     pl+= geom_bar(aes(fill='version'), width='0.75', stat="'identity'", position="position_dodge(width=0.85)")
     pl+= scale_fill_manual('values=c("#b3b3b3","#f5c46c","#F95738", "#58BFE8", "#083D77", "#4D4D4D")')
     pl+= ggtitle("'{0}'".format(printable_name[app]))
-    pl+= scale_x_discrete('expand=c(0, 0), labels=c("6 Threads")')
+    pl+= scale_x_discrete('expand=c(0, 0.5), labels=c("Schedules")')
     pl+= scale_y_continuous('expand=c(0, 0), breaks=c(0, 0.5, 1), labels = c("0", "0.5", "1")')
-    pl+= coord_fixed(ratio = 1.00)
+    pl+= coord_fixed(ratio = 1.25)
 
     return str(pl)
     # app_name_norm = app.replace(' ', '_').lower()

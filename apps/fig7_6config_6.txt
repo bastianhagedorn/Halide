@@ -7,7 +7,7 @@ runtime: 7.49581
 conv_layer:
 runtime: 41.8614
 harris:
-runtime: 5.8825
+runtime: 6.3338
 hist:
 runtime: 9.0178
 interpolate:
