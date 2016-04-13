@@ -86,3 +86,27 @@ ref:
 runtime: 267.14
 
 Harris
+
+8000x8000
+auto:
+runtime:109.728
+ref
+runtime:109.658
+
+4000x4000
+auto:
+runtime:29.8382
+ref
+runtime:34.431
+
+2000x2000
+auto:
+runtime:14.3201
+ref
+runtime:14.276
+
+1000x1000
+auto:
+runtime:2.8747
+ref
+runtime:4.0007
