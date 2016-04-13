@@ -13,7 +13,7 @@ runtime: 86.1594
 interpolate:
 runtime: 109.997
 lens_blur:
-runtime: 2755.44
+runtime: 1867.09
 local_laplacian:
 runtime: 670.265
 mat_mul:
