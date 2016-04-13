@@ -1,0 +1,88 @@
+Vgg Conv Layers
+
+config1:
+auto:
+runtime: 577.393
+ref:
+runtime: 690.473
+
+config2:
+auto:
+runtime: 294.653
+ref:
+runtime: 338.082
+
+config3:
+auto:
+runtime: 157.134
+ref:
+runtime: 173.297
+
+config4:
+auto:
+runtime: 544.318
+ref:
+runtime: 554.237
+
+config5:
+auto:
+runtime: 342.218
+ref:
+runtime: 319.861
+
+config6:
+auto:
+runtime: 588.281
+ref:
+runtime: 632.51
+
+config7:
+auto:
+runtime: 393.991
+ref:
+runtime: 593.26
+
+config8:
+auto:
+runtime: 549.282
+ref:
+runtime: 739.109
+
+config9:
+auto:
+runtime: 273.275
+ref:
+runtime: 281.164
+
+Local Laplacian
+Bins 2
+auto:
+runtime: 61.1198
+ref:
+runtime: 64.171
+
+Bins 4
+auto:
+runtime: 69.7862
+ref:
+runtime: 78.2784
+
+Bins 8
+auto:
+runtime: 107.034
+ref:
+runtime: 107.941
+
+Bins 16
+auto:
+runtime: 138.847
+ref:
+runtime: 162.611
+
+Bins 32
+auto:
+runtime: 223.547
+ref:
+runtime: 267.14
+
+Harris
