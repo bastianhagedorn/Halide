@@ -1,1 +1,2 @@
 Halide optimized matmul: 105.394ms on a single socket
+caffe xeon: 4238 batch size 16

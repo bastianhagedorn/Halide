@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#/usr/bin/env python
 from pygg import *
 import pandas
 from sqlalchemy import create_engine
@@ -6,7 +6,7 @@ from tempfile import mkstemp
 
 import sys, os
 
-resfname='fig7.csv'
+resfname='conv_layer.csv'
 res = pandas.read_csv(resfname)
 
 """
@@ -30,7 +30,7 @@ require(grid)
 require(gridExtra)
 
 data = read.csv('{csvfile}',sep=',')
-data$version <- factor(data$version, levels=c('naive','ref','auto', '6config', 'at', 'polymage'))
+data$version <- factor(data$version, levels=c('auto'))
 data$threads <- factor(data$threads)
 data$app <- factor(data$app)
 
@@ -38,8 +38,8 @@ t = theme(
           axis.title.x=element_blank(),
           axis.title.y=element_blank(),
           axis.line = element_line(colour = "grey20", size = 0.15),
-          axis.text.x = element_text(colour="grey20",size=2.5, face="plain"),
-          axis.text.y = element_text(colour="grey20",size=2.5, face="plain"),
+          axis.text.x = element_text(colour="grey20",size=2, face="plain"),
+          axis.text.y = element_text(colour="grey20",size=2, face="plain"),
 
           axis.ticks=element_blank(),
           panel.grid.major=element_blank(),
@@ -84,16 +84,15 @@ printable_name = {
 }
 
 def plot(app):
-    pl = ggplot("subset(data, (data$app == '{0}') & (data$threads == 6))".format(app),
-                aes(x='threads', y='throughput_norm')) + ylim(0,1) # + labs(x='NULL',y='NULL') + guides(fill='FALSE')
-    pl+= geom_bar(aes(fill='version'), width='0.75', stat="'identity'",
-            position="position_dodge(width=0.90)")
-    pl+= scale_fill_manual('values=c("#b3b3b3","#f5c46c","#F95738", "#58BFE8", "#083D77", "#4D4D4D")')
+    pl = ggplot("subset(data, (data$app == '{0}') & (data$threads == 1 | data$threads == 2 | data$threads == 3 | data$threads == 4 | data$threads == 5 | data$threads == 6 | data$threads == 7 | data$threads == 8 | data$threads == 9 ))".format(app),
+                aes(x='threads', y='runtime_norm')) + ylim(0,2) # + labs(x='NULL',y='NULL') + guides(fill='FALSE')
+    pl+= geom_bar(aes(fill='version'), width='0.25', stat="'identity'", position="position_dodge(width=0.25), binwidth=0")
+    pl+= scale_fill_manual('values=c("#F95738")')
     pl+= ggtitle("'{0}'".format(printable_name[app]))
-    pl+= scale_x_discrete('expand=c(0, 0.5), labels=c("Schedules")')
-    pl+= scale_y_continuous('expand=c(0, 0), breaks=c(0, 0.5, 1), labels = c("0", "0.5", "1")')
+    pl+= scale_x_discrete('expand=c(0, 0.5), labels=c("layer1", "layer2","layer3", "layer4", "layer5", "layer6", "layer7", "layer8", "layer9")')
+    pl+= scale_y_continuous('limits=c(0, 2), expand=c(0, 0), breaks=c(0, 1), labels = c("0", "1")')
     pl+= coord_fixed(ratio = 1)
-
+    #pl+= geom_hline(yintercept=1)
     return str(pl)
     # app_name_norm = app.replace(' ', '_').lower()
     # fname = 'fig1-{0}.png'.format(app_name_norm)
@@ -108,10 +107,8 @@ def plot(app):
     #         """.format(app))
     sys.exit()
 
-apps = ['blur', 'unsharp', 'harris', 'camera_pipe', 'non_local_means', \
-        'interpolate', 'local_laplacian', 'lens_blur', 'max_filter', 'bilateral_grid', 'hist',\
-        'conv_layer', 'vgg', 'mat_mul']
 
+apps = res.app.unique()
 prog = "plots <- list()" + '\n'
 plot_num = 0
 arrange_str = ""
@@ -122,12 +119,9 @@ for app in apps:
     fname = 'fig1-{0}.pdf'.format(app_name_norm)
 
     # select
-    reldata = res[((res.threads == 6)) & (res.app == app)]
-
-    #re-normalize
-    reldata.throughput_norm = reldata.throughput_norm / max(reldata.throughput_norm)
-
-    assert(max(reldata.throughput_norm) == 1.0)
+    reldata = res[((res.threads == 1) | (res.threads == 2) | (res.threads == 3)
+                  | (res.threads == 4) | (res.threads == 5) | (res.threads == 6) |
+                  (res.threads == 7) | (res.threads == 8) | (res.threads == 9)) & (res.app == app)]
 
     (csvfp,csvfile) = mkstemp(suffix='.csv')
     reldata.to_csv(csvfile)
@@ -136,8 +130,8 @@ for app in apps:
 
     arrange_str += "p{0},".format(plot_num)
     prog += "p{0} <- {1} + t".format(plot_num, plot(app)) + '\n'
-prog += "pdf('fig7.pdf', width = 4, height = 4)" + '\n'
-prog += "grid.arrange(" + arrange_str + "ncol = 4, clip=TRUE)" + '\n'
+prog += "pdf('conv_layer.pdf', width = 5, height = 1)" + '\n'
+prog += "grid.arrange(" + arrange_str + "ncol = 1, clip=TRUE)" + '\n'
 prog += "dev.off()" + '\n'
 print prog
 execute_r(prog, True)

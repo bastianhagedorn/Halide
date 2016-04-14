@@ -52,7 +52,7 @@ config9:
 auto:
 runtime: 273.275
 ref:
-runtime: 281.164
+runtime: 481.164
 
 Local Laplacian
 Bins 2

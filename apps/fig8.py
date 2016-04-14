@@ -86,7 +86,8 @@ printable_name = {
 def plot(app):
     pl = ggplot("subset(data, (data$app == '{0}') & (data$threads == 'cpu' | data$threads == 'gpu'))".format(app),
                 aes(x='threads', y='throughput_norm')) + ylim(0,1) # + labs(x='NULL',y='NULL') + guides(fill='FALSE')
-    pl+= geom_bar(aes(fill='version'), width='0.5', stat="'identity'", position="position_dodge(width=0.55)")
+    pl+= geom_bar(aes(fill='version'), width='0.5', stat="'identity'",
+            position="position_dodge(width=0.6)")
     pl+= scale_fill_manual('values=c("#b3b3b3","#f5c46c","#F95738")')
     pl+= ggtitle("'{0}'".format(printable_name[app]))
     pl+= scale_x_discrete('expand=c(0, 0.5), labels=c("ARM", "GPU")')
@@ -108,10 +109,14 @@ def plot(app):
     sys.exit()
 
 
-apps = res.app.unique()
+apps = ['blur', 'unsharp', 'harris', 'camera_pipe', 'non_local_means', \
+        'interpolate', 'local_laplacian', 'lens_blur', 'max_filter', 'bilateral_grid', 'hist',\
+        'conv_layer', 'vgg', 'mat_mul']
+
 prog = "plots <- list()" + '\n'
 plot_num = 0
 arrange_str = ""
+
 for app in apps:
     print '\n\n\n===== {0} ====='.format(app)
     plot_num = plot_num + 1

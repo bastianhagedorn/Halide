@@ -1,6 +1,10 @@
 app,runtime_norm,threads,version
-local_laplacian,1.0499216293247033,2,auto
-local_laplacian,1.121688815267202,4,auto
-local_laplacian,0.9915972614669125,8,auto
-local_laplacian,1.171152419569742,16,auto
-local_laplacian,1.1950059718985269,32,auto
+conv_layer,1.1958458103925749,1,auto
+conv_layer,1.1473903201392823,2,auto
+conv_layer,1.1028612521796683,3,auto
+conv_layer,0.982103324029251,4,auto
+conv_layer,0.9346702978802984,5,auto
+conv_layer,1.0751834582452944,6,auto
+conv_layer,1.5057704363805264,7,auto
+conv_layer,1.3455911535422607,8,auto
+conv_layer,1.760731863507456,9,auto

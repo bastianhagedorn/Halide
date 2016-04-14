@@ -91,7 +91,7 @@ def plot(app):
     pl+= scale_fill_manual('values=c("#F95738")')
     pl+= ggtitle("'{0}'".format(printable_name[app]))
     pl+= scale_x_discrete('expand=c(0, 0.5), labels=c("500x500", "1000x1000", "2000x2000", "4000x4000", "8000x8000")')
-    pl+= scale_y_continuous('limits=c(0, 2), expand=c(0, 0), breaks=c(0, 1, 2), labels = c("0", "1", "2")')
+    pl+= scale_y_continuous('limits=c(0, 1.5), expand=c(0, 0), breaks=c(0, 1, 2), labels = c("0", "1", "2")')
     pl+= coord_fixed(ratio = 1)
     #pl+= geom_hline(yintercept=1)
     return str(pl)
@@ -129,7 +129,7 @@ for app in apps:
 
     arrange_str += "p{0},".format(plot_num)
     prog += "p{0} <- {1} + t".format(plot_num, plot(app)) + '\n'
-prog += "pdf('harris.pdf', width = 5, height = 1)" + '\n'
+prog += "pdf('harris.pdf', width = 2.5, height = 1)" + '\n'
 prog += "grid.arrange(" + arrange_str + "ncol = 1, clip=TRUE)" + '\n'
 prog += "dev.off()" + '\n'
 print prog
