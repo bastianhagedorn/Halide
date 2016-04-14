@@ -1,0 +1,1 @@
+Halide optimized matmul: 105.394ms on a single socket
