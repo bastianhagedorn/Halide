@@ -110,3 +110,9 @@ auto:
 runtime:2.8747
 ref
 runtime:4.0007
+
+500x500
+auto:
+runtime:0.965
+ref
+runtime:1.284
