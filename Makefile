@@ -24,11 +24,11 @@ endif
 SHELL = bash
 CXX ?= g++
 PREFIX ?= /usr/local
-LLVM_CONFIG ?= llvm-config-3.7
+LLVM_CONFIG ?= llvm-config
 LLVM_COMPONENTS= $(shell $(LLVM_CONFIG) --components)
 LLVM_VERSION = $(shell $(LLVM_CONFIG) --version | cut -b 1-3)
 LLVM_FULL_VERSION = $(shell $(LLVM_CONFIG) --version)
-CLANG ?= clang-3.7
+CLANG ?= clang
 CLANG_VERSION = $(shell $(CLANG) --version)
 LLVM_BINDIR = $(shell $(LLVM_CONFIG) --bindir | sed -e 's/\\/\//g' -e 's/\([a-zA-Z]\):/\/\1/g')
 LLVM_LIBDIR = $(shell $(LLVM_CONFIG) --libdir | sed -e 's/\\/\//g' -e 's/\([a-zA-Z]\):/\/\1/g')
@@ -252,7 +252,6 @@ SOURCE_FILES = \
   AddImageChecks.cpp \
   AddParameterChecks.cpp \
   AllocationBoundsInference.cpp \
-  BlockFlattening.cpp \
   BoundaryConditions.cpp \
   Bounds.cpp \
   BoundsInference.cpp \
@@ -275,11 +274,11 @@ SOURCE_FILES = \
   CodeGen_PTX_Dev.cpp \
   CodeGen_Renderscript_Dev.cpp \
   CodeGen_X86.cpp \
+  CPlusPlusMangle.cpp \
   CSE.cpp \
   Debug.cpp \
   DebugToFile.cpp \
   Deinterleave.cpp \
-  Derivative.cpp \
   DeviceArgument.cpp \
   DeviceInterface.cpp \
   EarlyFree.cpp \
@@ -293,6 +292,7 @@ SOURCE_FILES = \
   FuseGPUThreadLoops.cpp \
   Generator.cpp \
   Image.cpp \
+  ImageParam.cpp \
   InjectHostDevBufferCopies.cpp \
   InjectImageIntrinsics.cpp \
   InjectOpenGLIntrinsics.cpp \
@@ -316,11 +316,10 @@ SOURCE_FILES = \
   Memoization.cpp \
   Module.cpp \
   ModulusRemainder.cpp \
+  Monotonic.cpp \
   ObjectInstanceRegistry.cpp \
-  OneToOne.cpp \
-  Output.cpp \
+  OutputImageParam.cpp \
   ParallelRVar.cpp \
-  Param.cpp \
   Parameter.cpp \
   PartitionLoops.cpp \
   Pipeline.cpp \
@@ -341,12 +340,14 @@ SOURCE_FILES = \
   SkipStages.cpp \
   SlidingWindow.cpp \
   Solve.cpp \
+  StaticLibrary.cpp \
   StmtToHtml.cpp \
   StorageFlattening.cpp \
   StorageFolding.cpp \
   Substitute.cpp \
   Target.cpp \
   Tracing.cpp \
+  TrimNoOps.cpp \
   Tuple.cpp \
   Type.cpp \
   UnifyDuplicateLets.cpp \
@@ -355,7 +356,8 @@ SOURCE_FILES = \
   Util.cpp \
   Var.cpp \
   VaryingAttributes.cpp \
-  VectorizeLoops.cpp
+  VectorizeLoops.cpp \
+  WrapCalls.cpp
 
 ifeq ($(LLVM_VERSION_TIMES_10),35)
 BITWRITER_VERSION=.35
@@ -374,7 +376,6 @@ HEADER_FILES = \
   AddParameterChecks.h \
   AllocationBoundsInference.h \
   Argument.h \
-  BlockFlattening.h \
   BoundaryConditions.h \
   Bounds.h \
   BoundsInference.h \
@@ -396,11 +397,11 @@ HEADER_FILES = \
   CodeGen_PTX_Dev.h \
   CodeGen_Renderscript_Dev.h \
   CodeGen_X86.h \
+  CPlusPlusMangle.h \
   CSE.h \
   Debug.h \
   DebugToFile.h \
   Deinterleave.h \
-  Derivative.h \
   DeviceArgument.h \
   DeviceInterface.h \
   EarlyFree.h \
@@ -418,6 +419,7 @@ HEADER_FILES = \
   Generator.h \
   runtime/HalideRuntime.h \
   Image.h \
+  ImageParam.h \
   InjectHostDevBufferCopies.h \
   InjectImageIntrinsics.h \
   InjectOpenGLIntrinsics.h \
@@ -444,9 +446,10 @@ HEADER_FILES = \
   Memoization.h \
   Module.h \
   ModulusRemainder.h \
+  Monotonic.h \
   ObjectInstanceRegistry.h \
-  OneToOne.h \
-  Output.h \
+  Outputs.h \
+  OutputImageParam.h \
   ParallelRVar.h \
   Parameter.h \
   Param.h \
@@ -469,12 +472,14 @@ HEADER_FILES = \
   SkipStages.h \
   SlidingWindow.h \
   Solve.h \
+  StaticLibrary.h \
   StmtToHtml.h \
   StorageFlattening.h \
   StorageFolding.h \
   Substitute.h \
   Target.h \
   Tracing.h \
+  TrimNoOps.h \
   Tuple.h \
   Type.h \
   UnifyDuplicateLets.h \
@@ -482,7 +487,8 @@ HEADER_FILES = \
   UnrollLoops.h \
   Util.h \
   Var.h \
-  VectorizeLoops.h
+  VectorizeLoops.h \
+  WrapCalls.h
 
 OBJECTS = $(SOURCE_FILES:%.cpp=$(BUILD_DIR)/%.o)
 OBJECTS += $(BITWRITER_SOURCE_FILES:%.cpp=$(BUILD_DIR)/%.o)
@@ -584,7 +590,7 @@ $(LIB_DIR)/libHalide.a: $(OBJECTS) $(INITIAL_MODULES)
 	# symbols. We only care about the libLLVM ones.
 	@rm -rf $(BUILD_DIR)/llvm_objects
 	@mkdir -p $(BUILD_DIR)/llvm_objects
-	$(CXX) -o /dev/null -shared $(OBJECTS) $(INITIAL_MODULES) -Wl,-t $(LLVM_STATIC_LIBS) $(LIBDL) -lz -lpthread | grep libLLVM > $(BUILD_DIR)/llvm_objects/list
+	$(CXX) -o /dev/null -shared $(OBJECTS) $(INITIAL_MODULES) -Wl,-t $(LLVM_STATIC_LIBS) $(LIBDL) -lz -lpthread | egrep "libLLVM" > $(BUILD_DIR)/llvm_objects/list
 	cat $(BUILD_DIR)/llvm_objects/list | sed = | sed "N;s/[()]/ /g;s/\n /\n/;s/\([0-9]*\)\n\([^ ]*\) \([^ ]*\)/ar x \2 \3; mv \3 llvm_\1_\3/" > $(BUILD_DIR)/llvm_objects/extract.sh
 	# Extract the necessary object files from the llvm archives.
 	cd $(BUILD_DIR)/llvm_objects; bash ./extract.sh
@@ -740,7 +746,7 @@ test_generators:  \
 ALL_TESTS = test_internal test_correctness test_errors test_tutorials test_warnings test_generators test_renderscript
 
 # These targets perform timings of each test. For most tests this includes Halide JIT compile times, and run times.
-# For static and generator tests they time the compile time only. The times are recorded in CSV files.
+# For generator tests they time the compile time only. The times are recorded in CSV files.
 time_compilation_correctness: init_time_compilation_correctness $(CORRECTNESS_TESTS:$(ROOT_DIR)/test/correctness/%.cpp=time_compilation_test_%)
 time_compilation_performance: init_time_compilation_performance $(PERFORMANCE_TESTS:$(ROOT_DIR)/test/performance/%.cpp=time_compilation_performance_%)
 time_compilation_opengl: init_time_compilation_opengl $(OPENGL_TESTS:$(ROOT_DIR)/test/opengl/%.cpp=time_compilation_opengl_%)
@@ -764,7 +770,7 @@ build_tests: $(CORRECTNESS_TESTS:$(ROOT_DIR)/test/correctness/%.cpp=$(BIN_DIR)/c
 	$(GENERATOR_EXTERNAL_TESTS:$(ROOT_DIR)/test/generator/%_jittest.cpp=$(BIN_DIR)/generator_jit_%) \
 	$(RENDERSCRIPT_TESTS:$(ROOT_DIR)/test/renderscript/%.cpp=$(BIN_DIR)/renderscript_%)
 
-time_compilation_tests: time_compilation_correctness time_compilation_performance time_compilation_static time_compilation_generators
+time_compilation_tests: time_compilation_correctness time_compilation_performance time_compilation_generators
 
 # Make an empty generator for generating runtimes.
 $(BIN_DIR)/runtime.generator: $(ROOT_DIR)/tools/GenGen.cpp $(BIN_DIR)/libHalide.$(SHARED_EXT)
@@ -773,7 +779,7 @@ $(BIN_DIR)/runtime.generator: $(ROOT_DIR)/tools/GenGen.cpp $(BIN_DIR)/libHalide.
 # Generate a standalone runtime for a given target string
 $(RUNTIMES_DIR)/runtime_%.o: $(BIN_DIR)/runtime.generator
 	@mkdir -p $(RUNTIMES_DIR)
-	$(LD_PATH_SETUP) $(CURDIR)/$< -r $(notdir $@) -o $(CURDIR)/$(RUNTIMES_DIR) target=$*
+	$(LD_PATH_SETUP) $(CURDIR)/$< -r $(basename $(notdir $@)) -o $(CURDIR)/$(RUNTIMES_DIR) target=$*
 
 $(BIN_DIR)/test_internal: $(ROOT_DIR)/test/internal.cpp $(BIN_DIR)/libHalide.$(SHARED_EXT)
 	$(CXX) $(CXX_FLAGS)  $< -I$(SRC_DIR) -L$(BIN_DIR) -lHalide $(TEST_LDFLAGS) -lpthread $(LIBDL) -lz -o $@
@@ -798,11 +804,6 @@ $(BIN_DIR)/opengl_%: $(ROOT_DIR)/test/opengl/%.cpp $(BIN_DIR)/libHalide.$(SHARED
 $(BIN_DIR)/renderscript_%: $(ROOT_DIR)/test/renderscript/%.cpp $(BIN_DIR)/libHalide.$(SHARED_EXT) $(INCLUDE_DIR)/Halide.h
 	$(CXX) $(TEST_CXX_FLAGS) $(OPTIMIZE) $< -I$(INCLUDE_DIR) -I$(SRC_DIR) -L$(BIN_DIR) -lHalide $(TEST_LDFLAGS) -lpthread $(LIBDL) -lz -o $@
 
-$(TMP_DIR)/static/%/%.o: $(BIN_DIR)/static_%_generate
-	@-mkdir -p $(TMP_DIR)/static/$*
-	cd $(TMP_DIR)/static/$*; $(LD_PATH_SETUP) $(CURDIR)/$<
-	@-echo
-
 # TODO(srj): this doesn't auto-delete, why not?
 .INTERMEDIATE: $(FILTERS_DIR)/%.generator
 
@@ -813,11 +814,26 @@ $(FILTERS_DIR)/%.generator: $(ROOT_DIR)/test/generator/%_generator.cpp $(GENGEN_
 	@mkdir -p $(FILTERS_DIR)
 	$(CXX) -std=c++11 -g $(CXX_WARNING_FLAGS) -fno-rtti -I$(INCLUDE_DIR) $(filter %_generator.cpp,$^) $(ROOT_DIR)/tools/GenGen.cpp -L$(BIN_DIR) -lHalide -lz -lpthread $(LIBDL) -o $@
 
+NON_EMPTY_TARGET=$(if $(HL_TARGET),$(HL_TARGET),host)
+NAME_MANGLING_TARGET=$(NON_EMPTY_TARGET)-c_plus_plus_name_mangling
+
 # By default, %.o/.h are produced by executing %.generator. Runtimes are not included in these.
 $(FILTERS_DIR)/%.o $(FILTERS_DIR)/%.h: $(FILTERS_DIR)/%.generator
 	@mkdir -p $(FILTERS_DIR)
 	@-mkdir -p $(TMP_DIR)
 	cd $(TMP_DIR); $(LD_PATH_SETUP) $(CURDIR)/$< -g $(notdir $*) -o $(CURDIR)/$(FILTERS_DIR) target=$(HL_TARGET)-no_runtime
+
+# By default, %.o/.h are produced by executing %.generator. Runtimes are not included in these.
+$(FILTERS_DIR)/cxx_mangling.o $(FILTERS_DIR)/cxx_mangling.h: $(FILTERS_DIR)/cxx_mangling.generator
+	@mkdir -p $(FILTERS_DIR)
+	@-mkdir -p $(TMP_DIR)
+	cd $(TMP_DIR); $(LD_PATH_SETUP) $(CURDIR)/$< -g $(notdir $*) -o $(CURDIR)/$(FILTERS_DIR) target=$(HL_TARGET)-no_runtime-c_plus_plus_name_mangling -f "HalideTest::cxx_mangling"
+
+# By default, %.o/.h are produced by executing %.generator. Runtimes are not included in these.
+$(FILTERS_DIR)/cxx_mangling_define_extern.o $(FILTERS_DIR)/cxx_mangling_define_extern.h: $(FILTERS_DIR)/cxx_mangling_define_extern.generator
+	@mkdir -p $(FILTERS_DIR)
+	@-mkdir -p $(TMP_DIR)
+	cd $(TMP_DIR); $(LD_PATH_SETUP) $(CURDIR)/$< -g $(notdir $*) -o $(CURDIR)/$(FILTERS_DIR) target=$(HL_TARGET)-no_runtime-c_plus_plus_name_mangling -f "HalideTest::cxx_mangling_define_extern"
 
 # If we want to use a Generator with custom GeneratorParams, we need to write
 # custom rules: to pass the GeneratorParams, and to give a unique function and file name.
@@ -861,6 +877,7 @@ $(FILTERS_DIR)/tiled_blur.generator: $(ROOT_DIR)/test/generator/tiled_blur_blur_
 # is there a way to specify that in Make?
 $(BIN_DIR)/generator_aot_tiled_blur: $(FILTERS_DIR)/tiled_blur_blur.o
 $(BIN_DIR)/generator_aot_tiled_blur_interleaved: $(FILTERS_DIR)/tiled_blur_blur_interleaved.o
+$(BIN_DIR)/generator_aot_cxx_mangling_define_extern: $(FILTERS_DIR)/cxx_mangling.o
 
 # Usually, it's considered best practice to have one Generator per
 # .cpp file, with the generator-name and filename matching;
@@ -1022,9 +1039,6 @@ time_compilation_opengl_%: $(BIN_DIR)/opengl_%
 time_compilation_renderscript_%: $(BIN_DIR)/renderscript_%
 	$(TIME_COMPILATION) compile_times_renderscript.csv make -f $(THIS_MAKEFILE) $(@:time_compilation_renderscript_%=renderscript_%)
 
-time_compilation_static_%: $(BIN_DIR)/static_%_generate
-	$(TIME_COMPILATION) compile_times_static.csv make -f $(THIS_MAKEFILE) $(@:time_compilation_static_%=$(TMP_DIR)/static/%/%.o)
-
 time_compilation_generator_%: $(FILTERS_DIR)/%.generator
 	$(TIME_COMPILATION) compile_times_generator.csv make -f $(THIS_MAKEFILE) $(@:time_compilation_generator_%=$(FILTERS_DIR)/%.o)
 
@@ -1052,7 +1066,7 @@ test_apps: $(LIB_DIR)/libHalide.a $(BIN_DIR)/libHalide.$(SHARED_EXT) $(INCLUDE_D
                 apps; \
 	  mkdir -p tools; \
 	  cp $(ROOT_DIR)/tools/* tools/; \
-        fi
+	fi
 	make -C apps/bilateral_grid clean  HALIDE_BIN_PATH=$(CURDIR) HALIDE_SRC_PATH=$(ROOT_DIR)
 	make -C apps/bilateral_grid out.png  HALIDE_BIN_PATH=$(CURDIR) HALIDE_SRC_PATH=$(ROOT_DIR)
 	make -C apps/local_laplacian clean  HALIDE_BIN_PATH=$(CURDIR) HALIDE_SRC_PATH=$(ROOT_DIR)
@@ -1168,6 +1182,7 @@ install: $(LIB_DIR)/libHalide.a $(BIN_DIR)/libHalide.$(SHARED_EXT) $(INCLUDE_DIR
 	cp $(ROOT_DIR)/tools/GenGen.cpp $(PREFIX)/share/halide/tools
 	cp $(ROOT_DIR)/tools/halide_image.h $(PREFIX)/share/halide/tools
 	cp $(ROOT_DIR)/tools/halide_image_io.h $(PREFIX)/share/halide/tools
+	cp $(ROOT_DIR)/tools/halide_image_info.h $(PREFIX)/share/halide/tools
 
 $(DISTRIB_DIR)/halide.tgz: $(LIB_DIR)/libHalide.a $(BIN_DIR)/libHalide.$(SHARED_EXT) $(INCLUDE_DIR)/Halide.h $(RUNTIME_EXPORTED_INCLUDES)
 	mkdir -p $(DISTRIB_DIR)/include $(DISTRIB_DIR)/bin $(DISTRIB_DIR)/lib $(DISTRIB_DIR)/tutorial $(DISTRIB_DIR)/tutorial/images $(DISTRIB_DIR)/tools $(DISTRIB_DIR)/tutorial/figures
@@ -1186,9 +1201,10 @@ $(DISTRIB_DIR)/halide.tgz: $(LIB_DIR)/libHalide.a $(BIN_DIR)/libHalide.$(SHARED_
 	cp $(ROOT_DIR)/tools/GenGen.cpp $(DISTRIB_DIR)/tools
 	cp $(ROOT_DIR)/tools/halide_image.h $(DISTRIB_DIR)/tools
 	cp $(ROOT_DIR)/tools/halide_image_io.h $(DISTRIB_DIR)/tools
+	cp $(ROOT_DIR)/tools/halide_image_info.h $(DISTRIB_DIR)/tools
 	cp $(ROOT_DIR)/README.md $(DISTRIB_DIR)
 	ln -sf $(DISTRIB_DIR) halide
-	tar -czf $(DISTRIB_DIR)/halide.tgz halide/bin halide/lib halide/include halide/tutorial halide/README.md halide/tools/mex_halide.m halide/tools/GenGen.cpp halide/tools/halide_image.h halide/tools/halide_image_io.h
+	tar -czf $(DISTRIB_DIR)/halide.tgz halide/bin halide/lib halide/include halide/tutorial halide/README.md halide/tools/mex_halide.m halide/tools/GenGen.cpp halide/tools/halide_image.h halide/tools/halide_image_io.h halide/tools/halide_image_info.h
 	rm -rf halide
 
 .PHONY: distrib

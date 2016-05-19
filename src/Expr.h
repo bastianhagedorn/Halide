@@ -116,7 +116,7 @@ struct IRHandle : public IntrusivePtr<const IRNode> {
      * }
      */
     template<typename T> const T *as() const {
-        if (ptr->type_info() == &T::_type_info) {
+        if (ptr && ptr->type_info() == &T::_type_info) {
             return (const T *)ptr;
         }
         return nullptr;
@@ -128,7 +128,8 @@ struct IntImm : public ExprNode<IntImm> {
     int64_t value;
 
     static const IntImm *make(Type t, int64_t value) {
-        internal_assert(t.is_int() && t.is_scalar()) << "IntImm must be a scalar Int\n";
+        internal_assert(t.is_int() && t.is_scalar())
+            << "IntImm must be a scalar Int\n";
         internal_assert(t.bits() == 8 || t.bits() == 16 || t.bits() == 32 || t.bits() == 64)
             << "IntImm must be 8, 16, 32, or 64-bit\n";
 
@@ -176,7 +177,8 @@ struct FloatImm : public ExprNode<FloatImm> {
     double value;
 
     static const FloatImm *make(Type t, double value) {
-        internal_assert(t.is_float() && t.is_scalar()) << "FloatImm must be a scalar Float\n";
+        internal_assert(t.is_float() && t.is_scalar())
+            << "FloatImm must be a scalar Float\n";
         FloatImm *node = new FloatImm;
         node->type = t;
         switch (t.bits()) {
@@ -203,7 +205,7 @@ struct StringImm : public ExprNode<StringImm> {
 
     static const StringImm *make(const std::string &val) {
         StringImm *node = new StringImm;
-        node->type = Handle();
+        node->type = type_of<const char *>();
         node->value = val;
         return node;
     }
@@ -250,14 +252,14 @@ struct Expr : public Internal::IRHandle {
  * map<Expr, Foo, ExprCompare> */
 struct ExprCompare {
     bool operator()(Expr a, Expr b) const {
-        return a.ptr < b.ptr;
+        return a.get() < b.get();
     }
 };
 
 /** An enum describing a type of device API. Used by schedules, and in
  * the For loop IR node. */
 enum class DeviceAPI {
-    Parent, /// Used to denote for loops that inherit their device from where they are used, generally the default
+    None, /// Used to denote for loops that run on the same device as the containing code.
     Host,
     Default_GPU,
     CUDA,
@@ -270,7 +272,7 @@ enum class DeviceAPI {
 
 /** An array containing all the device apis. Useful for iterating
  * through them. */
-const DeviceAPI all_device_apis[] = {DeviceAPI::Parent,
+const DeviceAPI all_device_apis[] = {DeviceAPI::None,
                                      DeviceAPI::Host,
                                      DeviceAPI::Default_GPU,
                                      DeviceAPI::CUDA,

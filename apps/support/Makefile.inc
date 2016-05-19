@@ -6,7 +6,11 @@ GXX ?= g++
 CXX += -Wall -g
 
 CFLAGS += -I $(HALIDE_BIN_PATH)/include/ -I $(HALIDE_SRC_PATH)/tools/ -I $(HALIDE_SRC_PATH)/apps/support/
-CXXFLAGS += -std=c++11 -I $(HALIDE_BIN_PATH)/include/ -I $(HALIDE_SRC_PATH)/tools/ -I $(HALIDE_SRC_PATH)/apps/support/
+CXXFLAGS += -std=c++11 -I $(HALIDE_BIN_PATH)/include/ -I $(HALIDE_SRC_PATH)/tools/ -I $(HALIDE_SRC_PATH)/apps/support/ 
+
+ifeq ($(UNAME), Darwin)
+CXXFLAGS += -fvisibility=hidden
+endif
 
 LIB_HALIDE = $(HALIDE_BIN_PATH)/lib/libHalide.a
 

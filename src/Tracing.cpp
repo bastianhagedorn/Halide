@@ -63,7 +63,7 @@ private:
                 } else {
                     Expr inner = Load::make(l->type, l->name, new_args[0], l->image, l->param);
                 }
-                expr = Call::make(Handle(), Call::address_of, {inner}, Call::Intrinsic);
+                expr = Call::make(op->type, Call::address_of, {inner}, Call::Intrinsic);
                 return;
             }
         }
@@ -77,7 +77,7 @@ private:
         bool trace_it = false;
         Expr trace_parent;
         if (op->call_type == Call::Halide) {
-            Function f = op->func;
+            Function f = env.find(op->name)->second;
             bool inlined = f.schedule().compute_level().is_inline();
             if (f.has_update_definition()) inlined = false;
             trace_it = f.is_tracing_loads() || (global_level > 2 && !inlined);

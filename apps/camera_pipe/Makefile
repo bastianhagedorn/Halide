@@ -41,7 +41,6 @@ fcam/Demosaic.o: fcam/Demosaic.cpp fcam/Demosaic.h
 process_%: process.cpp curved_%.o fcam/Demosaic.o
 	$(CXX) $(CXXFLAGS) $^ \
 		-o $@ -lpthread -ldl -fopenmp $(PNGFLAGS)
-
 out.png: process_ref
 	./process ../images/bayer_raw.png 3700 2.0 50 5 out.png
 

@@ -363,7 +363,7 @@ Stmt For::make(std::string name, Expr min, Expr extent, ForType for_type, Device
     return node;
 }
 
-Stmt Store::make(std::string name, Expr value, Expr index) {
+Stmt Store::make(std::string name, Expr value, Expr index, Parameter param) {
     internal_assert(value.defined()) << "Store of undefined\n";
     internal_assert(index.defined()) << "Store of undefined\n";
 
@@ -371,6 +371,7 @@ Stmt Store::make(std::string name, Expr value, Expr index) {
     node->name = name;
     node->value = value;
     node->index = index;
+    node->param = param;
     return node;
 }
 
@@ -476,12 +477,31 @@ Stmt Realize::make(const std::string &name, const std::vector<Type> &types, cons
 
 Stmt Block::make(Stmt first, Stmt rest) {
     internal_assert(first.defined()) << "Block of undefined\n";
-    // rest is allowed to be null
+    internal_assert(rest.defined()) << "Block of undefined\n";
 
     Block *node = new Block;
-    node->first = first;
-    node->rest = rest;
+
+    if (const Block *b = first.as<Block>()) {
+        // Use a canonical block nesting order
+        node->first = b->first;
+        node->rest  = Block::make(b->rest, rest);
+    } else {
+        node->first = first;
+        node->rest = rest;
+    }
+
     return node;
+}
+
+Stmt Block::make(const std::vector<Stmt> &stmts) {
+    if (stmts.empty()) {
+        return Stmt();
+    }
+    Stmt result = stmts.back();
+    for (size_t i = stmts.size()-1; i > 0; i--) {
+        result = Block::make(stmts[i-1], result);
+    }
+    return result;
 }
 
 Stmt IfThenElse::make(Expr condition, Stmt then_case, Stmt else_case) {
@@ -504,22 +524,15 @@ Stmt Evaluate::make(Expr v) {
 }
 
 Expr Call::make(Type type, std::string name, const std::vector<Expr> &args, CallType call_type,
-                Function func, int value_index,
+                IntrusivePtr<FunctionContents> func, int value_index,
                 Buffer image, Parameter param) {
     for (size_t i = 0; i < args.size(); i++) {
         internal_assert(args[i].defined()) << "Call of undefined\n";
     }
     if (call_type == Halide) {
-        internal_assert(value_index >= 0 &&
-                        value_index < func.outputs())
-            << "Value index out of range in call to halide function\n";
-        internal_assert((func.has_pure_definition() || func.has_extern_definition()))
-            << "Call to undefined halide function\n";
-        internal_assert((int)args.size() <= func.dimensions())
-            << "Call node with too many arguments.\n";
         for (size_t i = 0; i < args.size(); i++) {
             internal_assert(args[i].type() == Int(32))
-                << "Args to call to halide function must be type Int(32)\n";
+            << "Args to call to halide function must be type Int(32)\n";
         }
     } else if (call_type == Image) {
         internal_assert((param.defined() || image.defined()))
@@ -680,6 +693,9 @@ Call::ConstString Call::likely = "likely";
 Call::ConstString Call::make_int64 = "make_int64";
 Call::ConstString Call::make_float64 = "make_float64";
 Call::ConstString Call::register_destructor = "register_destructor";
+Call::ConstString Call::div_round_to_zero = "div_round_to_zero";
+Call::ConstString Call::mod_round_to_zero = "mod_round_to_zero";
+
 
 }
 }

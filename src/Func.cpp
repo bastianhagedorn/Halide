@@ -22,7 +22,7 @@
 #include "IREquality.h"
 #include "CodeGen_LLVM.h"
 #include "LLVM_Headers.h"
-#include "Output.h"
+#include "Outputs.h"
 #include "LLVM_Output.h"
 
 namespace Halide {
@@ -30,6 +30,7 @@ namespace Halide {
 using std::max;
 using std::min;
 using std::make_pair;
+using std::map;
 using std::string;
 using std::vector;
 using std::pair;
@@ -149,8 +150,9 @@ EXPORT bool Func::is_extern() const {
 void Func::define_extern(const std::string &function_name,
                          const std::vector<ExternFuncArgument> &args,
                          const std::vector<Type> &types,
-                         int dimensionality) {
-    func.define_extern(function_name, args, types, dimensionality);
+                         int dimensionality,
+                         bool is_c_plus_plus) {
+  func.define_extern(function_name, args, types, dimensionality, is_c_plus_plus);
 }
 
 /** Get the types of the buffers returned by an extern definition. */
@@ -240,6 +242,9 @@ int Func::add_implicit_vars(vector<Expr> &args) const {
 
 namespace {
 bool var_name_match(string candidate, string var) {
+    internal_assert(var.find('.') == string::npos)
+        << "var_name_match expects unqualified names for the second argument. "
+        << "Name passed: " << var << "\n";
     if (candidate == var) return true;
     return Internal::ends_with(candidate, "." + var);
 }
@@ -322,7 +327,8 @@ std::string Stage::dump_argument_list() const {
     return oss.str();
 }
 
-void Stage::split(const string &old, const string &outer, const string &inner, Expr factor, bool exact) {
+
+void Stage::split(const string &old, const string &outer, const string &inner, Expr factor, bool exact, TailStrategy tail) {
     vector<Dim> &dims = schedule.dims();
 
     // Check that the new names aren't already in the dims list.
@@ -364,11 +370,11 @@ void Stage::split(const string &old, const string &outer, const string &inner, E
     }
 
     // Add the split to the splits list
-    Split split = {old_name, outer_name, inner_name, factor, exact, false, Split::SplitVar};
+    Split split = {old_name, outer_name, inner_name, factor, exact, tail, Split::SplitVar};
     schedule.splits().push_back(split);
 }
 
-Stage &Stage::split(VarOrRVar old, VarOrRVar outer, VarOrRVar inner, Expr factor) {
+Stage &Stage::split(VarOrRVar old, VarOrRVar outer, VarOrRVar inner, Expr factor, TailStrategy tail) {
     if (old.is_rvar) {
         user_assert(outer.is_rvar) << "Can't split RVar " << old.name() << " into Var " << outer.name() << "\n";
         user_assert(inner.is_rvar) << "Can't split RVar " << old.name() << " into Var " << inner.name() << "\n";
@@ -376,7 +382,7 @@ Stage &Stage::split(VarOrRVar old, VarOrRVar outer, VarOrRVar inner, Expr factor
         user_assert(!outer.is_rvar) << "Can't split Var " << old.name() << " into RVar " << outer.name() << "\n";
         user_assert(!inner.is_rvar) << "Can't split Var " << old.name() << " into RVar " << inner.name() << "\n";
     }
-    split(old.name(), outer.name(), inner.name(), factor, old.is_rvar);
+    split(old.name(), outer.name(), inner.name(), factor, old.is_rvar, tail);
     return *this;
 }
 
@@ -434,7 +440,7 @@ Stage &Stage::fuse(VarOrRVar inner, VarOrRVar outer, VarOrRVar fused) {
     }
 
     // Add the fuse to the splits list
-    Split split = {fused_name, outer_name, inner_name, Expr(), true, false, Split::FuseVars};
+    Split split = {fused_name, outer_name, inner_name, Expr(), true, TailStrategy::Auto, Split::FuseVars};
     schedule.splits().push_back(split);
     return *this;
 }
@@ -556,7 +562,7 @@ Stage &Stage::rename(VarOrRVar old_var, VarOrRVar new_var) {
     }
 
     if (!found) {
-        Split split = {old_name, new_name, "", 1, old_var.is_rvar, false, Split::RenameVar};
+        Split split = {old_name, new_name, "", 1, old_var.is_rvar, TailStrategy::Auto, Split::RenameVar};
         schedule.splits().push_back(split);
     }
 
@@ -588,39 +594,39 @@ Stage &Stage::unroll(VarOrRVar var) {
     return *this;
 }
 
-Stage &Stage::parallel(VarOrRVar var, Expr factor) {
+Stage &Stage::parallel(VarOrRVar var, Expr factor, TailStrategy tail) {
     if (var.is_rvar) {
         RVar tmp;
-        split(var.rvar, var.rvar, tmp, factor);
+        split(var.rvar, var.rvar, tmp, factor, tail);
     } else {
         Var tmp;
-        split(var.var, var.var, tmp, factor);
+        split(var.var, var.var, tmp, factor, tail);
     }
     parallel(var);
     return *this;
 }
 
-Stage &Stage::vectorize(VarOrRVar var, int factor) {
+Stage &Stage::vectorize(VarOrRVar var, int factor, TailStrategy tail) {
     if (var.is_rvar) {
         RVar tmp;
-        split(var.rvar, var.rvar, tmp, factor);
+        split(var.rvar, var.rvar, tmp, factor, tail);
         vectorize(tmp);
     } else {
         Var tmp;
-        split(var.var, var.var, tmp, factor);
+        split(var.var, var.var, tmp, factor, tail);
         vectorize(tmp);
     }
     return *this;
 }
 
-Stage &Stage::unroll(VarOrRVar var, int factor) {
+Stage &Stage::unroll(VarOrRVar var, int factor, TailStrategy tail) {
     if (var.is_rvar) {
         RVar tmp;
-        split(var.rvar, var.rvar, tmp, factor);
+        split(var.rvar, var.rvar, tmp, factor, tail);
         unroll(tmp);
     } else {
         Var tmp;
-        split(var.var, var.var, tmp, factor);
+        split(var.var, var.var, tmp, factor, tail);
         unroll(tmp);
     }
 
@@ -630,18 +636,20 @@ Stage &Stage::unroll(VarOrRVar var, int factor) {
 Stage &Stage::tile(VarOrRVar x, VarOrRVar y,
                    VarOrRVar xo, VarOrRVar yo,
                    VarOrRVar xi, VarOrRVar yi,
-                   Expr xfactor, Expr yfactor) {
-    split(x, xo, xi, xfactor);
-    split(y, yo, yi, yfactor);
+                   Expr xfactor, Expr yfactor,
+                   TailStrategy tail) {
+    split(x, xo, xi, xfactor, tail);
+    split(y, yo, yi, yfactor, tail);
     reorder(xi, yi, xo, yo);
     return *this;
 }
 
 Stage &Stage::tile(VarOrRVar x, VarOrRVar y,
                    VarOrRVar xi, VarOrRVar yi,
-                   Expr xfactor, Expr yfactor) {
-    split(x, x, xi, xfactor);
-    split(y, y, yi, yfactor);
+                   Expr xfactor, Expr yfactor,
+                   TailStrategy tail) {
+    split(x, x, xi, xfactor, tail);
+    split(y, y, yi, yfactor, tail);
     reorder(xi, yi, x, y);
     return *this;
 }
@@ -783,10 +791,10 @@ Stage &Stage::gpu(VarOrRVar bx, VarOrRVar by, VarOrRVar bz,
     return gpu_blocks(bx, by, bz).gpu_threads(tx, ty, tz);
 }
 
-Stage &Stage::gpu_tile(VarOrRVar x, Expr x_size, DeviceAPI device_api) {
+Stage &Stage::gpu_tile(VarOrRVar x, Expr x_size, TailStrategy tail, DeviceAPI device_api) {
     VarOrRVar bx("__block_id_x", x.is_rvar),
         tx("__thread_id_x", x.is_rvar);
-    split(x, bx, tx, x_size);
+    split(x, bx, tx, x_size, tail);
     set_dim_device_api(bx, device_api);
     set_dim_device_api(tx, device_api);
     parallel(bx);
@@ -797,12 +805,13 @@ Stage &Stage::gpu_tile(VarOrRVar x, Expr x_size, DeviceAPI device_api) {
 
 Stage &Stage::gpu_tile(VarOrRVar x, VarOrRVar y,
                        Expr x_size, Expr y_size,
+                       TailStrategy tail,
                        DeviceAPI device_api) {
     VarOrRVar bx("__block_id_x", x.is_rvar),
         by("__block_id_y", y.is_rvar),
         tx("__thread_id_x", x.is_rvar),
         ty("__thread_id_y", y.is_rvar);
-    tile(x, y, bx, by, tx, ty, x_size, y_size);
+    tile(x, y, bx, by, tx, ty, x_size, y_size, tail);
     set_dim_device_api(bx, device_api);
     set_dim_device_api(by, device_api);
     set_dim_device_api(tx, device_api);
@@ -816,6 +825,7 @@ Stage &Stage::gpu_tile(VarOrRVar x, VarOrRVar y,
 
 Stage &Stage::gpu_tile(VarOrRVar x, VarOrRVar y, VarOrRVar z,
                        Expr x_size, Expr y_size, Expr z_size,
+                       TailStrategy tail,
                        DeviceAPI device_api) {
     VarOrRVar bx("__block_id_x", x.is_rvar),
         by("__block_id_y", y.is_rvar),
@@ -823,9 +833,9 @@ Stage &Stage::gpu_tile(VarOrRVar x, VarOrRVar y, VarOrRVar z,
         tx("__thread_id_x", x.is_rvar),
         ty("__thread_id_y", y.is_rvar),
         tz("__thread_id_z", z.is_rvar);
-    split(x, bx, tx, x_size);
-    split(y, by, ty, y_size);
-    split(z, bz, tz, z_size);
+    split(x, bx, tx, x_size, tail);
+    split(y, by, ty, y_size, tail);
+    split(z, bz, tz, z_size, tail);
     // current order is:
     // tx bx ty by tz bz
     reorder(ty, bx);
@@ -855,9 +865,111 @@ void Func::invalidate_cache() {
     }
 }
 
-Func &Func::split(VarOrRVar old, VarOrRVar outer, VarOrRVar inner, Expr factor) {
+Func Func::in(const Func &f) {
     invalidate_cache();
-    Stage(func.schedule(), name()).split(old, outer, inner, factor);
+    user_assert(name() != f.name()) << "Cannot call 'in()' on itself\n";
+    const map<string, IntrusivePtr<FunctionContents>> &wrappers = func.wrappers();
+    const auto &iter = wrappers.find(f.name());
+    if (iter == wrappers.end()) {
+        Func wrapper(name() + "_in_" + f.name());
+        wrapper(args()) = (*this)(args());
+        func.add_wrapper(f.name(), wrapper.func);
+        return wrapper;
+    }
+
+    IntrusivePtr<FunctionContents> wrapper_contents = iter->second;
+    internal_assert(wrapper_contents.defined());
+
+    // Make sure that no other Func shares the same wrapper as 'f'
+    for (const auto &it : wrappers) {
+        if (it.first == f.name()) {
+            continue;
+        }
+        user_assert(!it.second.same_as(wrapper_contents))
+            << "Redefinition of shared wrapper with " << it.first << " [" << name() << " -> "
+            << Function(wrapper_contents).name() << "] in " << f.name() << " is not allowed\n";
+    }
+    Function wrapper(wrapper_contents);
+    internal_assert(wrapper.frozen());
+    return Func(wrapper);
+}
+
+Func Func::in(const vector<Func>& fs) {
+    invalidate_cache();
+    if (fs.empty()) {
+        user_error << "Could not create a wrapper for an empty list of Funcs\n";
+    }
+
+    // Either all Funcs have the same wrapper or they don't already have any wrappers.
+    // Otherwise, throw an error.
+    const map<string, IntrusivePtr<FunctionContents>> &wrappers = func.wrappers();
+
+    const auto &iter = wrappers.find(fs[0].name());
+    if (iter == wrappers.end()) {
+        // Make sure the other Funcs also don't have any wrappers
+        for (size_t i = 1; i < fs.size(); ++i) {
+            user_assert(wrappers.count(fs[i].name()) == 0)
+                << "Cannot define the wrapper since " << fs[i].name()
+                << " already has a wrapper while " << fs[0].name() << " doesn't \n";
+        }
+        Func wrapper(name() + "_wrapper");
+        wrapper(args()) = (*this)(args());
+        for (const Func &f : fs) {
+            user_assert(name() != f.name()) << "Cannot call 'in()' on itself\n";
+            func.add_wrapper(f.name(), wrapper.func);
+        }
+        return wrapper;
+    }
+
+    IntrusivePtr<FunctionContents> wrapper_contents = iter->second;
+    internal_assert(wrapper_contents.defined());
+
+    // Make sure all the other Funcs in 'fs' share the same wrapper and no other
+    // Func not in 'fs' share the same wrapper.
+    for (const auto &it : wrappers) {
+        if (it.first == fs[0].name()) {
+            continue;
+        }
+        const auto &fs_iter = std::find_if(
+            fs.begin(), fs.end(), [&it](const Func& f) { return f.name() == it.first; });
+        bool in_fs = fs_iter != fs.end();
+
+        if (in_fs) {
+            user_assert(it.second.same_as(wrapper_contents))
+                << it.first << " should have shared the same wrapper as " << fs[0].name() << "\n";
+        } else {
+            user_assert(!it.second.same_as(wrapper_contents))
+                << "Redefinition of shared wrapper [" << name() << " -> "
+                << Function(wrapper_contents).name() << "] in " << fs[0].name() << " is illegal since "
+                << it.first << " shares the same wrapper but not part of the redefinition\n";
+        }
+    }
+    Function wrapper(wrapper_contents);
+    internal_assert(wrapper.frozen());
+    return Func(wrapper);
+}
+
+Func Func::in() {
+    invalidate_cache();
+    const map<string, IntrusivePtr<FunctionContents>> &wrappers = func.wrappers();
+    const auto &iter = wrappers.find("");
+    if (iter == wrappers.end()) {
+        Func wrapper(name() + "_global_wrapper");
+        wrapper(args()) = (*this)(args());
+        func.add_wrapper("", wrapper.func);
+        return wrapper;
+    }
+
+    IntrusivePtr<FunctionContents> wrapper_contents = iter->second;
+    internal_assert(wrapper_contents.defined());
+    Function wrapper(wrapper_contents);
+    internal_assert(wrapper.frozen());
+    return Func(wrapper);
+}
+
+Func &Func::split(VarOrRVar old, VarOrRVar outer, VarOrRVar inner, Expr factor, TailStrategy tail) {
+    invalidate_cache();
+    Stage(func.schedule(), name()).split(old, outer, inner, factor, tail);
     return *this;
 }
 
@@ -913,21 +1025,21 @@ Func &Func::unroll(VarOrRVar var) {
     return *this;
 }
 
-Func &Func::parallel(VarOrRVar var, Expr factor) {
+Func &Func::parallel(VarOrRVar var, Expr factor, TailStrategy tail) {
     invalidate_cache();
-    Stage(func.schedule(), name()).parallel(var, factor);
+    Stage(func.schedule(), name()).parallel(var, factor, tail);
     return *this;
 }
 
-Func &Func::vectorize(VarOrRVar var, int factor) {
+Func &Func::vectorize(VarOrRVar var, int factor, TailStrategy tail) {
     invalidate_cache();
-    Stage(func.schedule(), name()).vectorize(var, factor);
+    Stage(func.schedule(), name()).vectorize(var, factor, tail);
     return *this;
 }
 
-Func &Func::unroll(VarOrRVar var, int factor) {
+Func &Func::unroll(VarOrRVar var, int factor, TailStrategy tail) {
     invalidate_cache();
-    Stage(func.schedule(), name()).unroll(var, factor);
+    Stage(func.schedule(), name()).unroll(var, factor, tail);
     return *this;
 }
 
@@ -969,20 +1081,26 @@ Func &Func::estimate(Var var, Expr min, Expr extent) {
     return *this;
 }
 
+Func &Func::bound_extent(Var var, Expr extent) {
+    return bound(var, Expr(), extent);
+}
+
 Func &Func::tile(VarOrRVar x, VarOrRVar y,
                  VarOrRVar xo, VarOrRVar yo,
                  VarOrRVar xi, VarOrRVar yi,
-                 Expr xfactor, Expr yfactor) {
+                 Expr xfactor, Expr yfactor,
+                 TailStrategy tail) {
     invalidate_cache();
-    Stage(func.schedule(), name()).tile(x, y, xo, yo, xi, yi, xfactor, yfactor);
+    Stage(func.schedule(), name()).tile(x, y, xo, yo, xi, yi, xfactor, yfactor, tail);
     return *this;
 }
 
 Func &Func::tile(VarOrRVar x, VarOrRVar y,
                  VarOrRVar xi, VarOrRVar yi,
-                 Expr xfactor, Expr yfactor) {
+                 Expr xfactor, Expr yfactor,
+                 TailStrategy tail) {
     invalidate_cache();
-    Stage(func.schedule(), name()).tile(x, y, xi, yi, xfactor, yfactor);
+    Stage(func.schedule(), name()).tile(x, y, xi, yi, xfactor, yfactor, tail);
     return *this;
 }
 
@@ -1052,21 +1170,27 @@ Func &Func::gpu(VarOrRVar bx, VarOrRVar by, VarOrRVar bz, VarOrRVar tx, VarOrRVa
     return *this;
 }
 
-Func &Func::gpu_tile(VarOrRVar x, int x_size, DeviceAPI device_api) {
+Func &Func::gpu_tile(VarOrRVar x, int x_size, TailStrategy tail, DeviceAPI device_api) {
     invalidate_cache();
-    Stage(func.schedule(), name()).gpu_tile(x, x_size, device_api);
+    Stage(func.schedule(), name()).gpu_tile(x, x_size, tail, device_api);
     return *this;
 }
 
-Func &Func::gpu_tile(VarOrRVar x, VarOrRVar y, int x_size, int y_size, DeviceAPI device_api) {
+Func &Func::gpu_tile(VarOrRVar x, VarOrRVar y,
+                     int x_size, int y_size,
+                     TailStrategy tail,
+                     DeviceAPI device_api) {
     invalidate_cache();
-    Stage(func.schedule(), name()).gpu_tile(x, y, x_size, y_size, device_api);
+    Stage(func.schedule(), name()).gpu_tile(x, y, x_size, y_size, tail, device_api);
     return *this;
 }
 
-Func &Func::gpu_tile(VarOrRVar x, VarOrRVar y, VarOrRVar z, int x_size, int y_size, int z_size, DeviceAPI device_api) {
+Func &Func::gpu_tile(VarOrRVar x, VarOrRVar y, VarOrRVar z,
+                     int x_size, int y_size, int z_size,
+                     TailStrategy tail,
+                     DeviceAPI device_api) {
     invalidate_cache();
-    Stage(func.schedule(), name()).gpu_tile(x, y, z, x_size, y_size, z_size, device_api);
+    Stage(func.schedule(), name()).gpu_tile(x, y, z, x_size, y_size, z_size, tail, device_api);
     return *this;
 }
 
@@ -1102,14 +1226,14 @@ Func &Func::glsl(Var x, Var y, Var c) {
 Func &Func::reorder_storage(Var x, Var y) {
     invalidate_cache();
 
-    vector<string> &dims = func.schedule().storage_dims();
+    vector<StorageDim> &dims = func.schedule().storage_dims();
     bool found_y = false;
     size_t y_loc = 0;
     for (size_t i = 0; i < dims.size(); i++) {
-        if (var_name_match(dims[i], y.name())) {
+        if (var_name_match(dims[i].var, y.name())) {
             found_y = true;
             y_loc = i;
-        } else if (var_name_match(dims[i], x.name())) {
+        } else if (var_name_match(dims[i].var, x.name())) {
             if (found_y) std::swap(dims[i], dims[y_loc]);
             return *this;
         }
@@ -1136,6 +1260,21 @@ Func &Func::reorder_storage(const std::vector<Var> &dims) {
         "reorder_storage must have at least two dimensions in reorder list.\n";
 
     return reorder_storage(dims, 0);
+}
+
+Func &Func::align_storage(Var dim, Expr alignment) {
+    invalidate_cache();
+
+    vector<StorageDim> &dims = func.schedule().storage_dims();
+    for (size_t i = 0; i < dims.size(); i++) {
+        if (var_name_match(dims[i].var, dim.name())) {
+            dims[i].alignment = alignment;
+            return *this;
+        }
+    }
+    user_error << "Could not find variable " << dim.name()
+               << " to align the storage of.\n";
+    return *this;
 }
 
 Func &Func::compute_at(Func f, RVar var) {

@@ -113,7 +113,7 @@ int main(int argc, char **argv) {
             downsampled[l].compute_root();
             interpolated[l].compute_root();
         }
-        final.compute_root();
+        normalize.compute_root();
         break;
     }
     case 1:
@@ -123,7 +123,7 @@ int main(int argc, char **argv) {
             downsampled[l].compute_root().vectorize(x,4);
             interpolated[l].compute_root().vectorize(x,4);
         }
-        final.compute_root();
+        normalize.compute_root();
         break;
     }
     case 2:
@@ -142,7 +142,7 @@ int main(int argc, char **argv) {
                 .unroll(y, 2)
                 .vectorize(x, 8);
         }
-        final
+        normalize
             .reorder(c, x, y)
             .bound(c, 0, 3)
             .unroll(c)
@@ -169,7 +169,7 @@ int main(int argc, char **argv) {
                 interpolated[l].compute_root();
             }
         }
-        final.compute_root();
+        normalize.compute_root();
         break;
     }
     case 4:
@@ -179,16 +179,22 @@ int main(int argc, char **argv) {
         // Some gpus don't have enough memory to process the entire
         // image, so we process the image in tiles.
         Var yo, yi, xo, xi;
-        final
+
+        // We can't compute the entire output stage at once on the GPU
+        // - it takes too much GPU memory on some of our build bots,
+        // so we wrap the final stage in a CPU stage.
+        Func cpu_wrapper = normalize.in();
+
+        cpu_wrapper
             .reorder(c, x, y)
             .bound(c, 0, 3)
-            .vectorize(x, 4)
-            .tile(x, y, xo, yo, xi, yi, input.width()/4, input.height()/4);
+            .tile(x, y, xo, yo, xi, yi, input.width()/4, input.height()/4)
+            .vectorize(xi, 8);
 
         normalize
-            .compute_at(final, xo)
+            .compute_at(cpu_wrapper, xo)
             .reorder(c, x, y)
-            .gpu_tile(x, y, 16, 16, DeviceAPI::Default_GPU)
+            .gpu_tile(x, y, 16, 16)
             .unroll(c);
 
         // Start from level 1 to save memory - level zero will be computed on demand
@@ -198,10 +204,10 @@ int main(int argc, char **argv) {
             if (tile_size > 8) tile_size = 8;
             downsampled[l]
                 .compute_root()
-                .gpu_tile(x, y, c, tile_size, tile_size, 4, DeviceAPI::Default_GPU);
+                .gpu_tile(x, y, c, tile_size, tile_size, 4);
             if (l == 1 || l == 4) {
                 interpolated[l]
-                    .compute_at(final, xo)
+                    .compute_at(cpu_wrapper, xo)
                     .gpu_tile(x, y, c, 8, 8, 4);
             } else {
                 int parent = l > 4 ? 4 : 1;
@@ -210,6 +216,10 @@ int main(int argc, char **argv) {
                     .gpu_threads(x, y, c);
             }
         }
+
+        // The cpu wrapper is our new output Func
+        normalize = cpu_wrapper;
+
         break;
     }
     }
@@ -249,4 +259,5 @@ int main(int argc, char **argv) {
 
     // save_image(out, argv[2]);
 
+    return 0;
 }

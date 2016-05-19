@@ -7,8 +7,58 @@
 
 #include "Expr.h"
 
+#include <map>
+
 namespace Halide {
+
+/** Different ways to handle a tail case in a split when the
+ * factor does not provably divide the extent. */
+enum class TailStrategy {
+    /** Round up the extent to be a multiple of the split
+     * factor. Not legal for RVars, as it would change the meaning
+     * of the algorithm. Pros: generates the simplest, fastest
+     * code. Cons: if used on a stage that reads from the input or
+     * writes to the output, constrains the input or output size
+     * to be a multiple of the split factor. */
+    RoundUp,
+
+    /** Guard the inner loop with an if statement that prevents
+     * evaluation beyond the original extent. Always legal. The if
+     * statement is treated like a boundary condition, and
+     * factored out into a loop epilogue if possible. Pros: no
+     * redundant re-evaluation; does not constrain input our
+     * output sizes. Cons: increases code size due to separate
+     * tail-case handling; vectorization will scalarize in the tail
+     * case to handle the if statement. */
+    GuardWithIf,
+
+    /** Prevent evaluation beyond the original extent by shifting
+     * the tail case inwards, re-evaluating some points near the
+     * end. Only legal for pure variables in pure definitions. If
+     * the inner loop is very simple, the tail case is treated
+     * like a boundary condition and factored out into an
+     * epilogue.
+     *
+     * This is a good trade-off between several factors. Like
+     * RoundUp, it supports vectorization well, because the inner
+     * loop is always a fixed size with no data-dependent
+     * branching. It increases code size slightly for inner loops
+     * due to the epilogue handling, but not for outer loops
+     * (e.g. loops over tiles). If used on a stage that reads from
+     * an input or writes to an output, this stategy only requires
+     * that the input/output extent be at least the split factor,
+     * instead of a multiple of the split factor as with RoundUp. */
+    ShiftInwards,
+
+    /** For pure definitions use ShiftInwards. For pure vars in
+     * update definitions use RoundUp. For RVars in update
+     * definitions use GuardWithIf. */
+    Auto
+};
+
 namespace Internal {
+
+class IRMutator;
 
 /** A reference to a site in a Halide statement at the top of the
  * body of a particular for loop. Evaluating a region of a halide
@@ -79,8 +129,10 @@ struct LoopLevel {
 struct Split {
     std::string old_var, outer, inner;
     Expr factor;
-    bool exact; // Is it required that the factor divides the extent of the old var. True for splits of RVars.
-    bool partial;
+    bool exact; // Is it required that the factor divides the extent
+                // of the old var. True for splits of RVars. Forces
+                // tail strategy to be GuardWithIf.
+    TailStrategy tail;
 
     enum SplitType {SplitVar = 0, RenameVar, FuseVars};
 
@@ -118,18 +170,36 @@ struct Specialization {
     IntrusivePtr<ScheduleContents> schedule;
 };
 
+struct StorageDim {
+    std::string var;
+    Expr alignment;
+};
+
 class ReductionDomain;
+
+struct FunctionContents;
 
 /** A schedule for a single stage of a Halide pipeline. Right now this
  * interface is basically a struct, offering mutable access to its
  * innards. In the future it may become more encapsulated. */
 class Schedule {
     IntrusivePtr<ScheduleContents> contents;
+
 public:
 
     Schedule(IntrusivePtr<ScheduleContents> c) : contents(c) {}
     Schedule(const Schedule &other) : contents(other.contents) {}
     EXPORT Schedule();
+
+    /** Return a deep copy of this Schedule. It recursively deep copies all called
+     * functions, schedules, specializations, and reduction domains. This method
+     * takes a map of <old FunctionContents, deep-copied version> as input and
+     * would use the deep-copied FunctionContents from the map if exists instead
+     * of creating a new deep-copy to avoid creating deep-copies of the same
+     * FunctionContents multiple times.
+     */
+    EXPORT Schedule deep_copy(
+        std::map<IntrusivePtr<FunctionContents>, IntrusivePtr<FunctionContents>> &copied) const;
 
     /** This flag is set to true if the schedule is memoized. */
     // @{
@@ -177,8 +247,8 @@ public:
      * innermost dimension for storage (i.e. which dimension is
      * tightly packed in memory) */
     // @{
-    const std::vector<std::string> &storage_dims() const;
-    std::vector<std::string> &storage_dims();
+    const std::vector<StorageDim> &storage_dims() const;
+    std::vector<StorageDim> &storage_dims();
     // @}
 
     /** You may explicitly bound some of the dimensions of a
@@ -197,7 +267,16 @@ public:
     // @{
     const std::vector<Specialization> &specializations() const;
     const Specialization &add_specialization(Expr condition);
-    //std::vector<Specialization> &specializations();
+    // @}
+
+    /** Mark calls of a function by 'f' to be replaced with its wrapper
+     * during the lowering stage. If the string 'f' is empty, it means replace
+     * all calls to the function by all other functions (excluding itself) in
+     * the pipeline with the wrapper. See \ref Func::in for more details. */
+    // @{
+    const std::map<std::string, IntrusivePtr<Internal::FunctionContents>> &wrappers() const;
+    EXPORT void add_wrapper(const std::string &f,
+                            const IntrusivePtr<Internal::FunctionContents> &wrapper);
     // @}
 
     /** At what sites should we inject the allocation and the
@@ -221,6 +300,10 @@ public:
     /** Pass an IRVisitor through to all Exprs referenced in the
      * Schedule. */
     void accept(IRVisitor *) const;
+
+    /** Pass an IRMutator through to all Exprs referenced in the
+     * Schedule. */
+    void mutate(IRMutator *);
 };
 
 }

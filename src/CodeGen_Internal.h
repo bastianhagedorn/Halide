@@ -8,6 +8,8 @@
  * front-end-facing interface to CodeGen).
  */
 
+#include <memory>
+
 #include "IR.h"
 #include "IRVisitor.h"
 #include "LLVM_Headers.h"
@@ -47,6 +49,22 @@ bool function_takes_user_context(const std::string &name);
  * on the stack; otherwise, return False. This routine asserts if size is
  * non-positive. */
 bool can_allocation_fit_on_stack(int32_t size);
+
+/** Given a Halide Euclidean division/mod operation, define it in terms of
+ * div_round_to_zero or mod_round_to_zero. */
+///@{
+Expr lower_euclidean_div(Expr a, Expr b);
+Expr lower_euclidean_mod(Expr a, Expr b);
+///@}
+
+/** Given an llvm::Module, set llvm:TargetOptions, cpu and attr information */
+void get_target_options(const llvm::Module &module, llvm::TargetOptions &options, std::string &mcpu, std::string &mattrs);
+
+/** Given two llvm::Modules, clone target options from one to the other */
+void clone_target_options(const llvm::Module &from, llvm::Module &to);
+
+/** Given an llvm::Module, get or create an llvm:TargetMachine */
+std::unique_ptr<llvm::TargetMachine> make_target_machine(const llvm::Module &module);
 
 }}
 

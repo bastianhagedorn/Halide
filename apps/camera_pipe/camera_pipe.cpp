@@ -11,7 +11,6 @@ Func processed("processed");
 
 Target target;
 
-
 // Average two positive values rounding up
 Expr avg(Expr a, Expr b) {
     Type wider = a.type().with_bits(a.type().bits() * 2);
@@ -19,6 +18,7 @@ Expr avg(Expr a, Expr b) {
 }
 
 Func hot_pixel_suppression(Func input) {
+
     Expr a = max(max(input(x-2, y), input(x+2, y)),
                  max(input(x, y-2), input(x, y+2)));
 
@@ -45,9 +45,9 @@ Func deinterleave(Func raw) {
     Func deinterleaved("deinterleaved");
 
     deinterleaved(x, y, c) = select(c == 0, raw(2*x, 2*y),
-                                    select(c == 1, raw(2*x+1, 2*y),
-                                           select(c == 2, raw(2*x, 2*y+1),
-                                                  raw(2*x+1, 2*y+1))));
+                                    c == 1, raw(2*x+1, 2*y),
+                                    c == 2, raw(2*x, 2*y+1),
+                                            raw(2*x+1, 2*y+1));
     return deinterleaved;
 }
 
@@ -181,6 +181,7 @@ Func demosaic(Func deinterleaved) {
         }
     } else if (schedule == 1) {
         // optimized for X86
+
         // Don't vectorize, because sse is bad at 16-bit interleaving
         g_r.compute_at(processed, tx);
         g_b.compute_at(processed, tx);
@@ -190,9 +191,6 @@ Func demosaic(Func deinterleaved) {
         b_gb.compute_at(processed, tx);
         r_b.compute_at(processed, tx);
         b_r.compute_at(processed, tx);
-        // These interleave in x and y, so unrolling them helps
-        output.compute_at(processed, tx).unroll(x, 2).unroll(y, 2)
-            .reorder(c, x, y).bound(c, 0, 3).unroll(c);
 
     } else if(schedule != -1) {
         // Basic naive schedule
@@ -217,7 +215,7 @@ Func color_correct(Func input, ImageParam matrix_3200, ImageParam matrix_7000, P
     Func matrix("matrix");
     Expr alpha = (1.0f/kelvin - 1.0f/3200) / (1.0f/7000 - 1.0f/3200);
     Expr val =  (matrix_3200(x, y) * alpha + matrix_7000(x, y) * (1 - alpha));
-    matrix(x, y) = cast<int32_t>(val * 256.0f); // Q8.8 fixed point
+    matrix(x, y) = cast<int16_t>(val * 256.0f); // Q8.8 fixed point
     matrix.compute_root();
     //matrix.parallel(y);
 
@@ -290,10 +288,9 @@ Func process(Func raw, Type result_type,
     Func corrected = color_correct(demosaiced, matrix_3200, matrix_7000, color_temp);
     Func curved = apply_curve(corrected, result_type, gamma, contrast, blackLevel, whiteLevel);
 
-    processed(tx, ty, c) = curved(tx, ty, c);
+    processed(x, y, c) = curved(x, y, c);
 
     // Schedule
-    processed.bound(c, 0, 3).bound(tx, 0, 2560).bound(ty, 0, 1920); // bound color loop 0-3, properly
     processed.estimate(c, 0, 3).estimate(tx, 0, 2560).estimate(ty, 0, 1920); // bound color loop 0-3, properly
     if (schedule == 0) {
         if (target.has_gpu_feature()) {
@@ -334,6 +331,7 @@ Func process(Func raw, Type result_type,
         }
         processed.print_loop_nest();
     } else if (schedule == 1) {
+
         // Same as above, but don't vectorize (sse is bad at interleaved 16-bit ops)
         denoised.compute_at(processed, tx);
         deinterleaved.compute_at(processed, tx);
@@ -375,8 +373,8 @@ int main(int argc, char **argv) {
     int bit_width = atoi(argv[1]);
     Type result_type = UInt(bit_width);
 
-    // Pick a schedule
-    schedule = atoi(argv[2]);
+    // Pick a target
+    target = get_target_from_environment();
 
     // Build the pipeline
     Func processed = process(shifted, result_type, matrix_3200, matrix_7000,
@@ -387,8 +385,8 @@ int main(int argc, char **argv) {
     Expr out_height = processed.output_buffer().height();
 
     processed
-        .bound(tx, 0, (out_width/32)*32)
-        .bound(ty, 0, (out_height/32)*32);
+        .estimate(tx, 0, (out_width/32)*32)
+        .estimate(ty, 0, (out_height/32)*32);
 
     //string s = processed.serialize();
     //printf("%s\n", s.c_str());

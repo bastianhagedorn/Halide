@@ -10,7 +10,11 @@
 // This is declared in NVPTX.h, which is not exported. Ugly, but seems better than
 // hardcoding a path to the .h file.
 #ifdef WITH_PTX
+#if LLVM_VERSION >= 39
+namespace llvm { FunctionPass *createNVVMReflectPass(const StringMap<int>& Mapping); }
+#else
 namespace llvm { ModulePass *createNVVMReflectPass(const StringMap<int>& Mapping); }
+#endif
 #endif
 
 namespace Halide {
@@ -275,9 +279,6 @@ vector<char> CodeGen_PTX_Dev::compile_to_src() {
     /*char* argv[] = { "llc", "-print-before-all" };*/
     /*int argc = sizeof(argv)/sizeof(char*);*/
     /*cl::ParseCommandLineOptions(argc, argv, "Halide PTX internal compiler\n");*/
-
-    // Generic llvm optimizations on the module.
-    optimize_module();
 
     llvm::Triple triple(module->getTargetTriple());
 

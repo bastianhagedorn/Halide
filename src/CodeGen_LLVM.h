@@ -80,7 +80,7 @@ protected:
 
     /** Compile a specific halide declaration into the llvm Module. */
     // @{
-    virtual void compile_func(const LoweredFunc &func);
+    virtual void compile_func(const LoweredFunc &func, const std::string &simple_name, const std::string &extern_name);
     virtual void compile_buffer(const Buffer &buffer);
     // @}
 
@@ -91,8 +91,8 @@ protected:
      * call to end_func with the same arguments, to generate the
      * appropriate cleanup code. */
     // @{
-    virtual void begin_func(LoweredFunc::LinkageType linkage, const std::string &name,
-                            const std::vector<Argument> &args);
+    virtual void begin_func(LoweredFunc::LinkageType linkage, const std::string &simple_name,
+                            const std::string &extern_name, const std::vector<Argument> &args);
     virtual void end_func(const std::vector<Argument> &args);
     // @}
 
@@ -215,6 +215,7 @@ protected:
      * representation of the result of the expression. */
     llvm::Value *codegen(Expr);
 
+
     /** Emit code that runs a statement. */
     void codegen(Stmt);
 
@@ -306,14 +307,19 @@ protected:
      * different buffers */
     void add_tbaa_metadata(llvm::Instruction *inst, std::string buffer, Expr index);
 
+    /** Get a unique name for the actual block of memory that an
+     * allocate node uses. Used so that alias analysis understands
+     * when multiple Allocate nodes shared the same memory. */
+    virtual std::string get_allocation_name(const std::string &n) {return n;}
+
     /** Helpers for implementing fast integer division. */
     // @{
     // Compute high_half(a*b) >> shr. Note that this is a shift in
     // addition to the implicit shift due to taking the upper half of
     // the multiply result.
-    virtual llvm::Value *unsigned_mulhi_shr(llvm::Value *a, llvm::Value *b, int shr);
+    virtual Expr mulhi_shr(Expr a, Expr b, int shr);
     // Compute (a+b)/2, assuming a < b.
-    virtual llvm::Value *sorted_avg(llvm::Value *a, llvm::Value *b);
+    virtual Expr sorted_avg(Expr a, Expr b);
     // @}
 
 
@@ -394,7 +400,7 @@ protected:
 
     /** Which buffers came in from the outside world (and so we can't
      * guarantee their alignment) */
-    std::set<std::string> might_be_misaligned;
+    std::set<std::string> external_buffer;
 
     /** The user_context argument. May be a constant null if the
      * function is being compiled without a user context. */
@@ -403,7 +409,7 @@ protected:
     /** Implementation of the intrinsic call to
      * interleave_vectors. This implementation allows for interleaving
      * an arbitrary number of vectors.*/
-    llvm::Value *interleave_vectors(Type, const std::vector<Expr> &);
+    llvm::Value *interleave_vectors(const std::vector<llvm::Value *> &);
 
     /** Generate a call to a vector intrinsic or runtime inlined
      * function. The arguments are sliced up into vectors of the width
@@ -426,6 +432,12 @@ protected:
 
     /** Concatenate a bunch of llvm vectors. Must be of the same type. */
     llvm::Value *concat_vectors(const std::vector<llvm::Value *> &);
+
+    /** Create an LLVM shuffle vectors instruction. */
+    llvm::Value *shuffle_vectors(llvm::Value *a, llvm::Value *b,
+                                 const std::vector<int> &indices);
+    /** Shorthand for shuffling a vector with an undef vector. */
+    llvm::Value *shuffle_vectors(llvm::Value *v, const std::vector<int> &indices);
 
     /** Go looking for a vector version of a runtime function. Will
      * return the best match. Matches in the following order:
@@ -465,15 +477,18 @@ private:
 
     /** Embed an instance of halide_filter_metadata_t in the code, using
      * the given name (by convention, this should be ${FUNCTIONNAME}_metadata)
-     * as extern "C" linkage.
+     * as extern "C" linkage. Note that the return value is a function-returning-
+     * pointer-to-constant-data.
      */
-    llvm::Constant* embed_metadata(const std::string &metadata_name,
+    llvm::Function* embed_metadata_getter(const std::string &metadata_getter_name,
         const std::string &function_name, const std::vector<Argument> &args);
 
     /** Embed a constant expression as a global variable. */
     llvm::Constant *embed_constant_expr(Expr e);
 
-    void register_metadata(const std::string &name, llvm::Constant *metadata, llvm::Function *argv_wrapper);
+    void register_metadata(const std::string &name, llvm::Function *metadata_getter, llvm::Function *argv_wrapper);
+
+    llvm::Function *add_argv_wrapper(const std::string &name);
 };
 
 }

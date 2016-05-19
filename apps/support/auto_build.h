@@ -28,7 +28,7 @@ void auto_build(Halide::Pipeline p,
         if (gpu && atoi(gpu))
             suffix += "_gpu";
     }
-    o = o.header(name+".h").object(name+suffix+".o");
+    o = o.c_header(name+".h").object(name+suffix+".o");
     p.compile_to(o, args, name, target, auto_schedule);
 }
 

@@ -192,7 +192,7 @@ void CodeGen_GLSLBase::visit(const Call *op) {
     print_assignment(op->type, rhs.str());
 }
 
-string CodeGen_GLSLBase::print_type(Type type) {
+string CodeGen_GLSLBase::print_type(Type type, AppendSpaceIfNeeded space_option) {
     ostringstream oss;
     type = map_type(type);
     if (type.is_scalar()) {
@@ -217,13 +217,18 @@ string CodeGen_GLSLBase::print_type(Type type) {
         }
         oss << "vec" << type.lanes();
     }
+
+    if (space_option == AppendSpace) {
+        oss << " ";
+    }
+
     return oss.str();
 }
 
 // Identifiers containing double underscores '__' are reserved in GLSL, so we
 // have to use a different name mangling scheme than in the C code generator.
 std::string CodeGen_GLSLBase::print_name(const std::string &name) {
-    std::string mangled = CodeGen_C::print_name(name);
+    const std::string mangled = CodeGen_C::print_name(name);
     return replace_all(mangled, "__", "XX");
 }
 

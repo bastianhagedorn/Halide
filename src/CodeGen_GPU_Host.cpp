@@ -138,8 +138,10 @@ CodeGen_GPU_Host<CodeGen_CPU>::~CodeGen_GPU_Host() {
 }
 
 template<typename CodeGen_CPU>
-void CodeGen_GPU_Host<CodeGen_CPU>::compile_func(const LoweredFunc &f) {
-    function_name = f.name;
+void CodeGen_GPU_Host<CodeGen_CPU>::compile_func(const LoweredFunc &f,
+                                                 const std::string &simple_name,
+                                                 const std::string &/* extern_name */) {
+    function_name = simple_name;
 
     // Create a new module for all of the kernels we find in this function.
     for (pair<const DeviceAPI, CodeGen_GPU_Dev *> &i : cgdev) {
@@ -147,7 +149,7 @@ void CodeGen_GPU_Host<CodeGen_CPU>::compile_func(const LoweredFunc &f) {
     }
 
     // Call the base implementation to create the function.
-    CodeGen_CPU::compile_func(f);
+    CodeGen_CPU::compile_func(f, f.name, f.name);
 
     // We need to insert code after the existing entry block, so that
     // the destructor stack slots exist before we do the assertions
@@ -244,7 +246,7 @@ void CodeGen_GPU_Host<CodeGen_CPU>::visit(const For *loop) {
                  << bounds.num_blocks[3] << ") blocks\n";
 
         // compile the kernel
-        string kernel_name = unique_name("kernel_" + loop->name, false);
+        string kernel_name = unique_name("kernel_" + loop->name);
         for (size_t i = 0; i < kernel_name.size(); i++) {
             if (!isalnum(kernel_name[i])) {
                 kernel_name[i] = '_';

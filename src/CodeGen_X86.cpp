@@ -369,19 +369,17 @@ void CodeGen_X86::visit(const Cast *op) {
     CodeGen_Posix::visit(op);
 }
 
-llvm::Value *CodeGen_X86::unsigned_mulhi_shr(llvm::Value *a, llvm::Value *b, int shr) {
-    internal_assert(a->getType() == b->getType());
-    llvm::Type *ty = a->getType();
-
-    if (ty->isVectorTy() && ty->getScalarSizeInBits() == 16) {
-        llvm::Value *p = call_intrin(ty, 8, "llvm.x86.sse2.pmulhu.w", {a, b});
+Expr CodeGen_X86::mulhi_shr(Expr a, Expr b, int shr) {
+    Type ty = a.type();
+    if (ty.is_vector() && ty.bits() == 16) {
+        // We can use pmulhu for this op.
+        Expr p = _u16(_u32(a) * _u32(b) / 65536);
         if (shr) {
-            Constant *shift_amount = ConstantInt::get(ty, shr);
-            p = builder->CreateLShr(p, shift_amount);
+            p = p >> shr;
         }
         return p;
     }
-    return CodeGen_Posix::unsigned_mulhi_shr(a, b, shr);
+    return CodeGen_Posix::mulhi_shr(a, b, shr);
 }
 
 void CodeGen_X86::visit(const Min *op) {
@@ -459,7 +457,33 @@ void CodeGen_X86::visit(const Max *op) {
     }
 }
 
+void CodeGen_X86::visit(const Call *op) {
+    if (target.has_feature(Target::AVX2) &&
+        op->is_intrinsic(Call::shift_left) &&
+        op->type.is_vector() &&
+        op->type.is_int() &&
+        op->type.bits() < 32 &&
+        !is_positive_const(op->args[0])) {
+
+        // Left shift of negative integers is broken in some cases in
+        // avx2: https://llvm.org/bugs/show_bug.cgi?id=27730
+
+        // It needs to be normalized to a 32-bit shift, because avx2
+        // doesn't have a narrower version than that. We'll just do
+        // that normalization ourselves. Strangely, this seems to
+        // produce better asm anyway.
+        Type wider = op->type.with_bits(32);
+        Expr equiv = cast(op->type,
+                          cast(wider, op->args[0]) <<
+                          cast(wider, op->args[1]));
+        codegen(equiv);
+    } else {
+        CodeGen_Posix::visit(op);
+    }
+}
+
 string CodeGen_X86::mcpu() const {
+    if (target.has_feature(Target::AVX2)) return "haswell";
     if (target.has_feature(Target::AVX)) return "corei7-avx";
     // We want SSE4.1 but not SSE4.2, hence "penryn" rather than "corei7"
     if (target.has_feature(Target::SSE41)) return "penryn";

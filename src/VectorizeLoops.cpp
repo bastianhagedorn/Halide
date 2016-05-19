@@ -22,7 +22,7 @@ class VectorizeLoops : public IRMutator {
         Expr replacement;
         string widening_suffix;
         Scope<Expr> scope;
-        Scope<int> internal_allocations;
+        Scope<int> vectorized_allocations;
 
         bool scalarized;
         int scalar_lane;
@@ -54,10 +54,10 @@ class VectorizeLoops : public IRMutator {
             string widened_name = op->name + widening_suffix;
             if (op->name == var) {
                 expr = replacement;
-            } else if (scope.contains(widened_name)) {
+            } else if (scope.contains(op->name)) {
                 // If the variable appears in scope then we previously widened
                 // it and we use the new widened name for the variable.
-                expr = Variable::make(scope.get(widened_name).type(), widened_name);
+                expr = Variable::make(scope.get(op->name).type(), widened_name);
             } else {
                 expr = op;
             }
@@ -65,7 +65,7 @@ class VectorizeLoops : public IRMutator {
             if (scalarized) {
                 // When we're scalarized, we were supposed to hide all
                 // the vector vars in scope.
-                internal_assert(expr.type().is_scalar());
+                internal_assert(expr.type().is_scalar()) << op->name << " -> " << expr << "\n";
             }
         }
 
@@ -118,7 +118,7 @@ class VectorizeLoops : public IRMutator {
             Expr index = mutate(op->index);
 
             // Internal allocations always get vectorized.
-            if (internal_allocations.contains(op->name)) {
+            if (vectorized_allocations.contains(op->name)) {
                 int lanes = replacement.type().lanes();
                 if (index.type().is_scalar()) {
                     if (scalarized) {
@@ -278,19 +278,21 @@ class VectorizeLoops : public IRMutator {
             std::string vectorized_name;
             if (was_vectorized) {
                 vectorized_name = op->name + widening_suffix;
-                scope.push(vectorized_name, mutated_value);
+                scope.push(op->name, mutated_value);
             }
 
             Expr mutated_body = mutate(op->body);
 
             if (was_vectorized) {
-                scope.pop(vectorized_name);
+                scope.pop(op->name);
             }
 
             // Check to see if the value and body were modified by this mutator
             if (mutated_value.same_as(op->value) &&
                 mutated_body.same_as(op->body)) {
                 expr = op;
+            } else if (scalarized) {
+                expr = Let::make(op->name, mutated_value, mutated_body);
             } else {
                 // Otherwise create a new Let containing the original value
                 // expression plus the widened expression
@@ -306,25 +308,28 @@ class VectorizeLoops : public IRMutator {
             Expr mutated_value = mutate(op->value);
 
             // Check if the value was vectorized by this mutator.
-            bool was_vectorized = !op->value.type().is_vector() &&
-            mutated_value.type().is_vector();
+            bool was_vectorized = (!op->value.type().is_vector() &&
+                                   mutated_value.type().is_vector());
 
             std::string vectorized_name;
 
             if (was_vectorized) {
                 vectorized_name = op->name + widening_suffix;
-                scope.push(vectorized_name, mutated_value);
+                scope.push(op->name, mutated_value);
             }
 
             Stmt mutated_body = mutate(op->body);
 
             if (was_vectorized) {
-                scope.pop(vectorized_name);
+                scope.pop(op->name);
             }
 
             if (mutated_value.same_as(op->value) &&
                 mutated_body.same_as(op->body)) {
                 stmt = op;
+            } else if (scalarized) {
+                internal_assert(!was_vectorized);
+                stmt = LetStmt::make(op->name, mutated_value, mutated_body);
             } else {
                 stmt = LetStmt::make(op->name, op->value, mutated_body);
 
@@ -375,7 +380,7 @@ class VectorizeLoops : public IRMutator {
             Expr value = mutate(op->value);
             Expr index = mutate(op->index);
             // Internal allocations always get vectorized.
-            if (internal_allocations.contains(op->name)) {
+            if (vectorized_allocations.contains(op->name)) {
                 int lanes = replacement.type().lanes();
                 if (index.type().is_scalar()) {
                     if (scalarized) {
@@ -394,7 +399,7 @@ class VectorizeLoops : public IRMutator {
                 stmt = op;
             } else {
                 int lanes = std::max(value.type().lanes(), index.type().lanes());
-                stmt = Store::make(op->name, widen(value, lanes), widen(index, lanes));
+                stmt = Store::make(op->name, widen(value, lanes), widen(index, lanes), op->param);
             }
         }
 
@@ -475,7 +480,9 @@ class VectorizeLoops : public IRMutator {
             Expr new_expr;
 
             // The new expanded dimension is innermost.
-            new_extents.push_back(Expr(replacement.type().lanes()));
+            if (!scalarized) {
+                new_extents.push_back(Expr(replacement.type().lanes()));
+            }
 
             for (size_t i = 0; i < op->extents.size(); i++) {
                 new_extents.push_back(mutate(op->extents[i]));
@@ -494,11 +501,15 @@ class VectorizeLoops : public IRMutator {
                     << "Cannot vectorize an allocation with a varying new_expr per vector lane.\n";
             }
 
-            // Rewrite loads and stores to this allocation like so (this works for scalars and vectors):
-            // foo[x] -> foo[x*lanes + ramp(0, 1, lanes)]
-            internal_allocations.push(op->name, 0);
+            if (!scalarized) {
+                // Rewrite loads and stores to this allocation like so (this works for scalars and vectors):
+                // foo[x] -> foo[x*lanes + ramp(0, 1, lanes)]
+                vectorized_allocations.push(op->name, 0);
+            }
             Stmt body = mutate(op->body);
-            internal_allocations.pop(op->name);
+            if (!scalarized) {
+                vectorized_allocations.pop(op->name);
+            }
             stmt = Allocate::make(op->name, op->type, new_extents, op->condition, body, new_expr, op->free_function);
         }
 

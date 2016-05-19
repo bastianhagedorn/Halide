@@ -5,6 +5,7 @@
 
 #include "IRPrinter.h"
 #include "CodeGen_LLVM.h"
+#include "CPlusPlusMangle.h"
 #include "IROperator.h"
 #include "Debug.h"
 #include "Deinterleave.h"
@@ -16,6 +17,7 @@
 #include "LLVM_Runtime_Linker.h"
 #include "MatlabWrapper.h"
 #include "IntegerDivisionTable.h"
+#include "CSE.h"
 
 #include "CodeGen_X86.h"
 #include "CodeGen_GPU_Host.h"
@@ -419,42 +421,42 @@ bool CodeGen_LLVM::llvm_PowerPC_enabled = false;
 
 namespace {
 
-// Make a wrapper to call the function with an array of pointer
-// args. This is easier for the JIT to call than a function with an
-// unknown (at compile time) argument list.
-llvm::Function *add_argv_wrapper(llvm::Module *m, llvm::Function *fn, const std::string &name) {
-    llvm::Type *buffer_t_type = m->getTypeByName("struct.buffer_t");
-    llvm::Type *i8 = llvm::Type::getInt8Ty(m->getContext());
-    llvm::Type *i32 = llvm::Type::getInt32Ty(m->getContext());
+struct MangledNames {
+    string simple_name;
+    string extern_name;
+    string argv_name;
+    string metadata_name;
+};
 
-    llvm::Type *args_t[] = {i8->getPointerTo()->getPointerTo()};
-    llvm::FunctionType *func_t = llvm::FunctionType::get(i32, args_t, false);
-    llvm::Function *wrapper = llvm::Function::Create(func_t, llvm::GlobalValue::ExternalLinkage, name, m);
-    llvm::BasicBlock *block = llvm::BasicBlock::Create(m->getContext(), "entry", wrapper);
-    llvm::IRBuilder<> builder(m->getContext());
-    builder.SetInsertPoint(block);
+MangledNames get_mangled_names(const LoweredFunc &f, const Target &target) {
+    std::vector<std::string> namespaces;
+    MangledNames names;
+    names.simple_name = extract_namespaces(f.name, namespaces);
+    names.extern_name = names.simple_name;
+    names.argv_name = names.simple_name + "_argv";
+    names.metadata_name = names.simple_name + "_metadata";
 
-    llvm::Value *arg_array = iterator_to_pointer(wrapper->arg_begin());
+    const std::vector<Argument> &args = f.args;
 
-    std::vector<llvm::Value *> wrapper_args;
-    for (llvm::Function::arg_iterator i = fn->arg_begin(); i != fn->arg_end(); i++) {
-        // Get the address of the nth argument
-        llvm::Value *ptr = builder.CreateConstGEP1_32(arg_array, wrapper_args.size());
-        ptr = builder.CreateLoad(ptr);
-        if (i->getType() == buffer_t_type->getPointerTo()) {
-            // Cast the argument to a buffer_t *
-            wrapper_args.push_back(builder.CreatePointerCast(ptr, buffer_t_type->getPointerTo()));
-        } else {
-            // Cast to the appropriate type and load
-            ptr = builder.CreatePointerCast(ptr, i->getType()->getPointerTo());
-            wrapper_args.push_back(builder.CreateLoad(ptr));
+    if (f.linkage == LoweredFunc::External &&
+        target.has_feature(Target::CPlusPlusMangling) &&
+        !target.has_feature(Target::JIT)) { // TODO: make this work with JIT or remove mangling flag in JIT target setup
+        std::vector<ExternFuncArgument> mangle_args;
+        for (const auto &arg : args) {
+            if (arg.kind == Argument::InputScalar) {
+                mangle_args.push_back(ExternFuncArgument(make_zero(arg.type)));
+            } else if (arg.kind == Argument::InputBuffer ||
+                       arg.kind == Argument::OutputBuffer) {
+                mangle_args.push_back(ExternFuncArgument(Buffer()));
+            }
         }
+        names.extern_name = cplusplus_function_mangled_name(names.simple_name, namespaces, type_of<int>(), mangle_args, target);
+        halide_handle_cplusplus_type inner_type(halide_cplusplus_type_name(halide_cplusplus_type_name::Simple, "void"), {}, {},
+                                                { halide_handle_cplusplus_type::Pointer, halide_handle_cplusplus_type::Pointer } );
+        Type void_star_star(Handle(1, &inner_type));
+        names.argv_name = cplusplus_function_mangled_name(names.argv_name, namespaces, type_of<int>(), { ExternFuncArgument(make_zero(void_star_star)) }, target);
     }
-    debug(4) << "Creating call from wrapper to actual function\n";
-    llvm::Value *result = builder.CreateCall(fn, wrapper_args);
-    builder.CreateRet(result);
-    llvm::verifyFunction(*wrapper);
-    return wrapper;
+    return names;
 }
 
 }  // namespace
@@ -494,24 +496,25 @@ std::unique_ptr<llvm::Module> CodeGen_LLVM::compile(const Module &input) {
 
     // Generate the code for this module.
     debug(1) << "Generating llvm bitcode...\n";
-    for (size_t i = 0; i < input.buffers.size(); i++) {
-        compile_buffer(input.buffers[i]);
+    for (const auto &b : input.buffers()) {
+        compile_buffer(b);
     }
-    for (size_t i = 0; i < input.functions.size(); i++) {
-        const LoweredFunc &f = input.functions[i];
-        compile_func(f);
+    for (const auto &f : input.functions()) {
+        const auto names = get_mangled_names(f, get_target());
 
-        // If the Func is externally visible, also create the argv wrapper
+        compile_func(f, names.simple_name, names.extern_name);
+
+        // If the Func is externally visible, also create the argv wrapper and metadata.
         // (useful for calling from JIT and other machine interfaces).
         if (f.linkage == LoweredFunc::External) {
-            llvm::Function *wrapper = add_argv_wrapper(module.get(), function, f.name + "_argv");
-            llvm::Constant *metadata = embed_metadata(f.name + "_metadata", f.name, f.args);
+            llvm::Function *wrapper = add_argv_wrapper(names.argv_name);
+            llvm::Function *metadata_getter = embed_metadata_getter(names.metadata_name, names.simple_name, f.args);
             if (target.has_feature(Target::RegisterMetadata)) {
-                register_metadata(f.name, metadata, wrapper);
+                register_metadata(names.simple_name, metadata_getter, wrapper);
             }
 
             if (target.has_feature(Target::Matlab)) {
-                define_matlab_wrapper(module.get(), f.name);
+                define_matlab_wrapper(module.get(), wrapper, metadata_getter);
             }
         }
     }
@@ -529,8 +532,9 @@ std::unique_ptr<llvm::Module> CodeGen_LLVM::compile(const Module &input) {
     return std::move(module);
 }
 
+
 void CodeGen_LLVM::begin_func(LoweredFunc::LinkageType linkage, const std::string& name,
-                              const std::vector<Argument>& args) {
+                              const std::string& extern_name, const std::vector<Argument>& args) {
     // Deduce the types of the arguments to our function
     vector<llvm::Type *> arg_types(args.size());
     for (size_t i = 0; i < args.size(); i++) {
@@ -543,7 +547,7 @@ void CodeGen_LLVM::begin_func(LoweredFunc::LinkageType linkage, const std::strin
 
     // Make our function
     FunctionType *func_t = FunctionType::get(i32, arg_types, false);
-    function = llvm::Function::Create(func_t, llvm_linkage(linkage), name, module.get());
+    function = llvm::Function::Create(func_t, llvm_linkage(linkage), extern_name, module.get());
 
     // Mark the buffer args as no alias
     for (size_t i = 0; i < args.size(); i++) {
@@ -589,9 +593,10 @@ void CodeGen_LLVM::end_func(const std::vector<Argument>& args) {
     internal_assert(!verifyFunction(*function));
 }
 
-void CodeGen_LLVM::compile_func(const LoweredFunc &f) {
+  void CodeGen_LLVM::compile_func(const LoweredFunc &f, const std::string &simple_name,
+                                  const std::string &extern_name) {
     // Generate the function declaration and argument unpacking code.
-    begin_func(f.linkage, f.name, f.args);
+    begin_func(f.linkage, simple_name, extern_name, f.args);
 
     // Generate the function body.
     debug(1) << "Generating llvm bitcode for function " << f.name << "...\n";
@@ -746,7 +751,7 @@ void CodeGen_LLVM::compile_buffer(const Buffer &buf) {
 }
 
 Constant* CodeGen_LLVM::embed_constant_expr(Expr e) {
-    if (!e.defined() || e.type() == Handle()) {
+    if (!e.defined() || e.type().is_handle()) {
         // Handle is always emitted into metadata "undefined", regardless of
         // what sort of Expr is provided.
         return Constant::getNullValue(scalar_value_t_type->getPointerTo());
@@ -773,7 +778,42 @@ Constant* CodeGen_LLVM::embed_constant_expr(Expr e) {
         scalar_value_t_type->getPointerTo());
 }
 
-llvm::Constant *CodeGen_LLVM::embed_metadata(const std::string &metadata_name,
+// Make a wrapper to call the function with an array of pointer
+// args. This is easier for the JIT to call than a function with an
+// unknown (at compile time) argument list.
+llvm::Function *CodeGen_LLVM::add_argv_wrapper(const std::string &name) {
+    llvm::Type *args_t[] = {i8->getPointerTo()->getPointerTo()};
+    llvm::FunctionType *func_t = llvm::FunctionType::get(i32, args_t, false);
+    llvm::Function *wrapper = llvm::Function::Create(func_t, llvm::GlobalValue::ExternalLinkage, name, module.get());
+    llvm::BasicBlock *block = llvm::BasicBlock::Create(module->getContext(), "entry", wrapper);
+    builder->SetInsertPoint(block);
+
+    llvm::Value *arg_array = iterator_to_pointer(wrapper->arg_begin());
+
+    std::vector<llvm::Value *> wrapper_args;
+    for (llvm::Function::arg_iterator i = function->arg_begin(); i != function->arg_end(); i++) {
+        // Get the address of the nth argument
+        llvm::Value *ptr = builder->CreateConstGEP1_32(arg_array, wrapper_args.size());
+        ptr = builder->CreateLoad(ptr);
+        if (i->getType() == buffer_t_type->getPointerTo()) {
+            // Cast the argument to a buffer_t *
+            wrapper_args.push_back(builder->CreatePointerCast(ptr, buffer_t_type->getPointerTo()));
+        } else {
+            // Cast to the appropriate type and load
+            ptr = builder->CreatePointerCast(ptr, i->getType()->getPointerTo());
+            wrapper_args.push_back(builder->CreateLoad(ptr));
+        }
+    }
+    debug(4) << "Creating call from wrapper to actual function\n";
+    llvm::CallInst *result = builder->CreateCall(function, wrapper_args);
+    // This call should never inline
+    result->setIsNoInline();
+    builder->CreateRet(result);
+    llvm::verifyFunction(*wrapper);
+    return wrapper;
+}
+
+llvm::Function *CodeGen_LLVM::embed_metadata_getter(const std::string &metadata_name,
         const std::string &function_name, const std::vector<Argument> &args) {
     Constant *zero = ConstantInt::get(i32, 0);
 
@@ -814,18 +854,25 @@ llvm::Constant *CodeGen_LLVM::embed_metadata(const std::string &metadata_name,
         /* name */ create_string_constant(function_name)
     };
 
-    GlobalVariable *metadata = new GlobalVariable(
+    GlobalVariable *metadata_storage = new GlobalVariable(
         *module,
         metadata_t_type,
         /*isConstant*/ true,
-        GlobalValue::ExternalLinkage,
+        GlobalValue::PrivateLinkage,
         ConstantStruct::get(metadata_t_type, metadata_fields),
-        metadata_name);
+        metadata_name + "_storage");
 
-    return metadata;
+    llvm::FunctionType *func_t = llvm::FunctionType::get(metadata_t_type->getPointerTo(), false);
+    llvm::Function *metadata_getter = llvm::Function::Create(func_t, llvm::GlobalValue::ExternalLinkage, metadata_name, module.get());
+    llvm::BasicBlock *block = llvm::BasicBlock::Create(module.get()->getContext(), "entry", metadata_getter);
+    builder->SetInsertPoint(block);
+    builder->CreateRet(metadata_storage);
+    llvm::verifyFunction(*metadata_getter);
+
+    return metadata_getter;
 }
 
-void CodeGen_LLVM::register_metadata(const std::string &name, llvm::Constant *metadata, llvm::Function *argv_wrapper) {
+void CodeGen_LLVM::register_metadata(const std::string &name, llvm::Function *metadata_getter, llvm::Function *argv_wrapper) {
     llvm::Function *register_metadata = module->getFunction("halide_runtime_internal_register_metadata");
     internal_assert(register_metadata) << "Could not find register_metadata in initial module\n";
 
@@ -834,7 +881,7 @@ void CodeGen_LLVM::register_metadata(const std::string &name, llvm::Constant *me
 
     Constant *list_node_fields[] = {
         Constant::getNullValue(i8->getPointerTo()),
-        metadata,
+        metadata_getter,
         argv_wrapper
     };
 
@@ -882,21 +929,27 @@ void CodeGen_LLVM::optimize_module() {
     module_pass_manager.add(new DataLayoutPass());
     #endif
 
-    // Make sure things marked as always-inline get inlined
-    module_pass_manager.add(createAlwaysInlinerPass());
+    #if (LLVM_VERSION >= 37)
+    std::unique_ptr<TargetMachine> TM = make_target_machine(*module);
+    module_pass_manager.add(createTargetTransformInfoWrapperPass(TM ? TM->getTargetIRAnalysis() : TargetIRAnalysis()));
+    function_pass_manager.add(createTargetTransformInfoWrapperPass(TM ? TM->getTargetIRAnalysis() : TargetIRAnalysis()));
+    #endif
 
     PassManagerBuilder b;
     b.OptLevel = 3;
+    b.Inliner = createFunctionInliningPass(b.OptLevel, 0);
+    b.LoopVectorize = true;
+    b.SLPVectorize = true;
     b.populateFunctionPassManager(function_pass_manager);
     b.populateModulePassManager(module_pass_manager);
 
     // Run optimization passes
-    module_pass_manager.run(*module);
     function_pass_manager.doInitialization();
     for (llvm::Module::iterator i = module->begin(); i != module->end(); i++) {
         function_pass_manager.run(*i);
     }
     function_pass_manager.doFinalization();
+    module_pass_manager.run(*module);
 
     debug(3) << "After LLVM optimizations:\n";
     if (debug::debug_level >= 2) {
@@ -950,23 +1003,9 @@ void CodeGen_LLVM::push_buffer(const string &name, llvm::Value *buffer) {
     Value *host_ptr = buffer_host(buffer);
     Value *dev_ptr = buffer_dev(buffer);
 
-    // Check it's 32-byte aligned
-
-    // Disabled, because we don't currently require external
-    // allocations to be aligned.
-
-    /*
-    Value *base = builder->CreatePtrToInt(host_ptr, i64);
-    Value *check_alignment = builder->CreateAnd(base, 0x1f);
-    check_alignment = builder->CreateIsNull(check_alignment);
-
-    string error_message = "Buffer " + name + " is not 32-byte aligned";
-    create_assertion(check_alignment, error_message);
-    */
-
     // Instead track this buffer name so that loads and stores from it
     // don't try to be too aligned.
-    might_be_misaligned.insert(name);
+    external_buffer.insert(name);
 
     // Push the buffer pointer as well, for backends that care.
     sym_push(name + ".buffer", buffer);
@@ -1227,7 +1266,7 @@ void CodeGen_LLVM::visit(const Variable *op) {
 void CodeGen_LLVM::visit(const Add *op) {
     if (op->type.is_float()) {
         value = builder->CreateFAdd(codegen(op->a), codegen(op->b));
-    } else if (op->type.is_int()) {
+    } else if (op->type.is_int() && op->type.bits() >= 32) {
         // We tell llvm integers don't wrap, so that it generates good
         // code for loop indices.
         value = builder->CreateNSWAdd(codegen(op->a), codegen(op->b));
@@ -1239,7 +1278,7 @@ void CodeGen_LLVM::visit(const Add *op) {
 void CodeGen_LLVM::visit(const Sub *op) {
     if (op->type.is_float()) {
         value = builder->CreateFSub(codegen(op->a), codegen(op->b));
-    } else if (op->type.is_int()) {
+    } else if (op->type.is_int() && op->type.bits() >= 32) {
         // We tell llvm integers don't wrap, so that it generates good
         // code for loop indices.
         value = builder->CreateNSWSub(codegen(op->a), codegen(op->b));
@@ -1251,7 +1290,7 @@ void CodeGen_LLVM::visit(const Sub *op) {
 void CodeGen_LLVM::visit(const Mul *op) {
     if (op->type.is_float()) {
         value = builder->CreateFMul(codegen(op->a), codegen(op->b));
-    } else if (op->type.is_int()) {
+    } else if (op->type.is_int() && op->type.bits() >= 32) {
         // We tell llvm integers don't wrap, so that it generates good
         // code for loop indices.
         value = builder->CreateNSWMul(codegen(op->a), codegen(op->b));
@@ -1260,34 +1299,19 @@ void CodeGen_LLVM::visit(const Mul *op) {
     }
 }
 
-Value *CodeGen_LLVM::unsigned_mulhi_shr(Value *a, Value *b, int shr) {
-    llvm::Type *ty = a->getType();
-    llvm::VectorType *vty = dyn_cast<VectorType>(ty);
-    llvm::Type *element_ty = vty ? vty->getElementType() : ty;
-    llvm::Type *wide_ty = llvm::IntegerType::get(ty->getContext(), element_ty->getIntegerBitWidth() * 2);
-    if (vty) {
-        wide_ty = llvm::VectorType::get(wide_ty, vty->getNumElements());
-    }
+Expr CodeGen_LLVM::mulhi_shr(Expr a, Expr b, int shr) {
+    Type ty = a.type();
+    Type wide_ty = ty.with_bits(ty.bits() * 2);
 
-    // We assume the inputs are unsigned, so we zero extend.
-    Value *a_wide = builder->CreateIntCast(a, wide_ty, false);
-    Value *b_wide = builder->CreateIntCast(b, wide_ty, false);
-    Value *p_wide = builder->CreateMul(a_wide, b_wide);
-
-    // Do the shift (add 8 or 16 or 32 to narrow back down)
-    Constant *shift_amount = ConstantInt::get(wide_ty, shr + element_ty->getIntegerBitWidth());
-    Value *p = builder->CreateLShr(p_wide, shift_amount);
-    return builder->CreateIntCast(p, ty, true);
+    Expr p_wide = cast(wide_ty, a) * cast(wide_ty, b);
+    return cast(ty, p_wide >> (shr + ty.bits()));
 }
 
-Value *CodeGen_LLVM::sorted_avg(Value *a, Value *b) {
+Expr CodeGen_LLVM::sorted_avg(Expr a, Expr b) {
     // b > a, so the following works without widening:
     // a + (b - a)/2
-    Value *diff = builder->CreateSub(b, a);
-    diff = builder->CreateLShr(diff, ConstantInt::get(diff->getType(), 1));
-    return builder->CreateAdd(a, diff);
+    return a + (b - a)/2;
 }
-
 
 void CodeGen_LLVM::visit(const Div *op) {
     user_assert(!is_zero(op->b)) << "Division by constant zero in expression: " << Expr(op) << "\n";
@@ -1297,18 +1321,11 @@ void CodeGen_LLVM::visit(const Div *op) {
     const uint64_t *const_uint_divisor = as_const_uint(op->b);
 
     int shift_amount;
-    bool power_of_two = is_const_power_of_two_integer(op->b, &shift_amount);
-
     if (op->type.is_float()) {
         value = builder->CreateFDiv(codegen(op->a), codegen(op->b));
-    } else if (power_of_two && op->type.is_int()) {
-        Value *numerator = codegen(op->a);
-        Constant *shift = ConstantInt::get(llvm_type_of(op->type), shift_amount);
-        value = builder->CreateAShr(numerator, shift);
-    } else if (power_of_two && op->type.is_uint()) {
-        Value *numerator = codegen(op->a);
-        Constant *shift = ConstantInt::get(llvm_type_of(op->type), shift_amount);
-        value = builder->CreateLShr(numerator, shift);
+    } else if (is_const_power_of_two_integer(op->b, &shift_amount) &&
+               (op->type.is_int() || op->type.is_uint())) {
+        value = codegen(op->a >> shift_amount);
     } else if (const_int_divisor &&
                op->type.is_int() &&
                (op->type.bits() == 8 || op->type.bits() == 16 || op->type.bits() == 32) &&
@@ -1327,22 +1344,24 @@ void CodeGen_LLVM::visit(const Div *op) {
             multiplier = IntegerDivision::table_s8[*const_int_divisor][2];
             shift      = IntegerDivision::table_s8[*const_int_divisor][3];
         }
-
-        Value *val = codegen(op->a);
+        Expr num = op->a;
 
         // Make an all-ones mask if the numerator is negative
-        Value *sign = builder->CreateAShr(val, codegen(make_const(op->type, op->type.bits()-1)));
+        Expr sign = num >> make_const(op->type, op->type.bits() - 1);
+
         // Flip the numerator bits if the mask is high.
-        Value *flipped = builder->CreateXor(sign, val);
+        num = cast(num.type().with_code(Type::UInt), num);
+        num = num ^ sign;
 
-        // Grab the multiplier.
-        Value *mult = ConstantInt::get(llvm_type_of(op->type), multiplier);
+        // Multiply and keep the high half of the
+        // result, and then apply the shift.
+        Expr mult = make_const(num.type(), multiplier);
+        num = mulhi_shr(num, mult, shift);
 
-        // Widening multiply, keep high half, shift
-        val = unsigned_mulhi_shr(flipped, mult, shift);
+        // Maybe flip the bits back again.
+        num = num ^ sign;
 
-        // Maybe flip the bits again
-        value = builder->CreateXor(val, sign);
+        value = codegen(num);
 
     } else if (const_uint_divisor &&
                op->type.is_uint() &&
@@ -1366,12 +1385,11 @@ void CodeGen_LLVM::visit(const Div *op) {
 
         internal_assert(method != 0)
             << "method 0 division is for powers of two and should have been handled elsewhere\n";
-
-        Value *num = codegen(op->a);
+        Expr num = op->a;
 
         // Widen, multiply, narrow
-        Value *mult = ConstantInt::get(llvm_type_of(op->type), multiplier);
-        Value *val = unsigned_mulhi_shr(num, mult, method == 1 ? shift : 0);
+        Expr mult = make_const(num.type(), multiplier);
+        Expr val = mulhi_shr(num, mult, method == 1 ? shift : 0);
 
         if (method == 2) {
             // Average with original numerator.
@@ -1379,124 +1397,47 @@ void CodeGen_LLVM::visit(const Div *op) {
 
             // Do the final shift
             if (shift) {
-                val = builder->CreateLShr(val, ConstantInt::get(llvm_type_of(op->type), shift));
+                val = val >> make_const(op->type, shift);
             }
         }
 
-        value = val;
-    } else if (op->type.is_uint()) {
-        value = builder->CreateUDiv(codegen(op->a), codegen(op->b));
+        value = codegen(val);
     } else {
-        // Signed integer division sucks. It should be defined such
-        // that it satisifies (a/b)*b + a%b = a, where 0 <= a%b < |b|,
-        // i.e. Euclidean division.
-
-        // If it's a small const power of two, then we can just
-        // arithmetic right shift. This rounds towards negative
-        // infinity.
-        for (int bits = 1; bits < 30; bits++) {
-            if (is_const(op->b, 1 << bits)) {
-                Value *shift = codegen(make_const(op->a.type(), bits));
-                value = builder->CreateAShr(codegen(op->a), shift);
-                return;
-            }
-        }
-
-        // We get rounding to work by examining the implied remainder
-        // and correcting the quotient.
-
-        /* Here's the C code that we're trying to match:
-        int q = a / b;
-        int r = a - q * b;
-        int bs = b >> (t.bits() - 1);
-        int rs = r >> (t.bits() - 1);
-        return q - (rs & bs) + (rs & ~bs);
-        */
-
-        Value *a = codegen(op->a), *b = codegen(op->b);
-
-        Value *q = builder->CreateSDiv(a, b);
-        Value *r = builder->CreateSub(a, builder->CreateMul(q, b));
-        Value *shift = ConstantInt::get(a->getType(), op->a.type().bits()-1);
-        Value *bs = builder->CreateAShr(b, shift);
-        Value *rs = builder->CreateAShr(r, shift);
-        Value *round_up = builder->CreateAnd(rs, bs);
-        Value *round_down = builder->CreateAnd(rs, builder->CreateNot(bs));
-        value = builder->CreateAdd(builder->CreateSub(q, round_up), round_down);
+        value = codegen(lower_euclidean_div(op->a, op->b));
     }
 }
 
 void CodeGen_LLVM::visit(const Mod *op) {
-    // To match our definition of division, mod should be between 0
-    // and |b|.
-
+    int bits;
     if (op->type.is_float()) {
         value = codegen(simplify(op->a - op->b * floor(op->a/op->b)));
-    } else if (op->type.is_uint()) {
-        int bits;
-        if (is_const_power_of_two_integer(op->b, &bits)) {
-            Expr one = make_one(op->b.type());
-            value = builder->CreateAnd(codegen(op->a), codegen(op->b - one));
-        } else {
-            value = builder->CreateURem(codegen(op->a), codegen(op->b));
-        }
+    } else if (is_const_power_of_two_integer(op->b, &bits)) {
+        value = codegen(op->a & (op->b - 1));
     } else {
-        int bits;
-        if (is_const_power_of_two_integer(op->b, &bits)) {
-            Expr one = make_one(op->b.type());
-            value = builder->CreateAnd(codegen(op->a), codegen(op->b - one));
-        } else {
-            Value *a = codegen(op->a);
-            Value *b = codegen(op->b);
-
-            // Match this non-overflowing C code
-            /*
-              T r = a % b;
-              r = r + (r < 0 ? abs(b) : 0);
-            */
-
-            Value *r = builder->CreateSRem(a, b);
-            Value *zero = ConstantInt::get(r->getType(), 0);
-            Value *b_lt_0 = builder->CreateICmpSLT(b, zero);
-            Value *abs_b = builder->CreateSelect(b_lt_0, builder->CreateNeg(b), b);
-            Value *r_lt_0 = builder->CreateICmpSLT(r, zero);
-            value = builder->CreateSelect(r_lt_0, builder->CreateAdd(r, abs_b), r);
-        }
+        // To match our definition of division, mod should be between 0
+        // and |b|.
+        value = codegen(lower_euclidean_mod(op->a, op->b));
     }
 }
 
 void CodeGen_LLVM::visit(const Min *op) {
-    Value *a = codegen(op->a);
-    Value *b = codegen(op->b);
-    Value *cmp;
-
-    Halide::Type t = op->a.type();
-    if (t.is_float()) {
-        cmp = builder->CreateFCmpOLT(a, b);
-    } else if (t.is_int()) {
-        cmp = builder->CreateICmpSLT(a, b);
-    } else {
-        cmp = builder->CreateICmpULT(a, b);
-    }
-
-    value = builder->CreateSelect(cmp, a, b);
+    string a_name = unique_name('a');
+    string b_name = unique_name('b');
+    Expr a = Variable::make(op->a.type(), a_name);
+    Expr b = Variable::make(op->b.type(), b_name);
+    value = codegen(Let::make(a_name, op->a,
+                              Let::make(b_name, op->b,
+                                        select(a < b, a, b))));
 }
 
 void CodeGen_LLVM::visit(const Max *op) {
-    Value *a = codegen(op->a);
-    Value *b = codegen(op->b);
-    Value *cmp;
-
-    Halide::Type t = op->a.type();
-    if (t.is_float()) {
-        cmp = builder->CreateFCmpOLT(a, b);
-    } else if (t.is_int()) {
-        cmp = builder->CreateICmpSLT(a, b);
-    } else {
-        cmp = builder->CreateICmpULT(a, b);
-    }
-
-    value = builder->CreateSelect(cmp, b, a);
+    string a_name = unique_name('a');
+    string b_name = unique_name('b');
+    Expr a = Variable::make(op->a.type(), a_name);
+    Expr b = Variable::make(op->b.type(), b_name);
+    value = codegen(Let::make(a_name, op->a,
+                              Let::make(b_name, op->b,
+                                        select(a > b, a, b))));
 }
 
 void CodeGen_LLVM::visit(const EQ *op) {
@@ -1701,6 +1642,10 @@ int next_power_of_two(int x) {
 
 void CodeGen_LLVM::add_tbaa_metadata(llvm::Instruction *inst, string buffer, Expr index) {
 
+    // Get the unique name for the block of memory this allocate node
+    // is using.
+    buffer = get_allocation_name(buffer);
+
     // If the index is constant, we generate some TBAA info that helps
     // LLVM understand our loads/stores aren't aliased.
     bool constant_index = false;
@@ -1760,7 +1705,7 @@ void CodeGen_LLVM::add_tbaa_metadata(llvm::Instruction *inst, string buffer, Exp
 
 void CodeGen_LLVM::visit(const Load *op) {
 
-    bool possibly_misaligned = (might_be_misaligned.find(op->name) != might_be_misaligned.end());
+    bool is_external = (external_buffer.find(op->name) != external_buffer.end());
 
     // If it's a Handle, load it as a uint64_t and then cast
     if (op->type.is_handle()) {
@@ -1792,14 +1737,20 @@ void CodeGen_LLVM::visit(const Load *op) {
 
             // Boost the alignment if possible, up to the native vector width.
             ModulusRemainder mod_rem = modulus_remainder(ramp->base, alignment_info);
-            if (!possibly_misaligned) {
-                while ((mod_rem.remainder & 1) == 0 &&
-                       (mod_rem.modulus & 1) == 0 &&
-                       alignment < native_bytes) {
-                    mod_rem.modulus /= 2;
-                    mod_rem.remainder /= 2;
-                    alignment *= 2;
-                }
+            while ((mod_rem.remainder & 1) == 0 &&
+                   (mod_rem.modulus & 1) == 0 &&
+                   alignment < native_bytes) {
+                mod_rem.modulus /= 2;
+                mod_rem.remainder /= 2;
+                alignment *= 2;
+            }
+
+            // If it is an external buffer, then we cannot assume that the host pointer
+            // is aligned to at least native vector width. However, we may be able to do
+            // better than just assuming that it is unaligned.
+            if (is_external && op->param.defined()) {
+                int host_alignment = op->param.host_alignment();
+                alignment = gcd(alignment, host_alignment);
             }
 
             // For dense vector loads wider than the native vector
@@ -1858,15 +1809,15 @@ void CodeGen_LLVM::visit(const Load *op) {
             Value *vec_b = codegen(load_b);
 
             // Shuffle together the results.
-            vector<Constant *> indices(ramp->lanes);
+            vector<int> indices(ramp->lanes);
             for (int i = 0; i < (ramp->lanes + 1)/2; i++) {
-                indices[i] = ConstantInt::get(i32, i*2 + (shifted_a ? 1 : 0));
+                indices[i] = i*2 + (shifted_a ? 1 : 0);
             }
             for (int i = (ramp->lanes + 1)/2; i < ramp->lanes; i++) {
-                indices[i] = ConstantInt::get(i32, i*2 + (shifted_b ? 1 : 0));
+                indices[i] = i*2 + (shifted_b ? 1 : 0);
             }
 
-            value = builder->CreateShuffleVector(vec_a, vec_b, ConstantVector::get(indices));
+            value = shuffle_vectors(vec_a, vec_b, indices);
         } else if (ramp && stride && stride->value == -1) {
             // Load the vector and then flip it in-place
             Expr flipped_base = ramp->base - ramp->lanes + 1;
@@ -1875,13 +1826,12 @@ void CodeGen_LLVM::visit(const Load *op) {
 
             Value *flipped = codegen(flipped_load);
 
-            vector<Constant *> indices(ramp->lanes);
+            vector<int> indices(ramp->lanes);
             for (int i = 0; i < ramp->lanes; i++) {
-                indices[i] = ConstantInt::get(i32, ramp->lanes-1-i);
+                indices[i] = ramp->lanes - 1 - i;
             }
 
-            Constant *undef = UndefValue::get(flipped->getType());
-            value = builder->CreateShuffleVector(flipped, undef, ConstantVector::get(indices));
+            value = shuffle_vectors(flipped, indices);
         } else if (ramp) {
             // Gather without generating the indices as a vector
             Value *ptr = codegen_buffer_pointer(op->name, op->type.element_of(), ramp->base);
@@ -1946,8 +1896,10 @@ void CodeGen_LLVM::visit(const Ramp *op) {
             if (i > 0) {
                 if (op->type.is_float()) {
                     base = builder->CreateFAdd(base, stride);
-                } else {
+                } else if (op->type.is_int() && op->type.bits() >= 32) {
                     base = builder->CreateNSWAdd(base, stride);
+                } else {
+                    base = builder->CreateAdd(base, stride);
                 }
             }
             value = builder->CreateInsertElement(value, base, ConstantInt::get(i32, i));
@@ -1978,157 +1930,73 @@ Expr unbroadcast(Expr e) {
     }
 }
 
-Value *CodeGen_LLVM::interleave_vectors(Type type, const std::vector<Expr>& vecs) {
-    if(vecs.size() == 1) {
-        return codegen(vecs[0]);
-    } else if(vecs.size() == 2) {
-        Expr a = vecs[0], b = vecs[1];
-        debug(3) << "Vectors to interleave: " << a << ", " << b << "\n";
+Value *CodeGen_LLVM::interleave_vectors(const std::vector<Value *> &vecs) {
+    internal_assert(vecs.size() >= 1);
+    for (size_t i = 1; i < vecs.size(); i++) {
+        internal_assert(vecs[0]->getType() == vecs[i]->getType());
+    }
+    int vec_elements = vecs[0]->getType()->getVectorNumElements();
 
-        vector<Constant *> indices(type.lanes());
-        for (int i = 0; i < type.lanes(); i++) {
-            int idx = i/2;
-            if (i % 2 == 1) idx += a.type().lanes();
-            indices[i] = ConstantInt::get(i32, idx);
+    if (vecs.size() == 1) {
+        return vecs[0];
+    } else if (vecs.size() == 2) {
+        Value *a = vecs[0];
+        Value *b = vecs[1];
+        vector<int> indices(vec_elements*2);
+        for (int i = 0; i < vec_elements*2; i++) {
+            indices[i] = i%2 == 0 ? i/2 : i/2 + vec_elements;
         }
-
-        return builder->CreateShuffleVector(codegen(a), codegen(b), ConstantVector::get(indices));
-    } else if(vecs.size() == 3) {
-        Expr a = vecs[0], b = vecs[1], c = vecs[2];
-        debug(3) << "Vectors to interleave: " << a << ", " << b << ", " << c << "\n";
-
-        // First we shuffle a & b together...
-        vector<Constant *> indices(type.lanes());
-        for (int i = 0; i < type.lanes(); i++) {
-            if (i % 3 == 0) {
-                indices[i] = ConstantInt::get(i32, i/3);
-            } else if (i % 3 == 1) {
-                indices[i] = ConstantInt::get(i32, i/3 + a.type().lanes());
-            } else {
-                indices[i] = UndefValue::get(i32);
-            }
-        }
-
-        Value *value_ab = builder->CreateShuffleVector(codegen(a), codegen(b), ConstantVector::get(indices));
-
-        // Then we create a vector of the output size that contains c...
-        for (int i = 0; i < type.lanes(); i++) {
-            if (i < c.type().lanes()) {
-                indices[i] = ConstantInt::get(i32, i);
-            } else {
-                indices[i] = UndefValue::get(i32);
-            }
-        }
-
-        Value *none = UndefValue::get(llvm_type_of(c.type()));
-        Value *value_c = builder->CreateShuffleVector(codegen(c), none, ConstantVector::get(indices));
-
-        // Finally, we shuffle the above 2 vectors together into the result.
-        for (int i = 0; i < type.lanes(); i++) {
-            if (i % 3 < 2) {
-                indices[i] = ConstantInt::get(i32, i);
-            } else {
-                indices[i] = ConstantInt::get(i32, i/3 + type.lanes());
-            }
-        }
-
-        return builder->CreateShuffleVector(value_ab, value_c, ConstantVector::get(indices));
-    } else if (vecs.size() == 4 && vecs[0].type().bits() <= 32) {
-        Expr a = vecs[0], b = vecs[1], c = vecs[2], d = vecs[3];
-        debug(3) << "Vectors to interleave: " << a << ", " << b << ", " << c << ", " << d << "\n";
-
-        int half_lanes = type.lanes() / 2;
-        vector<Constant *> indices(half_lanes);
-        for (int i = 0; i < half_lanes; i++) {
-            int idx = i/2;
-            if (i % 2 == 1) idx += a.type().lanes();
-            indices[i] = ConstantInt::get(i32, idx);
-        }
-
-        // First we shuffle a & b together...
-        Value *value_ab = builder->CreateShuffleVector(codegen(a), codegen(b), ConstantVector::get(indices));
-
-        // Next we shuffle c & d together...
-        Value *value_cd = builder->CreateShuffleVector(codegen(c), codegen(d), ConstantVector::get(indices));
-
-        // Now we reinterpret the shuffled vectors as vectors of pairs...
-        Type t = a.type().with_bits(a.type().bits() * 2);
-        Value *vec_ab = builder->CreateBitCast(value_ab, llvm_type_of(t));
-        Value *vec_cd = builder->CreateBitCast(value_cd, llvm_type_of(t));
-
-        // Finally, we shuffle the above 2 vectors together into the result.
-        Value *vec = builder->CreateShuffleVector(vec_ab, vec_cd, ConstantVector::get(indices));
-        return builder->CreateBitCast(vec, llvm_type_of(type));
+        return shuffle_vectors(a, b, indices);
     } else {
-        Type even_t = type.with_lanes(0);
-        Type odd_t  = type.with_lanes(0);
-        std::vector<Expr> even_vecs, odd_vecs;
-        int odd_num_vecs = vecs.size() % 2;
-        for (size_t i = 0; i < vecs.size() - odd_num_vecs; ++i) {
-            if (i % 2 == 0) {
-                even_t = even_t.with_lanes(even_t.lanes() + vecs[i].type().lanes());
+        // Grab the even and odd elements of vecs.
+        vector<Value *> even_vecs;
+        vector<Value *> odd_vecs;
+        for (size_t i = 0; i < vecs.size(); i++) {
+            if (i%2 == 0) {
                 even_vecs.push_back(vecs[i]);
             } else {
-                odd_t = odd_t.with_lanes(odd_t.lanes() + vecs[i].type().lanes());
                 odd_vecs.push_back(vecs[i]);
             }
         }
 
-        Expr last;
-        if (odd_num_vecs) {
-            last = vecs.back();
+        // If the number of vecs is odd, save the last one for later.
+        Value *last = nullptr;
+        if (even_vecs.size() > odd_vecs.size()) {
+            last = even_vecs.back();
+            even_vecs.pop_back();
         }
+        internal_assert(even_vecs.size() == odd_vecs.size());
 
-        Value* a = interleave_vectors(even_t, even_vecs);
-        Value* b = interleave_vectors(odd_t, odd_vecs);
+        // Interleave the even and odd parts.
+        Value *even = interleave_vectors(even_vecs);
+        Value *odd = interleave_vectors(odd_vecs);
 
-        if (odd_num_vecs == 0 ) {
-            vector<Constant *> indices(type.lanes());
-            for (int i = 0; i < type.lanes(); i++) {
-                int idx = i/2;
-                if (i % 2 == 1) idx += even_t.lanes();
-                indices[i] = ConstantInt::get(i32, idx);
+        if (last) {
+            int result_elements = vec_elements*vecs.size();
+
+            // Interleave even and odd, leaving a space for the last element.
+            vector<int> indices(result_elements, -1);
+            for (int i = 0, idx = 0; i < result_elements; i++) {
+                if (i%vecs.size() < vecs.size() - 1) {
+                    indices[i] = idx%2 == 0 ? idx/2 : idx/2 + vec_elements*even_vecs.size();
+                    idx++;
+                }
+            }
+            Value *even_odd = shuffle_vectors(even, odd, indices);
+
+            // Interleave the last vector into the result.
+            last = slice_vector(last, 0, result_elements);
+            for (int i = 0; i < result_elements; i++) {
+                if (i%vecs.size() < vecs.size() - 1) {
+                    indices[i] = i;
+                } else {
+                    indices[i] = i/vecs.size() + result_elements;
+                }
             }
 
-            return builder->CreateShuffleVector(a, b, ConstantVector::get(indices));
+            return shuffle_vectors(even_odd, last, indices);
         } else {
-            vector<Constant *> indices(type.lanes());
-            for (int i = 0, idx = 0; i < type.lanes(); i++) {
-                if (i % vecs.size() < vecs.size()-1) {
-                    if (idx % 2 == 0) {
-                        indices[i] = ConstantInt::get(i32, idx / 2);
-                    } else {
-                        indices[i] = ConstantInt::get(i32, idx / 2 + even_t.lanes());
-                    }
-
-                    ++idx;
-                } else {
-                    indices[i] = UndefValue::get(i32);
-                }
-            }
-
-            Value *ab = builder->CreateShuffleVector(a, b, ConstantVector::get(indices));
-
-            for (int i = 0; i < type.lanes(); i++) {
-                if (i < last.type().lanes()) {
-                    indices[i] = ConstantInt::get(i32, i);
-                } else {
-                    indices[i] = UndefValue::get(i32);
-                }
-            }
-
-            Value *none = UndefValue::get(llvm_type_of(last.type()));
-            Value *c = builder->CreateShuffleVector(codegen(last), none, ConstantVector::get(indices));
-
-            for (int i = 0; i < type.lanes(); i++) {
-                if (i % vecs.size() < vecs.size()-1) {
-                    indices[i] = ConstantInt::get(i32, i);
-                } else {
-                    indices[i] = ConstantInt::get(i32, i/vecs.size() + type.lanes());
-                }
-            }
-
-            return builder->CreateShuffleVector(ab, c, ConstantVector::get(indices));
+            return interleave_vectors({even, odd});
         }
     }
 }
@@ -2147,6 +2015,7 @@ void CodeGen_LLVM::scalarize(Expr e) {
 
 void CodeGen_LLVM::visit(const Call *op) {
     internal_assert(op->call_type == Call::Extern ||
+                    op->call_type == Call::ExternCPlusPlus ||
                     op->call_type == Call::Intrinsic ||
                     op->call_type == Call::PureExtern ||
                     op->call_type == Call::PureIntrinsic)
@@ -2158,27 +2027,28 @@ void CodeGen_LLVM::visit(const Call *op) {
     // types are handled here.
     if (op->is_intrinsic(Call::shuffle_vector)) {
         internal_assert((int) op->args.size() == 1 + op->type.lanes());
-        vector<Constant *> indices(op->type.lanes());
+        vector<int> indices(op->type.lanes());
         for (size_t i = 0; i < indices.size(); i++) {
             const IntImm *idx = op->args[i+1].as<IntImm>();
             internal_assert(idx);
             internal_assert(idx->value >= 0 && idx->value <= op->args[0].type().lanes());
-            indices[i] = ConstantInt::get(i32, idx->value);
+            indices[i] = idx->value;
         }
         Value *arg = codegen(op->args[0]);
 
-        // Make a size 1 vector of undef at the end to mix in undef values.
-        Value *undefs = UndefValue::get(arg->getType());
-
-        value = builder->CreateShuffleVector(arg, undefs, ConstantVector::get(indices));
+        value = shuffle_vectors(arg, indices);
 
         if (op->type.is_scalar()) {
             value = builder->CreateExtractElement(value, ConstantInt::get(i32, 0));
         }
 
     } else if (op->is_intrinsic(Call::interleave_vectors)) {
-        internal_assert(0 < op->args.size());
-        value = interleave_vectors(op->type, op->args);
+        vector<Value *> args;
+        args.reserve(op->args.size());
+        for (Expr i : op->args) {
+            args.push_back(codegen(i));
+        }
+        value = interleave_vectors(args);
     } else if (op->is_intrinsic(Call::debug_to_file)) {
         internal_assert(op->args.size() == 3);
         const StringImm *filename = op->args[0].as<StringImm>();
@@ -2273,18 +2143,9 @@ void CodeGen_LLVM::visit(const Call *op) {
             codegen(Call::make(op->type, name, op->args, Call::Extern));
         } else {
             // Generate select(x >= 0, x, -x) instead
-            Value *arg = codegen(op->args[0]);
-            Value *zero = Constant::getNullValue(arg->getType());
-            Value *cmp, *neg;
-            if (t.is_float()) {
-                cmp = builder->CreateFCmpOGE(arg, zero);
-                neg = builder->CreateFSub(zero, arg);
-            } else {
-                internal_assert(t.is_int());
-                cmp = builder->CreateICmpSGE(arg, zero);
-                neg = builder->CreateSub(zero, arg);
-            }
-            value = builder->CreateSelect(cmp, arg, neg);
+            string x_name = unique_name('x');
+            Expr x = Variable::make(op->args[0].type(), x_name);
+            value = codegen(Let::make(x_name, op->args[0], select(x >= 0, x, -x)));
         }
     } else if (op->is_intrinsic(Call::absd)) {
 
@@ -2312,7 +2173,35 @@ void CodeGen_LLVM::visit(const Call *op) {
             codegen(Call::make(op->type, name, op->args, Call::Extern));
         } else {
             // Use a select instead
-            codegen(Select::make(a < b, b - a, a - b));
+            string a_name = unique_name('a');
+            string b_name = unique_name('b');
+            Expr a_var = Variable::make(op->args[0].type(), a_name);
+            Expr b_var = Variable::make(op->args[1].type(), b_name);
+            codegen(Let::make(a_name, op->args[0],
+                              Let::make(b_name, op->args[1],
+                                        Select::make(a_var < b_var, b_var - a_var, a_var - b_var))));
+        }
+    } else if (op->is_intrinsic("div_round_to_zero")) {
+        internal_assert(op->args.size() == 2);
+        Value *a = codegen(op->args[0]);
+        Value *b = codegen(op->args[1]);
+        if (op->type.is_int()) {
+            value = builder->CreateSDiv(a, b);
+        } else if (op->type.is_uint()) {
+            value = builder->CreateUDiv(a, b);
+        } else {
+            internal_error << "div_round_to_zero of non-integer type.\n";
+        }
+    } else if (op->is_intrinsic("mod_round_to_zero")) {
+        internal_assert(op->args.size() == 2);
+        Value *a = codegen(op->args[0]);
+        Value *b = codegen(op->args[1]);
+        if (op->type.is_int()) {
+            value = builder->CreateSRem(a, b);
+        } else if (op->type.is_uint()) {
+            value = builder->CreateURem(a, b);
+        } else {
+            internal_error << "mod_round_to_zero of non-integer type.\n";
         }
     } else if (op->is_intrinsic(Call::copy_buffer_t)) {
         // Make some memory for this buffer_t
@@ -2426,11 +2315,11 @@ void CodeGen_LLVM::visit(const Call *op) {
         value = ConstantInt::get(i32, 0);
     } else if (op->is_intrinsic(Call::null_handle)) {
         internal_assert(op->args.size() == 0) << "null_handle takes no arguments\n";
-        internal_assert(op->type == Handle()) << "null_handle must return a Handle type\n";
+        internal_assert(op->type.is_handle()) << "null_handle must return a Handle type\n";
         value = ConstantPointerNull::get(i8->getPointerTo());
     } else if (op->is_intrinsic(Call::address_of)) {
         internal_assert(op->args.size() == 1) << "address_of takes one argument\n";
-        internal_assert(op->type == Handle()) << "address_of must return a Handle type\n";
+        internal_assert(op->type.is_handle()) << "address_of must return a Handle type\n";
         const Load *load = op->args[0].as<Load>();
         internal_assert(load) << "The sole argument to address_of must be a Load node\n";
         internal_assert(load->index.type().is_scalar()) << "Can't take the address of a vector load\n";
@@ -2716,7 +2605,7 @@ void CodeGen_LLVM::visit(const Call *op) {
         const StringImm *fn = op->args[0].as<StringImm>();
         internal_assert(fn);
         Expr arg = op->args[1];
-        internal_assert(arg.type() == Handle());
+        internal_assert(arg.type().is_handle());
         llvm::Function *f = module->getFunction(fn->value);
         if (!f) {
             llvm::Type *arg_types[] = {i8->getPointerTo(), i8->getPointerTo()};
@@ -2750,13 +2639,30 @@ void CodeGen_LLVM::visit(const Call *op) {
     } else {
         // It's an extern call.
 
+        std::string name;
+        if (op->call_type == Call::ExternCPlusPlus) {
+            user_assert(get_target().has_feature(Target::CPlusPlusMangling)) <<
+                "Target must specify C++ name mangling (\"c_plus_plus_name_mangling\") in order to call C++ externs. (" <<
+                op->name << ")\n";
+
+            std::vector<std::string> namespaces;
+            name = extract_namespaces(op->name, namespaces);
+            std::vector<ExternFuncArgument> mangle_args;
+            for (const auto &arg : op->args) {
+                mangle_args.push_back(ExternFuncArgument(arg));
+            }
+            name = cplusplus_function_mangled_name(name, namespaces, op->type, mangle_args, get_target());
+        } else {
+            name = op->name;
+        }
+
         // Codegen the args
         vector<Value *> args(op->args.size());
         for (size_t i = 0; i < op->args.size(); i++) {
             args[i] = codegen(op->args[i]);
         }
 
-        llvm::Function *fn = module->getFunction(op->name);
+        llvm::Function *fn = module->getFunction(name);
 
         llvm::Type *result_type = llvm_type_of(op->type);
 
@@ -2787,12 +2693,16 @@ void CodeGen_LLVM::visit(const Call *op) {
 
             FunctionType *func_t = FunctionType::get(scalar_result_type, arg_types, false);
 
-            fn = llvm::Function::Create(func_t, llvm::Function::ExternalLinkage, op->name, module.get());
+            fn = llvm::Function::Create(func_t, llvm::Function::ExternalLinkage, name, module.get());
             fn->setCallingConv(CallingConv::C);
             debug(4) << "Did not find " << op->name << ". Declared it extern \"C\".\n";
         } else {
             debug(4) << "Found " << op->name << "\n";
 
+            // TODO: Say something more accurate here as there is now
+            // partial information in the handle_type field, but it is
+            // not clear it can be matched to the LLVM types and it is
+            // not always there.
             // Halide's type system doesn't preserve pointer types
             // correctly (they just get called "Handle()"), so we may
             // need to pointer cast to the appropriate type. Only look at
@@ -2822,7 +2732,6 @@ void CodeGen_LLVM::visit(const Call *op) {
             }
         }
 
-
         if (op->type.is_scalar()) {
             CallInst *call = builder->CreateCall(fn, args);
             if (op->is_pure()) {
@@ -2835,7 +2744,7 @@ void CodeGen_LLVM::visit(const Call *op) {
             // Check if a vector version of the function already
             // exists at some useful width.
             pair<llvm::Function *, int> vec =
-                find_vector_runtime_function(op->name, op->type.lanes());
+                find_vector_runtime_function(name, op->type.lanes());
             llvm::Function *vec_fn = vec.first;
             int w = vec.second;
 
@@ -3070,7 +2979,7 @@ void CodeGen_LLVM::visit(const For *op) {
         FunctionType *func_t = FunctionType::get(i32, args_t, false);
         llvm::Function *containing_function = function;
         function = llvm::Function::Create(func_t, llvm::Function::InternalLinkage,
-                                          "par for " + function->getName() + "_" + op->name, module.get());
+                                          "par_for_" + function->getName() + "_" + op->name, module.get());
         function->setDoesNotAlias(3);
 
         // Make the initial basic block and jump the builder into the new function
@@ -3150,13 +3059,13 @@ void CodeGen_LLVM::visit(const Store *op) {
     // memory, so convert stores of handles to stores of uint64_ts.
     if (op->value.type().is_handle()) {
         Expr v = reinterpret(UInt(64, op->value.type().lanes()), op->value);
-        codegen(Store::make(op->name, v, op->index));
+        codegen(Store::make(op->name, v, op->index, op->param));
         return;
     }
 
     Halide::Type value_type = op->value.type();
     Value *val = codegen(op->value);
-    bool possibly_misaligned = (might_be_misaligned.find(op->name) != might_be_misaligned.end());
+    bool is_external = (external_buffer.find(op->name) != external_buffer.end());
     // Scalar
     if (value_type.is_scalar()) {
         Value *ptr = codegen_buffer_pointer(op->name, value_type, op->index);
@@ -3172,14 +3081,20 @@ void CodeGen_LLVM::visit(const Store *op) {
 
             // Boost the alignment if possible, up to the native vector width.
             ModulusRemainder mod_rem = modulus_remainder(ramp->base, alignment_info);
-            if (!possibly_misaligned) {
-                while ((mod_rem.remainder & 1) == 0 &&
+            while ((mod_rem.remainder & 1) == 0 &&
                        (mod_rem.modulus & 1) == 0 &&
                        alignment < native_bytes) {
                     mod_rem.modulus /= 2;
                     mod_rem.remainder /= 2;
                     alignment *= 2;
-                }
+            }
+
+            // If it is an external buffer, then we cannot assume that the host pointer
+            // is aligned to at least the native vector width. However, we may be able to do
+            // better than just assuming that it is unaligned.
+            if (is_external && op->param.defined()) {
+                int host_alignment = op->param.host_alignment();
+                alignment = gcd(alignment, host_alignment);
             }
 
             // For dense vector stores wider than the native vector
@@ -3381,18 +3296,16 @@ Value *CodeGen_LLVM::slice_vector(Value *vec, int start, int size) {
         return vec;
     }
 
-    vector<Constant *> indices(size);
+    vector<int> indices(size);
     for (int i = 0; i < size; i++) {
         int idx = start + i;
         if (idx >= 0 && idx < vec_lanes) {
-            indices[i] = ConstantInt::get(i32, idx);
+            indices[i] = idx;
         } else {
-            indices[i] = UndefValue::get(i32);
+            indices[i] = -1;
         }
     }
-    Constant *indices_vec = ConstantVector::get(indices);
-    Value *undefs = UndefValue::get(vec->getType());
-    return builder->CreateShuffleVector(vec, undefs, indices_vec);
+    return shuffle_vectors(vec, indices);
 }
 
 Value *CodeGen_LLVM::concat_vectors(const vector<Value *> &v) {
@@ -3422,16 +3335,15 @@ Value *CodeGen_LLVM::concat_vectors(const vector<Value *> &v) {
 
             internal_assert(v1->getType() == v2->getType());
 
-            vector<Constant *> indices(w1 + w2);
+            vector<int> indices(w1 + w2);
             for (int i = 0; i < w1; i++) {
-                indices[i] = ConstantInt::get(i32, i);
+                indices[i] = i;
             }
             for (int i = 0; i < w2; i++) {
-                indices[w1 + i] = ConstantInt::get(i32, w_matched + i);
+                indices[w1 + i] = w_matched + i;
             }
-            Constant *indices_vec = ConstantVector::get(indices);
 
-            Value *merged = builder->CreateShuffleVector(v1, v2, indices_vec);
+            Value *merged = shuffle_vectors(v1, v2, indices);
 
             new_vecs.push_back(merged);
         }
@@ -3447,6 +3359,30 @@ Value *CodeGen_LLVM::concat_vectors(const vector<Value *> &v) {
 
     return vecs[0];
 }
+
+Value *CodeGen_LLVM::shuffle_vectors(Value *a, Value *b,
+                                     const std::vector<int> &indices) {
+    internal_assert(a->getType() == b->getType());
+    vector<Constant *> llvm_indices(indices.size());
+    for (size_t i = 0; i < llvm_indices.size(); i++) {
+        if (indices[i] >= 0) {
+            internal_assert(indices[i] < (int)a->getType()->getVectorNumElements() * 2);
+            llvm_indices[i] = ConstantInt::get(i32, indices[i]);
+        } else {
+            // Only let -1 be undef.
+            internal_assert(indices[i] == -1);
+            llvm_indices[i] = UndefValue::get(i32);
+        }
+    }
+
+    return builder->CreateShuffleVector(a, b, ConstantVector::get(llvm_indices));
+}
+
+Value *CodeGen_LLVM::shuffle_vectors(Value *a, const std::vector<int> &indices) {
+    Value *b = UndefValue::get(a->getType());
+    return shuffle_vectors(a, b, indices);
+}
+
 
 std::pair<llvm::Function *, int> CodeGen_LLVM::find_vector_runtime_function(const std::string &name, int lanes) {
     // Check if a vector version of the function already
