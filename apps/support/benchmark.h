@@ -40,6 +40,7 @@ double benchmark(int samples, int iterations, F op) {
 
 template <typename F>
 double benchmark(int samples, int iterations, F op) {
+    std::cout << "samples: " << samples << "\niterations: " << iterations << std::endl;
     double best = std::numeric_limits<double>::infinity();
     for (int i = 0; i < samples; i++) {
         auto t1 = std::chrono::high_resolution_clock::now();
@@ -55,6 +56,7 @@ double benchmark(int samples, int iterations, F op) {
 
 template <typename F, typename S>
 double benchmark(int samples, int iterations, F op, S sync_op) {
+    std::cout << "samples: " << samples << "\niterations: " << iterations << std::endl;
     double best = std::numeric_limits<double>::infinity();
     for (int i = 0; i < samples; i++) {
         auto t1 = std::chrono::high_resolution_clock::now();
