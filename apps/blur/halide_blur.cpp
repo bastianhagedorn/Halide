@@ -1,5 +1,5 @@
-#include "Halide.h"
 #include "../support/auto_build.h"
+#include "Halide.h"
 using namespace Halide;
 
 int main(int argc, char **argv) {
@@ -9,8 +9,8 @@ int main(int argc, char **argv) {
     Var x("x"), y("y"), xi("xi"), yi("yi");
 
     // The algorithm
-    blur_x(x, y) = (input(x, y) + input(x+1, y) + input(x+2, y))/3;
-    blur_y(x, y) = (blur_x(x, y) + blur_x(x, y+1) + blur_x(x, y+2))/3;
+    blur_x(x, y) = (input(x, y) + input(x + 1, y) + input(x + 2, y)) / 3;
+    blur_y(x, y) = (blur_x(x, y) + blur_x(x, y + 1) + blur_x(x, y + 2)) / 3;
 
     // Adding bounds
     //blur_y.bound(x, 0, 6400).bound(y, 0, 4800);
@@ -32,15 +32,15 @@ int main(int argc, char **argv) {
         }
     }
 
-
     if (schedule == -2) {
-        target.set_feature(Halide::Target::CUDACapability35);
-        target.set_feature(Halide::Target::CUDA);
+        //target.set_feature(Halide::Target::CUDACapability35);
+        //target.set_feature(Halide::Target::CUDA);
+        target.set_feature(Halide::Target::OpenCL);
         //target.set_feature(Halide::Target::Debug);
     }
 
-    auto_build(blur_y, "halide_blur", {input}, target,
-                                        (schedule == -1 || schedule == -2));
+    auto_build(blur_y, "halide_blur", { input }, target,
+               (schedule == -1 || schedule == -2));
 
     /*
     blur_y.split(y, y, yi, 4).split(x, x, xi, 64).reorder(xi, yi, x, y).
