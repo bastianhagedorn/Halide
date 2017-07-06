@@ -1,6 +1,6 @@
 include ../support/Makefile.inc
 
-auto: clean_auto test_auto
+auto: clean_auto test_auto_gpu test_naive_gpu
 
 halide_blur: halide_blur.cpp
 	$(CXX) $(CXXFLAGS) halide_blur.cpp $(LIB_HALIDE) -o halide_blur $(LLVM_LDFLAGS)
