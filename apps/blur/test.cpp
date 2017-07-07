@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <iostream>
 
+#include "HalideRuntimeOpenCL.h"
 #include "benchmark.h"
 #include "halide_blur.h"
 #include "halide_image.h"
@@ -199,7 +200,8 @@ int main(int argc, char **argv) {
 
     for (int y = 0; y < input.height(); y++) {
         for (int x = 0; x < input.width(); x++) {
-            input(x, y) = rand() & 0xfff;
+            //input(x, y) = rand() & 0xfff; // old version
+            input(x, y) = (x + y) % input.width();
         }
     }
 
@@ -220,7 +222,8 @@ int main(int argc, char **argv) {
     // fast_time2 is always slower than fast_time, so skip printing it
     //printf("times: %f %f %f\n", slow_time, fast_time, halide_time);
     printf("runtime: %g ms\n", halide_time * 1000);
-    std::cout << 1e6f << std::endl;
+    std::cout << "Output Height: " << halide.height() << std::endl;
+    std::cout << "Output Width : " << halide.width() << std::endl;
 
 #if 0
     for (int y = 64; y < input.height() - 64; y++) {
