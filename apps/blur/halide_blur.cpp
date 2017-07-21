@@ -35,8 +35,9 @@ int main(int argc, char **argv) {
     if (schedule == -2) {
         //target.set_feature(Halide::Target::CUDACapability35);
         //target.set_feature(Halide::Target::CUDA);
-        target.set_feature(Halide::Target::OpenCL);
-        //target.set_feature(Halide::Target::Debug);
+        target.set_feature(Target::OpenCL);
+        target.set_feature(Target::Debug);
+        target.set_feature(Target::Profile);
     }
 
     auto_build(blur_y, "halide_blur", { input }, target,
